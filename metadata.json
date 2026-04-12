@@ -1,0 +1,7 @@
+{
+  "name": "GDC Logistics Platform",
+  "description": "A comprehensive logistics management system for bulk cargo transport in Uruguay, featuring fleet tracking, strategic mapping, and AI-powered route optimization.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
