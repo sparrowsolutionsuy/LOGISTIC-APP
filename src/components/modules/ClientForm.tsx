@@ -4,7 +4,7 @@ import { DEPARTAMENTOS } from '../../constants';
 import { Save, User, MapPin, Hash, Mail, Phone } from 'lucide-react';
 
 interface ClientFormProps {
-  onAddClient: (client: Client) => void;
+  onAddClient: (client: Client) => void | Promise<void>;
 }
 
 type FormState = Partial<
@@ -24,7 +24,7 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
     setFormData({ ...formData, rut: val });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.nombreComercial && formData.latitud && formData.longitud && formData.rut) {
       if (formData.rut.length !== 12) {
@@ -43,7 +43,7 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
         email: formData.email || '',
         telefono: formData.telefono || '',
       };
-      onAddClient(newClient);
+      await onAddClient(newClient);
       setFormData({
         departamento: 'Montevideo',
         nombreComercial: '',

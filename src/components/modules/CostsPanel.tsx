@@ -6,9 +6,9 @@ import { Button } from '../ui/Button';
 export interface CostsPanelProps {
   costs: Cost[];
   registradoPor: string;
-  onAddCost: (cost: Cost) => void;
-  onUpdateCost: (cost: Cost) => void;
-  onDeleteCost: (costId: string) => void;
+  onAddCost: (cost: Cost) => void | Promise<void>;
+  onUpdateCost: (cost: Cost) => void | Promise<void>;
+  onDeleteCost: (costId: string) => void | Promise<void>;
 }
 
 export const CostsPanel: React.FC<CostsPanelProps> = ({
@@ -19,16 +19,18 @@ export const CostsPanel: React.FC<CostsPanelProps> = ({
   onDeleteCost,
 }) => {
   const addDemo = () => {
-    const categoria: CostCategory = 'Otros';
-    onAddCost({
-      id: `K${Date.now()}`,
-      fecha: new Date().toISOString().slice(0, 10),
-      tripId: null,
-      categoria,
-      descripcion: 'Costo de prueba (local)',
-      monto: 150,
-      registradoPor,
-    });
+    void (async () => {
+      const categoria: CostCategory = 'Otros';
+      await onAddCost({
+        id: `K${Date.now()}`,
+        fecha: new Date().toISOString().slice(0, 10),
+        tripId: null,
+        categoria,
+        descripcion: 'Costo de prueba (local)',
+        monto: 150,
+        registradoPor,
+      });
+    })();
   };
 
   return (
@@ -52,11 +54,11 @@ export const CostsPanel: React.FC<CostsPanelProps> = ({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => onUpdateCost({ ...c, monto: c.monto + 10 })}
+                onClick={() => void onUpdateCost({ ...c, monto: c.monto + 10 })}
               >
                 +10
               </Button>
-              <Button variant="danger" size="sm" onClick={() => onDeleteCost(c.id)}>
+              <Button variant="danger" size="sm" onClick={() => void onDeleteCost(c.id)}>
                 Borrar
               </Button>
             </div>

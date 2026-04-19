@@ -13,10 +13,14 @@ import { AppShell } from './components/layout/AppShell';
 import { AdminGuard } from './components/layout/AdminGuard';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
 import {
-  deleteTripInSheet,
+  deleteCostFromSheet,
+  deleteTripFromSheet,
   fetchLogisticsData,
+  lastLogisticsFetchWasMock,
   saveClientToSheet,
+  saveCostToSheet,
   saveTripToSheet,
+  updateCostInSheet,
   updateTripInSheet,
 } from './services/api';
 import { generateLogisticsInsights } from './services/geminiService';
@@ -77,12 +81,18 @@ const App: React.FC = () => {
     setClients(data.clients);
     setTrips(data.trips);
     setCosts(data.costs);
-    setOffline(data.offline);
+    setOffline(lastLogisticsFetchWasMock());
 
     try {
       if (data.trips.length > 0) {
-        const aiSuggestions = await generateLogisticsInsights(data.trips, data.clients);
-        setInsights(aiSuggestions);
+        const lines = await generateLogisticsInsights(data.trips, data.clients);
+        setInsights(
+          lines.map((description, i) => ({
+            title: `Recomendación ${i + 1}`,
+            description,
+            type: 'info' as const,
+          }))
+        );
       } else {
         setInsights([]);
       }
@@ -140,7 +150,7 @@ const App: React.FC = () => {
   }, []);
 
   const onDeleteTrip = useCallback(async (tripId: string) => {
-    await deleteTripInSheet(tripId);
+    await deleteTripFromSheet(tripId);
     setTrips((prev) => prev.filter((t) => t.id !== tripId));
     setCosts((prev) => prev.filter((c) => c.tripId !== tripId));
   }, []);
@@ -153,30 +163,29 @@ const App: React.FC = () => {
     );
   }, []);
 
-  const onAddClient = useCallback(
-    async (newClient: Client) => {
-      setLoading(true);
-      const success = await saveClientToSheet(newClient);
-      if (success) {
-        setClients((prev) => [...prev, newClient]);
-        setActiveTab('clients');
-      } else {
-        alert('❌ Error al guardar: revisá la conexión con Sheets.');
-      }
+  const onAddClient = useCallback(async (newClient: Client) => {
+    setLoading(true);
+    try {
+      await saveClientToSheet(newClient);
+      setClients((prev) => [...prev, newClient]);
+      setActiveTab('clients');
+    } finally {
       setLoading(false);
-    },
-    []
-  );
+    }
+  }, []);
 
-  const onAddCost = useCallback((cost: Cost) => {
+  const onAddCost = useCallback(async (cost: Cost) => {
+    await saveCostToSheet(cost);
     setCosts((prev) => [...prev, cost]);
   }, []);
 
-  const onUpdateCost = useCallback((cost: Cost) => {
+  const onUpdateCost = useCallback(async (cost: Cost) => {
+    await updateCostInSheet(cost);
     setCosts((prev) => prev.map((c) => (c.id === cost.id ? cost : c)));
   }, []);
 
-  const onDeleteCost = useCallback((costId: string) => {
+  const onDeleteCost = useCallback(async (costId: string) => {
+    await deleteCostFromSheet(costId);
     setCosts((prev) => prev.filter((c) => c.id !== costId));
   }, []);
 

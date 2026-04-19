@@ -1,45 +1,130 @@
-import type { Client, Cost, KPIData, Trip, TripWithMetrics } from '../types';
+import type { Client, Cost, KPIData, MonthlyStats, Trip, TripWithMetrics } from '../types';
 
-const monthPrefix = (d: Date): string =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+function tripRevenueUsd(trip: Trip): number {
+  return trip.tarifa * (trip.pesoKg / 1000);
+}
 
-export const tripRevenueUsd = (trip: Trip): number =>
-  trip.tarifa * (trip.pesoKg / 1000);
+function sumCostsForTrip(costs: Cost[], tripId: string): number {
+  return costs.filter((c) => c.tripId === tripId).reduce((acc, c) => acc + c.monto, 0);
+}
 
-export const sumCostsForTrip = (costs: Cost[], tripId: string): number =>
-  costs
-    .filter((c) => c.tripId === tripId)
-    .reduce((acc, c) => acc + c.monto, 0);
+function monthLabel(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  if (!y || !m) {
+    return ym;
+  }
+  const d = new Date(y, m - 1, 1);
+  return d.toLocaleDateString('es-UY', { month: 'short', year: 'numeric' });
+}
 
-export const buildTripWithMetrics = (
-  trip: Trip,
-  clients: Client[],
-  costs: Cost[]
-): TripWithMetrics => {
-  const client = clients.find((c) => c.id === trip.clientId);
-  const revenue = tripRevenueUsd(trip);
-  const totalCosts = sumCostsForTrip(costs, trip.id);
-  const netMargin = revenue - totalCosts;
-  const marginPct = revenue > 0 ? (netMargin / revenue) * 100 : 0;
-
-  return {
-    ...trip,
-    clientName: client?.nombreComercial ?? 'Desconocido',
-    totalCosts,
-    netMargin,
-    marginPct,
+/** Último mes YYYY-MM presente en viajes o costos (determinístico, sin reloj del sistema). */
+function latestYearMonthKey(trips: Trip[], costs: Cost[]): string | null {
+  let best: string | null = null;
+  const consider = (fecha: string) => {
+    const k = fecha.slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(k) && (!best || k > best)) {
+      best = k;
+    }
   };
+  trips.forEach((t) => consider(t.fecha));
+  costs.forEach((c) => consider(c.fecha));
+  return best;
+}
+
+function monthsEndingAtYearMonth(endKey: string, count: number): string[] {
+  const [ys, ms] = endKey.split('-');
+  let y = Number(ys);
+  let mo = Number(ms);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || mo < 1 || mo > 12) {
+    return [];
+  }
+  const out: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    out.unshift(`${y}-${String(mo).padStart(2, '0')}`);
+    mo -= 1;
+    if (mo === 0) {
+      mo = 12;
+      y -= 1;
+    }
+  }
+  return out;
+}
+
+const EMPTY_KPI: KPIData = {
+  totalRevenueMTD: 0,
+  totalCostsMTD: 0,
+  netMarginMTD: 0,
+  marginPctMTD: 0,
+  activeTrips: 0,
+  pendingTrips: 0,
+  avgRevenuePerTrip: 0,
+  topClient: null,
 };
 
-export const computeKPIData = (
-  trips: Trip[],
-  clients: Client[],
-  costs: Cost[],
-  referenceDate: Date = new Date()
-): KPIData => {
-  const prefix = monthPrefix(referenceDate);
-  const mtdTrips = trips.filter((t) => t.fecha.startsWith(prefix));
+export function enrichTrips(trips: Trip[], clients: Client[], costs: Cost[]): TripWithMetrics[] {
+  return trips.map((trip) => {
+    const client = clients.find((c) => c.id === trip.clientId);
+    const revenue = tripRevenueUsd(trip);
+    const totalCosts = sumCostsForTrip(costs, trip.id);
+    const netMargin = revenue - totalCosts;
+    const marginPct = revenue > 0 ? (netMargin / revenue) * 100 : 0;
+    return {
+      ...trip,
+      clientName: client?.nombreComercial ?? 'Desconocido',
+      totalCosts,
+      netMargin,
+      marginPct,
+    };
+  });
+}
 
+export function buildMonthlyStats(trips: Trip[], costs: Cost[], months = 6): MonthlyStats[] {
+  const endKey = latestYearMonthKey(trips, costs);
+  if (!endKey) {
+    return [];
+  }
+  const keys = monthsEndingAtYearMonth(endKey, months);
+  const tripIdsByMonth = new Map<string, Set<string>>();
+  keys.forEach((k) => tripIdsByMonth.set(k, new Set()));
+
+  trips.forEach((t) => {
+    const key = t.fecha.slice(0, 7);
+    if (tripIdsByMonth.has(key)) {
+      tripIdsByMonth.get(key)?.add(t.id);
+    }
+  });
+
+  return keys.map((month) => {
+    const monthTrips = trips.filter((t) => t.fecha.startsWith(month));
+    const revenue = monthTrips.reduce((acc, t) => acc + tripRevenueUsd(t), 0);
+    const ids = tripIdsByMonth.get(month) ?? new Set<string>();
+    const costSum = costs
+      .filter((c) => c.fecha.startsWith(month) && (c.tripId === null || ids.has(c.tripId)))
+      .reduce((acc, c) => acc + c.monto, 0);
+    const margin = revenue - costSum;
+    const marginPct = revenue > 0 ? (margin / revenue) * 100 : 0;
+    const tonsTransported = monthTrips.reduce((acc, t) => acc + t.pesoKg / 1000, 0);
+
+    return {
+      month,
+      label: monthLabel(month),
+      revenue,
+      costs: costSum,
+      margin,
+      marginPct,
+      tripCount: monthTrips.length,
+      tonsTransported,
+    };
+  });
+}
+
+export function buildKPIData(trips: Trip[], clients: Client[], costs: Cost[]): KPIData {
+  const mtdKey = latestYearMonthKey(trips, costs);
+  if (!mtdKey) {
+    return { ...EMPTY_KPI };
+  }
+
+  const mtdTrips = trips.filter((t) => t.fecha.startsWith(mtdKey));
   const totalRevenueMTD = mtdTrips.reduce((acc, t) => acc + tripRevenueUsd(t), 0);
   const tripIds = new Set(mtdTrips.map((t) => t.id));
   const totalCostsMTD = costs
@@ -47,29 +132,26 @@ export const computeKPIData = (
     .reduce((acc, c) => acc + c.monto, 0);
 
   const netMarginMTD = totalRevenueMTD - totalCostsMTD;
-  const marginPctMTD =
-    totalRevenueMTD > 0 ? (netMarginMTD / totalRevenueMTD) * 100 : 0;
+  const marginPctMTD = totalRevenueMTD > 0 ? (netMarginMTD / totalRevenueMTD) * 100 : 0;
 
   const activeTrips = trips.filter((t) => t.estado === 'En Tránsito').length;
   const pendingTrips = trips.filter((t) => t.estado === 'Pendiente').length;
 
-  const avgRevenuePerTrip =
-    mtdTrips.length > 0 ? totalRevenueMTD / mtdTrips.length : 0;
+  const avgRevenuePerTrip = mtdTrips.length > 0 ? totalRevenueMTD / mtdTrips.length : 0;
 
   const revenueByClient = new Map<string, number>();
-  for (const t of mtdTrips) {
+  mtdTrips.forEach((t) => {
     const rev = tripRevenueUsd(t);
     revenueByClient.set(t.clientId, (revenueByClient.get(t.clientId) ?? 0) + rev);
-  }
+  });
 
-  let top: { name: string; revenue: number } | null = null;
-  for (const [clientId, revenue] of revenueByClient.entries()) {
-    const name =
-      clients.find((c) => c.id === clientId)?.nombreComercial ?? clientId;
-    if (!top || revenue > top.revenue) {
-      top = { name, revenue };
+  let topClient: { name: string; revenue: number } | null = null;
+  revenueByClient.forEach((revenue, clientId) => {
+    const name = clients.find((c) => c.id === clientId)?.nombreComercial ?? clientId;
+    if (!topClient || revenue > topClient.revenue) {
+      topClient = { name, revenue };
     }
-  }
+  });
 
   return {
     totalRevenueMTD,
@@ -79,6 +161,42 @@ export const computeKPIData = (
     activeTrips,
     pendingTrips,
     avgRevenuePerTrip,
-    topClient: top,
+    topClient,
   };
-};
+}
+
+export function getTopRoutes(
+  trips: Trip[],
+  limit = 5
+): { route: string; count: number; revenue: number }[] {
+  const map = new Map<string, { count: number; revenue: number }>();
+  trips.forEach((t) => {
+    const route = `${t.origen} → ${t.destino}`;
+    const rev = tripRevenueUsd(t);
+    const cur = map.get(route) ?? { count: 0, revenue: 0 };
+    map.set(route, { count: cur.count + 1, revenue: cur.revenue + rev });
+  });
+  return Array.from(map.entries())
+    .map(([route, v]) => ({ route, count: v.count, revenue: v.revenue }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, limit);
+}
+
+export function getCostsByCategory(
+  costs: Cost[]
+): { category: string; total: number; pct: number }[] {
+  const totals = new Map<string, number>();
+  let grand = 0;
+  costs.forEach((c) => {
+    const cat = c.categoria;
+    totals.set(cat, (totals.get(cat) ?? 0) + c.monto);
+    grand += c.monto;
+  });
+  return Array.from(totals.entries())
+    .map(([category, total]) => ({
+      category,
+      total,
+      pct: grand > 0 ? (total / grand) * 100 : 0,
+    }))
+    .sort((a, b) => b.total - a.total);
+}

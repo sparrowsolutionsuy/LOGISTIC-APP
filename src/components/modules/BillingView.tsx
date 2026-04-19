@@ -17,11 +17,7 @@ interface BillingViewProps {
   onInvoiceUploaded: (tripId: string, url: string) => void;
 }
 
-export const BillingView: React.FC<BillingViewProps> = ({
-  trips,
-  clients,
-  onInvoiceUploaded,
-}) => {
+export const BillingView: React.FC<BillingViewProps> = ({ trips, clients, onInvoiceUploaded }) => {
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'pending' | 'closed'>('pending');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -72,20 +68,45 @@ export const BillingView: React.FC<BillingViewProps> = ({
     const file = e.target.files[0];
     const clientName =
       clients.find((c) => c.id === trip.clientId)?.nombreComercial ?? 'Unknown';
+    const ext = file.name.includes('.') ? file.name.split('.').pop() : 'pdf';
+    const fileName = `Factura_${trip.id}_${clientName.replace(/\s+/g, '')}.${ext ?? 'pdf'}`;
+    const mimeType = file.type || 'application/octet-stream';
 
     setUploadingId(trip.id);
 
-    try {
-      const url = await uploadInvoice(trip.id, clientName, file);
-      if (url) {
-        onInvoiceUploaded(trip.id, url);
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = async () => {
+      try {
+        const raw = reader.result;
+        if (typeof raw !== 'string') {
+          alert('No se pudo leer el archivo.');
+          return;
+        }
+        const parts = raw.split(',');
+        const fileData = parts.length > 1 ? parts[1] : '';
+        if (!fileData) {
+          alert('No se pudo obtener el contenido del archivo.');
+          return;
+        }
+
+        const url = await uploadInvoice(trip.id, fileData, fileName, mimeType);
+        if (url) {
+          onInvoiceUploaded(trip.id, url);
+        } else {
+          alert('No se recibió URL de factura. Verifique la conexión o la configuración.');
+        }
+      } catch (error) {
+        console.error(error);
+        alert('Error al subir la factura. Intente nuevamente.');
+      } finally {
+        setUploadingId(null);
       }
-    } catch (error) {
-      console.error(error);
-      alert('Error al subir la factura. Intente nuevamente.');
-    } finally {
+    };
+    reader.onerror = () => {
       setUploadingId(null);
-    }
+      alert('Error al leer el archivo.');
+    };
   };
 
   const handleViewInvoice = (url: string) => {

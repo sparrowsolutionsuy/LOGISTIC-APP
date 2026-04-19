@@ -1,88 +1,96 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import type { AIInsight, Client, Trip } from '../types';
-import { BASE_GDC } from '../constants';
+import type { Client, Trip } from '../types';
 
-export const generateLogisticsInsights = async (
+function countByEstado(trips: Trip[]): Record<string, number> {
+  return trips.reduce<Record<string, number>>((acc, t) => {
+    acc[t.estado] = (acc[t.estado] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+function topRoutesSummary(trips: Trip[], n: number): string {
+  const map = new Map<string, number>();
+  trips.forEach((t) => {
+    const k = `${t.origen} → ${t.destino}`;
+    map.set(k, (map.get(k) ?? 0) + 1);
+  });
+  return Array.from(map.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([r, c]) => `${r} (${c})`)
+    .join('; ');
+}
+
+function hardcodedInsightsEs(trips: Trip[], clients: Client[]): string[] {
+  const n = trips.length;
+  const activeClients = new Set(trips.map((t) => t.clientId)).size;
+  const byEstado = countByEstado(trips);
+  const pend = byEstado['Pendiente'] ?? 0;
+  const transit = byEstado['En Tránsito'] ?? 0;
+  const routes = topRoutesSummary(trips, 3);
+
+  const out: string[] = [];
+  out.push(
+    `Con ${n} viajes y ${activeClients} clientes activos en datos, priorizá cerrar la planificación de los ${pend} viajes pendientes antes de abrir nuevas ventanas de carga.`
+  );
+  out.push(
+    `Hay ${transit} viajes en tránsito: coordiná tiempos de descarga y documentación para evitar demoras en destino y costos de espera.`
+  );
+  out.push(
+    `Rutas más frecuentes: ${routes || 'sin suficiente historia'}. Evaluá consolidar retornos y backhaul desde esos destinos hacia la base operativa.`
+  );
+  return out.slice(0, 3);
+}
+
+export async function generateLogisticsInsights(
   trips: Trip[],
   clients: Client[]
-): Promise<AIInsight[]> => {
+): Promise<string[]> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+
+  if (!apiKey?.trim()) {
+    console.info('[GDC Gemini] Sin VITE_GEMINI_API_KEY: insights locales en español.');
+    return hardcodedInsightsEs(trips, clients);
+  }
+
   try {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-
-    if (!apiKey) {
-      console.warn('Gemini API Key missing');
-      return [
-        {
-          title: 'Configuración Requerida',
-          description:
-            'Agregue su API Key de Gemini en el archivo .env para obtener insights.',
-          type: 'info',
-        },
-      ];
-    }
-
-    const genAI = new GoogleGenerativeAI(apiKey);
-
+    const genAI = new GoogleGenerativeAI(apiKey.trim());
     const model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
       generationConfig: { responseMimeType: 'application/json' },
     });
 
-    const activeTrips = trips.filter(
-      (t) => t.estado === 'En Tránsito' || t.estado === 'Pendiente'
-    );
+    const byEstado = countByEstado(trips);
+    const activeClients = new Set(trips.map((t) => t.clientId)).size;
+    const routes = topRoutesSummary(trips, 5);
 
-    const prompt = `
-      Actúa como un Gerente de Logística Experto para GDC (Transporte de Carga en Uruguay).
-      Nuestra Base Operativa está en: ${BASE_GDC.nombre} (Lat: ${BASE_GDC.lat}, Lng: ${BASE_GDC.lng}).
-      
-      Analiza los siguientes datos y proporciona 3 sugerencias breves y estratégicas para optimizar la logística.
-      PRIORIDAD: Optimizar "viajes de retorno" (backhaul) que minimicen el desvío hacia la base en ${BASE_GDC.nombre} desde los puntos de destino actuales.
-      
-      Clientes Disponibles (Ubicaciones):
-      ${JSON.stringify(
-        clients.map((c) => ({
-          nombre: c.nombreComercial,
-          loc: c.localidad,
-          dep: c.departamento,
-          lat: c.latitud,
-          lng: c.longitud,
-        }))
-      )}
-      
-      Viajes Activos (Donde quedarán los camiones):
-      ${JSON.stringify(
-        activeTrips.map((t) => ({
-          id: t.id,
-          origen: t.origen,
-          destino: t.destino,
-          carga: t.contenido,
-        }))
-      )}
-      
-      Devuelve SOLO un array JSON válido con la siguiente estructura:
-      [
-        { "title": "Título corto", "description": "Explicación de 1 frase", "type": "optimization" | "alert" | "info" }
-      ]
-    `;
+    const prompt = `Sos analista logístico para transporte de carga en Uruguay (GDC).
+Datos:
+- Cantidad de viajes: ${trips.length}
+- Clientes con al menos un viaje: ${activeClients}
+- Clientes totales en directorio: ${clients.length}
+- Viajes por estado (JSON): ${JSON.stringify(byEstado)}
+- Rutas más frecuentes (texto): ${routes}
+
+Generá como máximo 3 frases concretas y accionables en español (sin markdown).
+Respondé SOLO un JSON array de strings, ejemplo: ["texto1","texto2"]`;
 
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-
+    const text = (await result.response).text();
     if (!text) {
-      return [];
+      return hardcodedInsightsEs(trips, clients);
     }
-
-    return JSON.parse(text) as AIInsight[];
+    const parsed = JSON.parse(text) as unknown;
+    if (!Array.isArray(parsed)) {
+      return hardcodedInsightsEs(trips, clients);
+    }
+    const strings = parsed
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .map((s) => s.trim())
+      .slice(0, 3);
+    return strings.length > 0 ? strings : hardcodedInsightsEs(trips, clients);
   } catch (error) {
-    console.error('Error fetching Gemini insights:', error);
-    return [
-      {
-        title: 'Error de IA',
-        description: 'Verifique su conexión o el límite de su API Key.',
-        type: 'alert',
-      },
-    ];
+    console.error('[GDC Gemini] Error:', error);
+    return hardcodedInsightsEs(trips, clients);
   }
-};
+}
