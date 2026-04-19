@@ -12,7 +12,7 @@ export interface CardProps {
 
 const PADDING: Record<CardPadding, string> = {
   sm: 'p-4',
-  md: 'p-4',
+  md: 'p-5',
   lg: 'p-6',
 };
 
@@ -25,14 +25,16 @@ export const Card: React.FC<CardProps> = ({
 }) => {
   return (
     <section
-      className={`rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] shadow-sm ${PADDING[padding]} ${className}`.trim()}
+      style={{
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-sm), var(--shadow-inset)',
+      }}
+      className={`border border-[var(--border)] bg-[var(--bg-surface)] transition-[box-shadow,border-color] [transition-duration:var(--duration-normal)] [transition-timing-function:var(--ease-out)] hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-md)] ${PADDING[padding]} ${className}`.trim()}
     >
       {(title || action) && (
-        <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="mb-4 flex items-start justify-between gap-3 border-b border-[var(--border-subtle)] pb-3">
           {title ? (
-            <h3 className="text-base font-semibold tracking-tight text-[var(--text-primary)]">
-              {title}
-            </h3>
+            <h3 className="text-sm font-semibold tracking-tight text-[var(--text-primary)]">{title}</h3>
           ) : (
             <span />
           )}

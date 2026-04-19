@@ -1,87 +1,119 @@
-/* ═══════════════════════════════════════
-   GDC LOGISTICS — DESIGN TOKENS
-   ═══════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   GDC LOGISTICS — DESIGN SYSTEM (dual theme)
+   Principles: semantic tokens, WCAG contrast, 4/8px rhythm, elevation
+   scale, visible focus, motion 150–300ms, reduced-motion support.
+   ═══════════════════════════════════════════════════════════════ */
 
 :root[data-theme='dark'] {
-  /* Backgrounds */
-  --bg-base: #0f172a; /* página principal */
-  --bg-surface: #1e293b; /* cards, sidebar */
-  --bg-elevated: #2d3f55; /* inputs, hover */
-  --bg-table-row: #1e293b;
-  --bg-table-alt: #253347; /* filas alternadas */
-  --bg-table-hover: #2d3f55;
+  color-scheme: dark;
 
-  /* Borders */
-  --border: #334155;
-  --border-subtle: #1e293b;
-  --border-focus: #3b82f6;
+  /* Surfaces */
+  --bg-base: #0b1220;
+  --bg-surface: #151f32;
+  --bg-elevated: #1e2d45;
+  --bg-muted: #243447;
+  --bg-table-row: #151f32;
+  --bg-table-alt: #1a2738;
+  --bg-table-hover: #243447;
 
-  /* Text */
+  /* Borders & dividers */
+  --border: #2d3f55;
+  --border-subtle: #1a2536;
+  --border-strong: #3d5270;
+  --border-focus: #60a5fa;
+
+  /* Typography */
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
-  --text-inverse: #0f172a;
+  --text-inverse: #0b1220;
+  --text-on-accent: #ffffff;
 
-  /* Accents */
+  /* Brand / semantic accents */
   --accent-blue: #3b82f6;
+  --accent-blue-muted: color-mix(in srgb, var(--accent-blue) 22%, transparent);
   --accent-emerald: #10b981;
   --accent-amber: #f59e0b;
-  --accent-red: #ef4444;
-  --accent-purple: #8b5cf6;
-  --accent-cyan: #06b6d4;
+  --accent-red: #f87171;
+  --accent-purple: #a78bfa;
+  --accent-cyan: #22d3ee;
 
-  /* Status badges — ALTA VISIBILIDAD en dark */
-  --status-pendiente-bg: rgba(245, 158, 11, 0.2);
-  --status-pendiente-text: #fcd34d;
-  --status-pendiente-border: rgba(245, 158, 11, 0.5);
+  /* Status badges — high contrast on dark */
+  --status-pendiente-bg: rgba(245, 158, 11, 0.18);
+  --status-pendiente-text: #fde68a;
+  --status-pendiente-border: rgba(245, 158, 11, 0.45);
 
-  --status-transito-bg: rgba(59, 130, 246, 0.2);
-  --status-transito-text: #93c5fd;
-  --status-transito-border: rgba(59, 130, 246, 0.5);
+  --status-transito-bg: rgba(59, 130, 246, 0.18);
+  --status-transito-text: #bfdbfe;
+  --status-transito-border: rgba(59, 130, 246, 0.45);
 
-  --status-completado-bg: rgba(16, 185, 129, 0.2);
+  --status-completado-bg: rgba(16, 185, 129, 0.18);
   --status-completado-text: #6ee7b7;
-  --status-completado-border: rgba(16, 185, 129, 0.5);
+  --status-completado-border: rgba(16, 185, 129, 0.45);
 
-  --status-cerrado-bg: rgba(148, 163, 184, 0.15);
-  --status-cerrado-text: #cbd5e1;
-  --status-cerrado-border: rgba(148, 163, 184, 0.4);
+  --status-cerrado-bg: rgba(148, 163, 184, 0.12);
+  --status-cerrado-text: #e2e8f0;
+  --status-cerrado-border: rgba(148, 163, 184, 0.35);
 
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+  /* Elevation (consistent shadow scale) */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.45), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 24px -4px rgba(0, 0, 0, 0.55);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  /* Radius scale (8px-based) */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  /* Overlay / modal scrim (40–60% — legible foreground) */
+  --scrim: rgba(0, 0, 0, 0.55);
+  --header-surface: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+
+  /* Focus ring (WCAG — never remove outline without replacement) */
+  --focus-ring: #60a5fa;
+  --focus-ring-offset: 2px;
+
+  /* Motion tokens */
+  --duration-fast: 150ms;
+  --duration-normal: 220ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
 }
 
 :root[data-theme='light'] {
-  /* Backgrounds */
+  color-scheme: light;
+
   --bg-base: #f1f5f9;
   --bg-surface: #ffffff;
   --bg-elevated: #f8fafc;
+  --bg-muted: #f1f5f9;
   --bg-table-row: #ffffff;
   --bg-table-alt: #f8fafc;
-  --bg-table-hover: #f0f7ff;
+  --bg-table-hover: #eff6ff;
 
-  /* Borders */
   --border: #e2e8f0;
   --border-subtle: #f1f5f9;
-  --border-focus: #3b82f6;
+  --border-strong: #cbd5e1;
+  --border-focus: #2563eb;
 
-  /* Text */
   --text-primary: #0f172a;
   --text-secondary: #475569;
   --text-muted: #94a3b8;
-  --text-inverse: #f1f5f9;
+  --text-inverse: #f8fafc;
+  --text-on-accent: #ffffff;
 
-  /* Accents — mismos colores, funcionan en ambos temas */
   --accent-blue: #2563eb;
+  --accent-blue-muted: color-mix(in srgb, var(--accent-blue) 14%, transparent);
   --accent-emerald: #059669;
   --accent-amber: #d97706;
   --accent-red: #dc2626;
   --accent-purple: #7c3aed;
   --accent-cyan: #0891b2;
 
-  /* Status badges — ALTA VISIBILIDAD en light */
   --status-pendiente-bg: #fef3c7;
   --status-pendiente-text: #92400e;
   --status-pendiente-border: #fcd34d;
@@ -98,10 +130,28 @@
   --status-cerrado-text: #475569;
   --status-cerrado-border: #cbd5e1;
 
-  /* Shadows — más suaves en light */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.14);
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 10px 24px -4px rgba(15, 23, 42, 0.12);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  --scrim: rgba(15, 23, 42, 0.45);
+  --header-surface: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+
+  --focus-ring: #2563eb;
+  --focus-ring-offset: 2px;
+
+  --duration-fast: 150ms;
+  --duration-normal: 220ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
 }
 
 *,
@@ -110,20 +160,39 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
 html,
 body,
 #root {
+  min-height: 100%;
   height: 100%;
 }
 
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell,
-    Noto Sans, Helvetica Neue, Arial, 'Apple Color Emoji', 'Segoe UI Emoji';
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Ubuntu, Cantarell,
+    'Noto Sans', 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
   background-color: var(--bg-base);
   color: var(--text-primary);
-  transition: background-color 200ms ease, color 200ms ease;
+  transition:
+    background-color var(--duration-normal) var(--ease-in-out),
+    color var(--duration-normal) var(--ease-in-out);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Focus visible: keyboard users only (skip mouse click outline noise where supported) */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 @keyframes gdcTab {
@@ -134,6 +203,12 @@ body {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body {
+    transition: none;
   }
 }
 

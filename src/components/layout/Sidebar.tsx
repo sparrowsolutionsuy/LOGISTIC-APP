@@ -33,34 +33,43 @@ interface NavDef {
 }
 
 const OPERATIVE_NAV: NavDef[] = [
-  { view: 'dashboard', label: ROUTE_NAMES.dashboard, icon: <LayoutDashboard size={20} aria-hidden /> },
+  { view: 'dashboard', label: ROUTE_NAMES.dashboard, icon: <LayoutDashboard size={20} strokeWidth={2} aria-hidden /> },
   {
     view: 'trips',
     label: ROUTE_NAMES.trips,
-    icon: <Truck size={20} aria-hidden />,
+    icon: <Truck size={20} strokeWidth={2} aria-hidden />,
     showPendingBadge: true,
   },
-  { view: 'map', label: ROUTE_NAMES.map, icon: <MapIcon size={20} aria-hidden /> },
+  { view: 'map', label: ROUTE_NAMES.map, icon: <MapIcon size={20} strokeWidth={2} aria-hidden /> },
 ];
 
 const FINANCIAL_NAV: NavDef[] = [
-  { view: 'costs', label: ROUTE_NAMES.costs, icon: <Wallet size={20} aria-hidden />, roles: ['admin'] },
+  { view: 'costs', label: ROUTE_NAMES.costs, icon: <Wallet size={20} strokeWidth={2} aria-hidden />, roles: ['admin'] },
   {
     view: 'financial',
     label: ROUTE_NAMES.financial,
-    icon: <LineChart size={20} aria-hidden />,
+    icon: <LineChart size={20} strokeWidth={2} aria-hidden />,
     roles: ['admin'],
   },
-  { view: 'billing', label: ROUTE_NAMES.billing, icon: <Receipt size={20} aria-hidden />, roles: ['admin'] },
+  { view: 'billing', label: ROUTE_NAMES.billing, icon: <Receipt size={20} strokeWidth={2} aria-hidden />, roles: ['admin'] },
 ];
 
 const ADMIN_NAV: NavDef[] = [
-  { view: 'clients', label: ROUTE_NAMES.clients, icon: <Users size={20} aria-hidden />, roles: ['admin'] },
-  { view: 'newClient', label: ROUTE_NAMES.newClient, icon: <UserPlus size={20} aria-hidden />, roles: ['admin'] },
+  { view: 'clients', label: ROUTE_NAMES.clients, icon: <Users size={20} strokeWidth={2} aria-hidden />, roles: ['admin'] },
+  { view: 'newClient', label: ROUTE_NAMES.newClient, icon: <UserPlus size={20} strokeWidth={2} aria-hidden />, roles: ['admin'] },
 ];
 
 function filterByRole(items: NavDef[], role: UserRole): NavDef[] {
   return items.filter((i) => !i.roles || i.roles.includes(role));
+}
+
+function navButtonClass(active: boolean): string {
+  const base =
+    'flex min-h-11 w-full items-center justify-start gap-3 rounded-[var(--radius-md)] border px-3 py-2.5 text-left text-sm font-medium transition-[background-color,border-color,color,box-shadow] [transition-duration:var(--duration-normal)] [transition-timing-function:var(--ease-out)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] touch-manipulation';
+  if (active) {
+    return `${base} border-[var(--border)] bg-[var(--accent-blue-muted)] text-[var(--text-primary)] shadow-[var(--shadow-xs)]`;
+  }
+  return `${base} border-transparent text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] active:scale-[0.99]`;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -80,24 +89,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const financial = filterByRole(FINANCIAL_NAV, user.role);
   const adminOnly = filterByRole(ADMIN_NAV, user.role);
 
-  const navBtnClass =
-    'flex h-auto w-full items-center justify-start gap-4 rounded-lg border px-4 py-2 text-left text-sm font-medium transition-colors duration-150';
-
   return (
     <aside className="flex h-full min-h-0 flex-col" style={{ backgroundColor: 'var(--bg-surface)' }}>
-      <div className="border-b border-[var(--border)] px-4 py-6">
-        <div className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-          GDC Logistics
+      <div className="border-b border-[var(--border)] px-5 py-6">
+        <div className="pl-3" style={{ borderLeft: '3px solid var(--accent-blue)' }}>
+          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+            GDC Logistics
+          </div>
+          <div className="mt-1 text-sm font-semibold leading-snug text-[var(--text-primary)]">Plataforma</div>
         </div>
-        <div className="mt-2 text-sm font-semibold text-[var(--text-primary)]">Plataforma</div>
       </div>
 
-      <nav className="flex-1 space-y-6 overflow-y-auto px-4 py-6">
+      <nav className="flex-1 space-y-8 overflow-y-auto px-4 py-6" aria-label="Navegación principal">
         <div>
-          <div className="mb-2 px-2 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">
+          <div className="mb-2 px-2 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
             Operativo
           </div>
-          <div className="space-y-2">
+          <div className="flex flex-col gap-2">
             {OPERATIVE_NAV.map((item) => {
               const active = currentView === item.view;
               const badgeCount = item.showPendingBadge ? pendingTripsCount : 0;
@@ -106,20 +114,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   key={item.view}
                   type="button"
                   onClick={() => go(item.view)}
-                  style={{
-                    backgroundColor: active ? 'var(--accent-blue)' : 'transparent',
-                    color: active ? 'var(--text-inverse)' : 'var(--text-secondary)',
-                    borderColor: active ? 'var(--accent-blue)' : 'transparent',
-                  }}
-                  className={`${navBtnClass} border hover:bg-[var(--bg-elevated)]`}
+                  className={`relative ${navButtonClass(active)}`}
+                  style={
+                    active
+                      ? { boxShadow: 'inset 3px 0 0 0 var(--accent-blue), var(--shadow-xs)' }
+                      : undefined
+                  }
+                  aria-current={active ? 'page' : undefined}
                 >
-                  <span className={active ? 'text-[var(--text-inverse)]' : 'text-[var(--text-muted)]'}>
+                  <span className={active ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'}>
                     {item.icon}
                   </span>
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   {badgeCount > 0 ? (
                     <span
-                      className="shrink-0 rounded-full border border-[color-mix(in_srgb,var(--accent-amber)_35%,transparent)] bg-[color-mix(in_srgb,var(--accent-amber)_15%,transparent)] px-2 py-0.5 text-xs font-bold tabular-nums text-[var(--accent-amber)]"
+                      className="shrink-0 rounded-[var(--radius-full)] border border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent-amber)_12%,transparent)] px-2 py-0.5 text-xs font-bold tabular-nums text-[var(--accent-amber)]"
                       title="Viajes pendientes"
                     >
                       {badgeCount > 99 ? '99+' : badgeCount}
@@ -133,10 +142,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {user.role === 'admin' && financial.length > 0 ? (
           <div>
-            <div className="mb-2 px-2 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">
+            <div className="mb-2 px-2 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
               Financiero
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               {financial.map((item) => {
                 const active = currentView === item.view;
                 return (
@@ -144,14 +153,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     key={item.view}
                     type="button"
                     onClick={() => go(item.view)}
-                    style={{
-                      backgroundColor: active ? 'var(--accent-blue)' : 'transparent',
-                      color: active ? 'var(--text-inverse)' : 'var(--text-secondary)',
-                      borderColor: active ? 'var(--accent-blue)' : 'transparent',
-                    }}
-                    className={`${navBtnClass} border hover:bg-[var(--bg-elevated)]`}
+                    className={`relative ${navButtonClass(active)}`}
+                    style={
+                      active
+                        ? { boxShadow: 'inset 3px 0 0 0 var(--accent-blue), var(--shadow-xs)' }
+                        : undefined
+                    }
+                    aria-current={active ? 'page' : undefined}
                   >
-                    <span className={active ? 'text-[var(--text-inverse)]' : 'text-[var(--text-muted)]'}>
+                    <span className={active ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'}>
                       {item.icon}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
@@ -164,10 +174,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {user.role === 'admin' && adminOnly.length > 0 ? (
           <div>
-            <div className="mb-2 px-2 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">
+            <div className="mb-2 px-2 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
               Administración
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               {adminOnly.map((item) => {
                 const active = currentView === item.view;
                 return (
@@ -175,14 +185,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     key={item.view}
                     type="button"
                     onClick={() => go(item.view)}
-                    style={{
-                      backgroundColor: active ? 'var(--accent-blue)' : 'transparent',
-                      color: active ? 'var(--text-inverse)' : 'var(--text-secondary)',
-                      borderColor: active ? 'var(--accent-blue)' : 'transparent',
-                    }}
-                    className={`${navBtnClass} border hover:bg-[var(--bg-elevated)]`}
+                    className={`relative ${navButtonClass(active)}`}
+                    style={
+                      active
+                        ? { boxShadow: 'inset 3px 0 0 0 var(--accent-blue), var(--shadow-xs)' }
+                        : undefined
+                    }
+                    aria-current={active ? 'page' : undefined}
                   >
-                    <span className={active ? 'text-[var(--text-inverse)]' : 'text-[var(--text-muted)]'}>
+                    <span className={active ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'}>
                       {item.icon}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
@@ -194,26 +205,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : null}
       </nav>
 
-      <div className="border-t border-[var(--border)] px-4 py-6">
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-4">
+      <div className="mt-auto border-t border-[var(--border)] px-4 py-6">
+        <div
+          style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
+          className="border border-[var(--border)] bg-[var(--bg-base)] p-4"
+        >
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-[var(--text-primary)]">{user.nombre}</p>
-              <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent-blue)]">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--accent-blue)]">
                 {user.role}
               </p>
             </div>
             <span
-              className={`mt-1 inline-flex h-2.5 w-2.5 shrink-0 rounded-full ${
+              className={`mt-1 inline-flex h-2.5 w-2.5 shrink-0 rounded-[var(--radius-full)] ${
                 offline ? 'bg-[var(--accent-amber)]' : 'bg-[var(--accent-emerald)]'
               }`}
               title={offline ? 'Modo demo / sin hoja remota' : 'Sincronización esperada'}
               aria-label={offline ? 'Modo demo' : 'Conectado'}
             />
           </div>
-          <div className="mt-2 text-xs text-[var(--text-muted)]">
+          <p className="mt-2 text-xs leading-relaxed text-[var(--text-muted)]">
             {offline ? 'Modo demo — los cambios son locales' : 'Sincronización activa'}
-          </div>
+          </p>
         </div>
 
         <div className="mt-4 flex justify-center">
@@ -222,10 +236,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           type="button"
-          className="mt-4 flex w-full items-center justify-start gap-2 rounded-lg px-3 py-2 text-sm text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-elevated)] hover:text-[var(--accent-red)]"
+          className="mt-3 flex min-h-11 w-full items-center justify-start gap-2 rounded-[var(--radius-md)] border border-transparent px-3 py-2.5 text-sm text-[var(--text-secondary)] transition-colors [transition-duration:var(--duration-normal)] hover:border-[color-mix(in_srgb,var(--accent-red)_25%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent-red)_8%,transparent)] hover:text-[var(--accent-red)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] touch-manipulation"
           onClick={onLogout}
         >
-          <LogOut size={16} aria-hidden />
+          <LogOut size={18} strokeWidth={2} aria-hidden />
           Salir
         </button>
       </div>
