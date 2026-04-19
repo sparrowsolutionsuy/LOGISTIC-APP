@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 import { Menu, X } from 'lucide-react';
-import type { ShellView, User } from '../../types';
-import { SHELL_VIEW_TITLES } from '../../constants';
+import type { ActiveTab, User } from '../../types';
+import { ROUTE_NAMES } from '../../constants';
 import { Sidebar } from './Sidebar';
 import { Button } from '../ui/Button';
 
 export interface AppShellProps {
   user: User;
-  currentView: ShellView;
-  onNavigate: (view: ShellView) => void;
+  currentView: ActiveTab;
+  onNavigate: (view: ActiveTab) => void;
   offline: boolean;
+  pendingTripsCount: number;
   onLogout: () => void;
   headerBadge?: React.ReactNode;
   children: React.ReactNode;
@@ -20,6 +21,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   currentView,
   onNavigate,
   offline,
+  pendingTripsCount,
   onLogout,
   headerBadge,
   children,
@@ -28,8 +30,8 @@ export const AppShell: React.FC<AppShellProps> = ({
 
   return (
     <div className="flex h-screen max-h-screen min-h-0 flex-col overflow-hidden bg-[var(--bg-base)] text-[var(--text-primary)]">
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--bg-surface)_92%,transparent)] px-3 backdrop-blur lg:hidden">
-        <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--bg-surface)_92%,transparent)] px-3 backdrop-blur lg:hidden">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <Button
             variant="ghost"
             size="sm"
@@ -38,9 +40,17 @@ export const AppShell: React.FC<AppShellProps> = ({
             aria-label="Abrir menú"
             icon={<Menu size={18} />}
           />
-          <div className="text-sm font-semibold tracking-tight">GDC</div>
+          <nav
+            className="flex min-w-0 items-center gap-1 truncate text-xs text-[var(--text-muted)]"
+            aria-label="Ruta actual"
+          >
+            <span className="shrink-0 font-semibold tracking-tight text-[var(--text-secondary)]">GDC</span>
+            <span className="shrink-0 text-[var(--text-muted)]">›</span>
+            <span className="truncate font-medium text-[var(--text-primary)]">
+              {ROUTE_NAMES[currentView]}
+            </span>
+          </nav>
         </div>
-        <div className="truncate text-xs text-[var(--text-muted)]">{SHELL_VIEW_TITLES[currentView]}</div>
       </header>
 
       {drawerOpen ? (
@@ -68,6 +78,7 @@ export const AppShell: React.FC<AppShellProps> = ({
                 currentView={currentView}
                 onNavigate={onNavigate}
                 offline={offline}
+                pendingTripsCount={pendingTripsCount}
                 onRequestClose={() => setDrawerOpen(false)}
                 onLogout={() => {
                   setDrawerOpen(false);
@@ -86,6 +97,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             currentView={currentView}
             onNavigate={onNavigate}
             offline={offline}
+            pendingTripsCount={pendingTripsCount}
             onLogout={onLogout}
           />
         </aside>
@@ -93,9 +105,11 @@ export const AppShell: React.FC<AppShellProps> = ({
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="hidden h-14 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 lg:flex">
             <div className="flex items-center gap-2">
-              <h1 className="text-sm font-semibold text-[var(--text-primary)]">
-                {SHELL_VIEW_TITLES[currentView]}
-              </h1>
+              <nav className="flex items-center gap-1 text-sm text-[var(--text-muted)]" aria-label="Ruta">
+                <span>GDC</span>
+                <span>›</span>
+                <h1 className="font-semibold text-[var(--text-primary)]">{ROUTE_NAMES[currentView]}</h1>
+              </nav>
               {headerBadge}
             </div>
             <div className="flex items-center gap-3">
@@ -111,7 +125,14 @@ export const AppShell: React.FC<AppShellProps> = ({
             </div>
           </div>
 
-          <main className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
+          <main className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6">
+            <div
+              key={currentView}
+              className="motion-safe:animate-[gdcTab_0.18s_ease-out_both]"
+            >
+              {children}
+            </div>
+          </main>
         </div>
       </div>
     </div>

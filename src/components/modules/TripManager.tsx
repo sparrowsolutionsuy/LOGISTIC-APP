@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import type { Trip, TripStatus, Client, User } from '../../types';
-import { updateTripInSheet, deleteTripInSheet } from '../../services/api';
 import { Badge } from '../ui/Badge';
 import {
   Plus,
@@ -19,14 +18,18 @@ import {
 interface TripManagerProps {
   trips: Trip[];
   clients: Client[];
-  onAddTrip: (trip: Trip) => void;
   user: User;
+  onAddTrip: (trip: Trip) => void | Promise<void>;
+  onUpdateTrip: (trip: Trip) => void | Promise<void>;
+  onDeleteTrip: (tripId: string) => void | Promise<void>;
 }
 
 export const TripManager: React.FC<TripManagerProps> = ({
   trips,
   clients,
   onAddTrip,
+  onUpdateTrip,
+  onDeleteTrip,
   user,
 }) => {
   const isAdmin = user.role === 'admin';
@@ -112,8 +115,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
           ...(newTrip as Trip),
           id: editingId,
         };
-        await updateTripInSheet(updatedTrip);
-        alert('Viaje actualizado. Recargue para ver cambios en la tabla.');
+        await onUpdateTrip(updatedTrip);
       } else {
         const trip: Trip = {
           id: `V${Date.now()}`,
@@ -127,7 +129,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
           origen: newTrip.origen || '',
           destino: newTrip.destino || '',
         };
-        onAddTrip(trip);
+        await onAddTrip(trip);
       }
 
       closeForm();
@@ -156,12 +158,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
     );
 
     if (confirmed) {
-      const success = await deleteTripInSheet(id);
-      if (success) {
-        alert('Registro eliminado correctamente. La tabla se actualizará al recargar.');
-      } else {
-        alert('Hubo un error al intentar eliminar el registro. Verifique su conexión.');
-      }
+      await onDeleteTrip(id);
     }
   };
 

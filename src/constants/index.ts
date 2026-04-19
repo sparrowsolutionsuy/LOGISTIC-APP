@@ -1,4 +1,4 @@
-import type { ActiveTab, Client, Cost, ShellView, Trip, TripStatus } from '../types';
+import type { ActiveTab, Client, Cost, Trip, TripStatus } from '../types';
 
 // Uruguay departments (operational reference)
 export const DEPARTAMENTOS = [
@@ -39,18 +39,8 @@ export const ROUTE_NAMES: Record<ActiveTab, string> = {
   costs: 'Costos',
   financial: 'Finanzas',
   clients: 'Directorio Clientes',
-  billing: 'Facturación',
-};
-
-export const SHELL_VIEW_TITLES: Record<ShellView, string> = {
-  dashboard: ROUTE_NAMES.dashboard,
-  trips: ROUTE_NAMES.trips,
-  map: ROUTE_NAMES.map,
-  costs: ROUTE_NAMES.costs,
-  financial: ROUTE_NAMES.financial,
-  billing: ROUTE_NAMES.billing,
-  directory: ROUTE_NAMES.clients,
   newClient: 'Nuevo Cliente',
+  billing: 'Facturación',
 };
 
 export const STATUS_COLORS: Record<

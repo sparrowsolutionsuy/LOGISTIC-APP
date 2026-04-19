@@ -91,18 +91,8 @@ export type ActiveTab =
   | 'costs'
   | 'financial'
   | 'clients'
+  | 'newClient'
   | 'billing';
-
-/** Vistas principales del shell (sidebar + contenido) */
-export type ShellView =
-  | 'dashboard'
-  | 'trips'
-  | 'map'
-  | 'costs'
-  | 'financial'
-  | 'billing'
-  | 'directory'
-  | 'newClient';
 
 export interface AppState {
   user: User | null;

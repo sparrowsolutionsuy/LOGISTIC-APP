@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import type { AIInsight, Client, ShellView, Trip, User } from './types';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ActiveTab, AIInsight, Client, Cost, Trip, User } from './types';
 import { Dashboard } from './components/modules/Dashboard';
 import { StrategicMap } from './components/modules/StrategicMap';
 import { TripManager } from './components/modules/TripManager';
@@ -8,83 +8,182 @@ import { ClientForm } from './components/modules/ClientForm';
 import { BillingView } from './components/modules/BillingView';
 import { Login } from './components/modules/Login';
 import { PlaceholderModule } from './components/modules/PlaceholderModule';
+import { CostsPanel } from './components/modules/CostsPanel';
 import { AppShell } from './components/layout/AppShell';
+import { AdminGuard } from './components/layout/AdminGuard';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
-import { fetchLogisticsData, saveClientToSheet } from './services/api';
+import {
+  deleteTripInSheet,
+  fetchLogisticsData,
+  saveClientToSheet,
+  saveTripToSheet,
+  updateTripInSheet,
+} from './services/api';
 import { generateLogisticsInsights } from './services/geminiService';
 
-const ADMIN_ONLY_VIEWS = new Set<ShellView>([
-  'costs',
-  'financial',
-  'billing',
-  'directory',
-  'newClient',
-]);
+const STORAGE_USER_KEY = 'gdc_user';
+
+const ADMIN_ONLY_TABS = new Set<ActiveTab>(['costs', 'financial', 'billing', 'clients', 'newClient']);
 
 const SHELL_COPY = {
-  costsTitle: 'Costos',
-  costsDesc: 'Aquí se centralizarán peajes, combustible, mantenimiento y costos por viaje.',
   financialTitle: 'Finanzas',
   financialDesc: 'Panel financiero (margen, flujo y cierre) se integrará con analytics y Sheets.',
 } as const;
 
+function parseStoredUser(raw: string | null): User | null {
+  if (!raw) {
+    return null;
+  }
+  try {
+    const u: unknown = JSON.parse(raw);
+    if (!u || typeof u !== 'object') {
+      return null;
+    }
+    const r = u as Record<string, unknown>;
+    if (
+      typeof r.username !== 'string' ||
+      typeof r.nombre !== 'string' ||
+      (r.role !== 'admin' && r.role !== 'operativo')
+    ) {
+      return null;
+    }
+    return { username: r.username, nombre: r.nombre, role: r.role };
+  } catch {
+    return null;
+  }
+}
+
 const App: React.FC = () => {
+  const [hydrated, setHydrated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
-  const [shellView, setShellView] = useState<ShellView>('dashboard');
-  const [clients, setClients] = useState<Client[]>([]);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [trips, setTrips] = useState<Trip[]>([]);
-  const [insights, setInsights] = useState<AIInsight[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [costs, setCosts] = useState<Cost[]>([]);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
+  const [insights, setInsights] = useState<AIInsight[]>([]);
 
-  const loadData = async () => {
+  useEffect(() => {
+    const stored = parseStoredUser(localStorage.getItem(STORAGE_USER_KEY));
+    if (stored) {
+      setUser(stored);
+    }
+    setHydrated(true);
+  }, []);
+
+  const loadData = useCallback(async () => {
+    const data = await fetchLogisticsData();
+    setClients(data.clients);
+    setTrips(data.trips);
+    setCosts(data.costs);
+    setOffline(data.offline);
+
     try {
-      const data = await fetchLogisticsData();
-      setClients(data.clients);
-      setTrips(data.trips);
-      setOffline(false);
-
       if (data.trips.length > 0) {
         const aiSuggestions = await generateLogisticsInsights(data.trips, data.clients);
         setInsights(aiSuggestions);
       } else {
         setInsights([]);
       }
-    } catch (error) {
-      console.error('Error cargando datos:', error);
-      setOffline(true);
+    } catch {
+      setInsights([]);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (user) {
-      setLoading(true);
-      void loadData().finally(() => setLoading(false));
+    if (!hydrated) {
+      return;
     }
-  }, [user]);
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    void loadData().finally(() => setLoading(false));
+  }, [hydrated, user, loadData]);
 
   useEffect(() => {
     if (!user) {
       return;
     }
-    if (user.role !== 'admin' && ADMIN_ONLY_VIEWS.has(shellView)) {
-      setShellView('dashboard');
+    if (user.role !== 'admin' && ADMIN_ONLY_TABS.has(activeTab)) {
+      setActiveTab('dashboard');
     }
-  }, [user, shellView]);
+  }, [user, activeTab]);
 
-  const handleRegisterClient = async (newClient: Client) => {
-    setLoading(true);
-    const success = await saveClientToSheet(newClient);
+  const handleLoginSuccess = useCallback((logged: User) => {
+    localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(logged));
+    setUser(logged);
+    setActiveTab('dashboard');
+  }, []);
 
-    if (success) {
-      alert('✅ Cliente registrado exitosamente en Google Sheets');
-      await loadData();
-      setShellView('directory');
-    } else {
-      alert('❌ Error al guardar: Revisa la conexión con el Sheets');
-    }
-    setLoading(false);
-  };
+  const onLogout = useCallback(() => {
+    localStorage.clear();
+    setUser(null);
+    setActiveTab('dashboard');
+    setTrips([]);
+    setClients([]);
+    setCosts([]);
+    setInsights([]);
+    setOffline(false);
+  }, []);
+
+  const onAddTrip = useCallback(async (trip: Trip) => {
+    await saveTripToSheet(trip);
+    setTrips((prev) => [...prev, trip]);
+  }, []);
+
+  const onUpdateTrip = useCallback(async (trip: Trip) => {
+    await updateTripInSheet(trip);
+    setTrips((prev) => prev.map((t) => (t.id === trip.id ? trip : t)));
+  }, []);
+
+  const onDeleteTrip = useCallback(async (tripId: string) => {
+    await deleteTripInSheet(tripId);
+    setTrips((prev) => prev.filter((t) => t.id !== tripId));
+    setCosts((prev) => prev.filter((c) => c.tripId !== tripId));
+  }, []);
+
+  const onUploadInvoice = useCallback((tripId: string, url: string) => {
+    setTrips((prev) =>
+      prev.map((t) =>
+        t.id === tripId ? { ...t, facturaUrl: url, estado: 'Cerrado' as const } : t
+      )
+    );
+  }, []);
+
+  const onAddClient = useCallback(
+    async (newClient: Client) => {
+      setLoading(true);
+      const success = await saveClientToSheet(newClient);
+      if (success) {
+        setClients((prev) => [...prev, newClient]);
+        setActiveTab('clients');
+      } else {
+        alert('❌ Error al guardar: revisá la conexión con Sheets.');
+      }
+      setLoading(false);
+    },
+    []
+  );
+
+  const onAddCost = useCallback((cost: Cost) => {
+    setCosts((prev) => [...prev, cost]);
+  }, []);
+
+  const onUpdateCost = useCallback((cost: Cost) => {
+    setCosts((prev) => prev.map((c) => (c.id === cost.id ? cost : c)));
+  }, []);
+
+  const onDeleteCost = useCallback((costId: string) => {
+    setCosts((prev) => prev.filter((c) => c.id !== costId));
+  }, []);
+
+  const pendingTripsCount = useMemo(
+    () => trips.filter((t) => t.estado === 'Pendiente').length,
+    [trips]
+  );
 
   const headerBadge = useMemo(() => {
     if (insights.length === 0) {
@@ -97,56 +196,87 @@ const App: React.FC = () => {
     );
   }, [insights.length]);
 
+  if (!hydrated) {
+    return (
+      <div className="flex h-screen w-full flex-col items-center justify-center gap-3 bg-[var(--bg-base)] text-[var(--text-primary)]">
+        <LoadingSpinner size="lg" />
+        <p className="text-sm text-[var(--text-secondary)]">Iniciando…</p>
+      </div>
+    );
+  }
+
   if (!user) {
-    return <Login onLogin={setUser} />;
+    return <Login onLogin={handleLoginSuccess} />;
   }
 
   if (loading) {
     return (
       <div className="flex h-screen w-full flex-col items-center justify-center gap-3 bg-[var(--bg-base)] text-[var(--text-primary)]">
         <LoadingSpinner size="lg" />
-        <p className="text-sm text-[var(--text-secondary)]">Procesando con GDC Logistics…</p>
+        <p className="text-sm text-[var(--text-secondary)]">Cargando datos de GDC Logistics…</p>
       </div>
     );
   }
 
+  const adminRedirect = () => setActiveTab('dashboard');
+
   return (
     <AppShell
       user={user}
-      currentView={shellView}
-      onNavigate={setShellView}
+      currentView={activeTab}
+      onNavigate={setActiveTab}
       offline={offline}
-      onLogout={() => {
-        localStorage.clear();
-        setUser(null);
-      }}
+      pendingTripsCount={pendingTripsCount}
+      onLogout={onLogout}
       headerBadge={headerBadge}
     >
-      {shellView === 'dashboard' && <Dashboard trips={trips} clients={clients} user={user} />}
-      {shellView === 'trips' && (
-        <TripManager trips={trips} clients={clients} user={user} onAddTrip={() => {}} />
-      )}
-      {shellView === 'map' && <StrategicMap clients={clients} trips={trips} />}
-      {shellView === 'directory' && <ClientDirectory clients={clients} trips={trips} />}
-      {shellView === 'newClient' && (
-        <div className="mx-auto max-w-4xl">
-          <ClientForm onAddClient={handleRegisterClient} />
-        </div>
-      )}
-      {shellView === 'billing' && (
-        <BillingView trips={trips} clients={clients} onInvoiceUploaded={() => {}} />
-      )}
-      {shellView === 'costs' && (
-        <PlaceholderModule
-          title={SHELL_COPY.costsTitle}
-          description={SHELL_COPY.costsDesc}
+      {activeTab === 'dashboard' && <Dashboard trips={trips} clients={clients} user={user} />}
+      {activeTab === 'trips' && (
+        <TripManager
+          trips={trips}
+          clients={clients}
+          user={user}
+          onAddTrip={onAddTrip}
+          onUpdateTrip={onUpdateTrip}
+          onDeleteTrip={onDeleteTrip}
         />
       )}
-      {shellView === 'financial' && (
-        <PlaceholderModule
-          title={SHELL_COPY.financialTitle}
-          description={SHELL_COPY.financialDesc}
-        />
+      {activeTab === 'map' && <StrategicMap clients={clients} trips={trips} />}
+      {activeTab === 'clients' && (
+        <AdminGuard user={user} onRedirect={adminRedirect}>
+          <ClientDirectory clients={clients} trips={trips} />
+        </AdminGuard>
+      )}
+      {activeTab === 'newClient' && (
+        <AdminGuard user={user} onRedirect={adminRedirect}>
+          <div className="mx-auto max-w-4xl">
+            <ClientForm onAddClient={onAddClient} />
+          </div>
+        </AdminGuard>
+      )}
+      {activeTab === 'billing' && (
+        <AdminGuard user={user} onRedirect={adminRedirect}>
+          <BillingView trips={trips} clients={clients} onInvoiceUploaded={onUploadInvoice} />
+        </AdminGuard>
+      )}
+      {activeTab === 'costs' && (
+        <AdminGuard user={user} onRedirect={adminRedirect}>
+          <CostsPanel
+            costs={costs}
+            registradoPor={user.username}
+            onAddCost={onAddCost}
+            onUpdateCost={onUpdateCost}
+            onDeleteCost={onDeleteCost}
+          />
+        </AdminGuard>
+      )}
+      {activeTab === 'financial' && (
+        <AdminGuard user={user} onRedirect={adminRedirect}>
+          <PlaceholderModule
+            title={SHELL_COPY.financialTitle}
+            description={`${SHELL_COPY.financialDesc} Dataset: ${trips.length} viajes, ${costs.length} costos.`}
+          />
+        </AdminGuard>
       )}
     </AppShell>
   );

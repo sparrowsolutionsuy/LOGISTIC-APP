@@ -3,6 +3,7 @@ import { loginUser } from '../../services/api';
 import type { User } from '../../types';
 import { Truck, Lock, User as UserIcon, AlertCircle } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -20,11 +21,11 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
 
     try {
-      const logged = await loginUser(username, password);
+      const logged = await loginUser(username.trim(), password);
       if (logged) {
         onLogin(logged);
       } else {
-        setError('Credenciales inválidas. Verifique usuario y contraseña.');
+        setError('Credenciales incorrectas. Verifique usuario y contraseña.');
       }
     } catch {
       setError('Error de conexión. Intente nuevamente.');
@@ -36,65 +37,54 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[var(--bg-base)] p-4 text-[var(--text-primary)]">
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-surface)] shadow-xl">
-        <div className="relative border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--accent-blue)_16%,var(--bg-surface))] p-8 text-center">
-          <div className="relative z-10 flex flex-col items-center">
+        <div className="relative border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--accent-blue)_14%,var(--bg-surface))] px-8 py-10 text-center">
+          <div className="relative z-10 mx-auto flex max-w-xs flex-col items-center">
             <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
-              <Truck className="h-8 w-8 text-[var(--accent-blue)]" />
+              <Truck className="h-9 w-9 text-[var(--accent-blue)]" aria-hidden />
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">GDC Logistics</h1>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Plataforma de Gestión Segura</p>
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">Plataforma de gestión de carga — Uruguay</p>
           </div>
         </div>
 
-        <div className="p-8 pt-10">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Usuario</label>
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                  <UserIcon className="h-5 w-5 text-[var(--text-muted)]" />
-                </div>
-                <input
-                  type="text"
-                  required
-                  className="block w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] py-2.5 pl-10 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none transition-shadow focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-                  placeholder="Ingrese su usuario"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                />
-              </div>
-            </div>
+        <div className="p-8 pt-8">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <Input
+              label="Usuario"
+              name="username"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Ej. admin o operativo"
+              startAdornment={<UserIcon className="h-4 w-4" />}
+              required
+            />
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Contraseña</label>
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                  <Lock className="h-5 w-5 text-[var(--text-muted)]" />
-                </div>
-                <input
-                  type="password"
-                  required
-                  className="block w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] py-2.5 pl-10 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none transition-shadow focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-            </div>
+            <Input
+              label="Contraseña"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              startAdornment={<Lock className="h-4 w-4" />}
+              required
+            />
 
             {error ? (
               <div className="flex items-center rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-100">
-                <AlertCircle className="mr-2 h-4 w-4 shrink-0 text-red-300" />
+                <AlertCircle className="mr-2 h-4 w-4 shrink-0 text-red-300" aria-hidden />
                 {error}
               </div>
             ) : null}
 
             <Button type="submit" variant="primary" className="w-full" loading={loading} disabled={loading}>
-              {loading ? 'Verificando…' : 'Iniciar Sesión'}
+              {loading ? 'Verificando…' : 'Iniciar sesión'}
             </Button>
           </form>
 
-          <div className="mt-6 text-center">
+          <div className="mt-8 text-center">
             <p className="text-xs text-[var(--text-muted)]">© 2026 GDC SAS. Acceso restringido.</p>
           </div>
         </div>

@@ -1,44 +1,69 @@
-import type { Client, Trip, User } from '../types';
+import type { Client, Cost, Trip, User } from '../types';
 import { MOCK_DATA } from '../constants';
 
 const DEFAULT_SHEET_URL =
   'https://script.google.com/macros/s/AKfycbzyHGmjxKLdhufG0TPCITPL1Lxkf6jM3F43NyM5SFnUfhPAUH-S9_-G8Hg-1IeVZ7d_/exec';
 
-const envSheet = import.meta.env.VITE_SHEET_URL;
-const API_URL =
-  typeof envSheet === 'string' && envSheet.trim().length > 0 ? envSheet : DEFAULT_SHEET_URL;
+export function isSheetUrlConfigured(): boolean {
+  const v = import.meta.env.VITE_SHEET_URL;
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+function resolveApiUrl(): string {
+  if (isSheetUrlConfigured()) {
+    return (import.meta.env.VITE_SHEET_URL as string).trim();
+  }
+  return DEFAULT_SHEET_URL;
+}
+
+const API_URL = (): string => resolveApiUrl();
 
 export interface LogisticsPayload {
   clients: Client[];
   trips: Trip[];
+  costs: Cost[];
+  offline: boolean;
 }
 
-// 1. OBTENER DATOS (GET)
+function mockPayload(offline: boolean): LogisticsPayload {
+  return {
+    clients: [...MOCK_DATA.clients],
+    trips: [...MOCK_DATA.trips],
+    costs: [...MOCK_DATA.costs],
+    offline,
+  };
+}
+
 export const fetchLogisticsData = async (): Promise<LogisticsPayload> => {
+  if (!isSheetUrlConfigured()) {
+    return mockPayload(true);
+  }
+
   try {
-    const response = await fetch(API_URL);
+    const response = await fetch(API_URL());
     if (!response.ok) {
       throw new Error('Error en red');
     }
     const data: unknown = await response.json();
-    const record = data as { clients?: unknown; trips?: unknown };
+    const record = data as { clients?: unknown; trips?: unknown; costs?: unknown };
     return {
       clients: (Array.isArray(record.clients) ? record.clients : []) as Client[],
       trips: (Array.isArray(record.trips) ? record.trips : []) as Trip[],
+      costs: (Array.isArray(record.costs) ? record.costs : [...MOCK_DATA.costs]) as Cost[],
+      offline: false,
     };
   } catch (error) {
     console.error('Error fetch:', error);
-    return {
-      clients: [...MOCK_DATA.clients],
-      trips: [...MOCK_DATA.trips],
-    };
+    return mockPayload(true);
   }
 };
 
-// 2. GUARDAR CLIENTE
 export const saveClientToSheet = async (client: Client): Promise<boolean> => {
+  if (!isSheetUrlConfigured()) {
+    return true;
+  }
   try {
-    await fetch(API_URL, {
+    await fetch(API_URL(), {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
@@ -50,10 +75,12 @@ export const saveClientToSheet = async (client: Client): Promise<boolean> => {
   }
 };
 
-// 3. GUARDAR VIAJE
 export const saveTripToSheet = async (trip: Trip): Promise<boolean> => {
+  if (!isSheetUrlConfigured()) {
+    return true;
+  }
   try {
-    await fetch(API_URL, {
+    await fetch(API_URL(), {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
@@ -65,10 +92,12 @@ export const saveTripToSheet = async (trip: Trip): Promise<boolean> => {
   }
 };
 
-// 4. ACTUALIZAR VIAJE
 export const updateTripInSheet = async (trip: Trip): Promise<boolean> => {
+  if (!isSheetUrlConfigured()) {
+    return true;
+  }
   try {
-    await fetch(API_URL, {
+    await fetch(API_URL(), {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
@@ -80,10 +109,12 @@ export const updateTripInSheet = async (trip: Trip): Promise<boolean> => {
   }
 };
 
-// 5. BORRAR VIAJE
 export const deleteTripInSheet = async (tripId: string): Promise<boolean> => {
+  if (!isSheetUrlConfigured()) {
+    return true;
+  }
   try {
-    await fetch(API_URL, {
+    await fetch(API_URL(), {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
@@ -95,12 +126,14 @@ export const deleteTripInSheet = async (tripId: string): Promise<boolean> => {
   }
 };
 
-// 6. SUBIR FACTURA
 export const uploadInvoice = async (
   tripId: string,
   clientName: string,
   file: File
 ): Promise<string | null> => {
+  if (!isSheetUrlConfigured()) {
+    return null;
+  }
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -118,7 +151,7 @@ export const uploadInvoice = async (
         }
         const fileName = `Factura_${tripId}_${clientName.replace(/\s+/g, '')}.pdf`;
 
-        const response = await fetch(API_URL, {
+        const response = await fetch(API_URL(), {
           method: 'POST',
           body: JSON.stringify({
             type: 'uploadInvoice',
@@ -141,19 +174,27 @@ export const uploadInvoice = async (
   });
 };
 
-// 7. LOGIN
-export const loginUser = async (
-  username: string,
-  password: string
-): Promise<User | null> => {
+const MOCK_ADMIN: User = { username: 'admin', nombre: 'Administrador Maestro', role: 'admin' };
+const MOCK_OPERATIVO: User = {
+  username: 'operativo',
+  nombre: 'Usuario Operativo',
+  role: 'operativo',
+};
+
+export const loginUser = async (username: string, password: string): Promise<User | null> => {
   if (username === 'admin' && password === 'admin123') {
-    return { username: 'admin', nombre: 'Administrador Maestro', role: 'admin' };
+    return MOCK_ADMIN;
   }
   if (username === 'operativo' && password === 'op123') {
-    return { username: 'operativo', nombre: 'Usuario Operativo', role: 'operativo' };
+    return MOCK_OPERATIVO;
   }
+
+  if (!isSheetUrlConfigured()) {
+    return null;
+  }
+
   try {
-    const response = await fetch(API_URL, {
+    const response = await fetch(API_URL(), {
       method: 'POST',
       body: JSON.stringify({ type: 'login', data: { username, password } }),
     });
