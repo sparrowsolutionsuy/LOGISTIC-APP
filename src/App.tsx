@@ -8,7 +8,7 @@ import { ClientForm } from './components/modules/ClientForm';
 import { BillingView } from './components/modules/BillingView';
 import { Login } from './components/modules/Login';
 import { PlaceholderModule } from './components/modules/PlaceholderModule';
-import { CostsPanel } from './components/modules/CostsPanel';
+import { CostManager } from './components/modules/CostManager';
 import { AppShell } from './components/layout/AppShell';
 import { AdminGuard } from './components/layout/AdminGuard';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
@@ -285,8 +285,10 @@ const App: React.FC = () => {
       )}
       {activeTab === 'costs' && (
         <AdminGuard user={user} onRedirect={adminRedirect}>
-          <CostsPanel
+          <CostManager
             costs={costs}
+            trips={trips}
+            clients={clients}
             registradoPor={user.username}
             onAddCost={onAddCost}
             onUpdateCost={onUpdateCost}

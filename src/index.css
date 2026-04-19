@@ -43,3 +43,9 @@ body {
     transform: translateY(0);
   }
 }
+
+/* Leaflet: marcadores DivIcon sin caja por defecto */
+.leaflet-container .gdc-leaflet-div-icon {
+  background: transparent !important;
+  border: none !important;
+}

@@ -23,7 +23,7 @@ export const DEPARTAMENTOS = [
   'Treinta y Tres',
 ] as const;
 
-export const MAP_CENTER: [number, number] = [-32.522779, -55.765835];
+export const MAP_CENTER: [number, number] = [-32.5228, -55.7658];
 export const MAP_ZOOM = 7;
 
 export const BASE_GDC = {
