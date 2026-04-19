@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Trip, TripStatus, Client, User } from '../../types';
 import { updateTripInSheet, deleteTripInSheet } from '../../services/api';
-import { STATUS_COLORS } from '../../constants';
+import { Badge } from '../ui/Badge';
 import {
   Plus,
   Calendar,
@@ -22,21 +22,6 @@ interface TripManagerProps {
   onAddTrip: (trip: Trip) => void;
   user: User;
 }
-
-interface StatusBadgeProps {
-  status: TripStatus;
-}
-
-const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
-  const palette = STATUS_COLORS[status];
-  return (
-    <span
-      className={`px-2 py-1 rounded-full text-xs font-semibold border ${palette.bg} ${palette.text} ${palette.border}`}
-    >
-      {status}
-    </span>
-  );
-};
 
 export const TripManager: React.FC<TripManagerProps> = ({
   trips,
@@ -475,7 +460,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                     </div>
                   </td>
                   <td className="p-4">
-                    <StatusBadge status={trip.estado} />
+                    <Badge status={trip.estado} />
                   </td>
                   <td className="p-4">
                     <div className="font-medium text-slate-800">{getClientName(trip.clientId)}</div>

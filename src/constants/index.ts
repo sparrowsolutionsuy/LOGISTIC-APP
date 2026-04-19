@@ -1,4 +1,4 @@
-import type { ActiveTab, Client, Cost, Trip, TripStatus } from '../types';
+import type { ActiveTab, Client, Cost, ShellView, Trip, TripStatus } from '../types';
 
 // Uruguay departments (operational reference)
 export const DEPARTAMENTOS = [
@@ -42,29 +42,40 @@ export const ROUTE_NAMES: Record<ActiveTab, string> = {
   billing: 'Facturación',
 };
 
+export const SHELL_VIEW_TITLES: Record<ShellView, string> = {
+  dashboard: ROUTE_NAMES.dashboard,
+  trips: ROUTE_NAMES.trips,
+  map: ROUTE_NAMES.map,
+  costs: ROUTE_NAMES.costs,
+  financial: ROUTE_NAMES.financial,
+  billing: ROUTE_NAMES.billing,
+  directory: ROUTE_NAMES.clients,
+  newClient: 'Nuevo Cliente',
+};
+
 export const STATUS_COLORS: Record<
   TripStatus,
   { bg: string; text: string; border: string }
 > = {
   Pendiente: {
-    bg: 'bg-blue-100',
-    text: 'text-blue-800',
-    border: 'border-blue-200',
+    bg: 'bg-amber-500/15',
+    text: 'text-amber-300',
+    border: 'border-amber-500/30',
   },
   'En Tránsito': {
-    bg: 'bg-amber-100',
-    text: 'text-amber-800',
-    border: 'border-amber-200',
+    bg: 'bg-blue-500/15',
+    text: 'text-blue-300',
+    border: 'border-blue-500/30',
   },
   Completado: {
-    bg: 'bg-green-100',
-    text: 'text-green-800',
-    border: 'border-green-200',
+    bg: 'bg-emerald-500/15',
+    text: 'text-emerald-300',
+    border: 'border-emerald-500/30',
   },
   Cerrado: {
-    bg: 'bg-slate-100',
-    text: 'text-slate-800',
-    border: 'border-slate-300',
+    bg: 'bg-slate-500/20',
+    text: 'text-slate-200',
+    border: 'border-slate-500/35',
   },
 };
 
