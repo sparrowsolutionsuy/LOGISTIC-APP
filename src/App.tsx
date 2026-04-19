@@ -22,9 +22,11 @@ import {
   saveTripToSheet,
   updateCostInSheet,
   updateTripInSheet,
+  uploadRemitoImage,
 } from './services/api';
 import { generateLogisticsInsights } from './services/geminiService';
 import { useTheme } from './hooks/useTheme';
+import { useToast } from './hooks/useToast';
 
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
@@ -57,6 +59,7 @@ function parseStoredUser(raw: string | null): User | null {
 const App: React.FC = () => {
   const { theme } = useTheme();
   void theme;
+  const { showToast } = useToast();
 
   const [hydrated, setHydrated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
@@ -143,10 +146,33 @@ const App: React.FC = () => {
     setOffline(false);
   }, []);
 
-  const onAddTrip = useCallback(async (trip: Trip) => {
-    await saveTripToSheet(trip);
-    setTrips((prev) => [...prev, trip]);
-  }, []);
+  const onAddTrip = useCallback(
+    async (trip: Trip, remitoImage?: { base64: string; name: string; mime: string }) => {
+      await saveTripToSheet(trip);
+      setTrips((prev) => [trip, ...prev]);
+      if (remitoImage) {
+        try {
+          const remitoUrl = await uploadRemitoImage(
+            trip.id,
+            remitoImage.base64,
+            remitoImage.name,
+            remitoImage.mime
+          );
+          if (remitoUrl) {
+            const updated: Trip = { ...trip, remitoUrl };
+            setTrips((prev) => prev.map((t) => (t.id === trip.id ? updated : t)));
+            await updateTripInSheet(updated);
+          } else {
+            showToast('Viaje guardado. No se obtuvo URL del remito.', 'warning');
+          }
+        } catch (err) {
+          console.error('Error subiendo remito:', err);
+          showToast('Viaje guardado, pero hubo un error al subir el remito', 'warning');
+        }
+      }
+    },
+    [showToast]
+  );
 
   const onUpdateTrip = useCallback(async (trip: Trip) => {
     await updateTripInSheet(trip);

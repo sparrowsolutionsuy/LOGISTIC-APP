@@ -32,6 +32,7 @@ export function normalizeTrip(row: unknown): Trip {
     origen: String(r.origen ?? ''),
     destino: String(r.destino ?? ''),
     facturaUrl: r.facturaUrl ? String(r.facturaUrl) : undefined,
+    remitoUrl: r.remitoUrl ? String(r.remitoUrl) : undefined,
     asignadoA:
       r.asignadoA != null && String(r.asignadoA).trim() !== ''
         ? String(r.asignadoA).trim()
@@ -229,6 +230,38 @@ export async function uploadInvoice(
     return '';
   } catch (error) {
     console.error('[GDC API] uploadInvoice error:', error);
+    return '';
+  }
+}
+
+/** Sube imagen de remito a Drive vía Apps Script (`type: uploadRemito`) y devuelve la URL pública. */
+export async function uploadRemitoImage(
+  tripId: string,
+  fileData: string,
+  fileName: string,
+  mimeType: string
+): Promise<string> {
+  if (IS_MOCK) {
+    await delay(MOCK_DELAY_MS);
+    console.info('[GDC API] Mock uploadRemitoImage:', fileName);
+    return `https://drive.google.com/mock-remito/${encodeURIComponent(tripId)}/${encodeURIComponent(fileName)}`;
+  }
+  try {
+    const response = await fetch(SHEET_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'uploadRemito',
+        data: { tripId, fileData, fileName, mimeType },
+      }),
+    });
+    const result = (await response.json()) as { status?: string; url?: string };
+    if (result.status === 'success' && result.url) {
+      return String(result.url);
+    }
+    return '';
+  } catch (error) {
+    console.error('[GDC API] uploadRemitoImage error:', error);
     return '';
   }
 }

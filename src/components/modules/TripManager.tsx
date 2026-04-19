@@ -1,10 +1,12 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import type { Trip, TripStatus, Client, User, Cost, TripWithMetrics } from '../../types';
 import { enrichTrips } from '../../utils/analytics';
 import { useSortableTable } from '../../hooks/useSortableTable';
 import Badge from '../ui/Badge';
 import SortableHeader from '../ui/SortableHeader';
 import { Modal } from '../ui/Modal';
+import RemitoUploader from './RemitoUploader';
+import { useToast } from '../../hooks/useToast';
 import { uploadInvoice } from '../../services/api';
 import {
   Plus,
@@ -21,6 +23,9 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
+  FileImage,
+  X,
+  CheckCircle,
 } from 'lucide-react';
 
 const PAGE_SIZE = 15;
@@ -32,7 +37,10 @@ export interface TripManagerProps {
   clients: Client[];
   costs: Cost[];
   user: User;
-  onAddTrip: (trip: Trip) => void | Promise<void>;
+  onAddTrip: (
+    trip: Trip,
+    remitoImage?: { base64: string; name: string; mime: string }
+  ) => void | Promise<void>;
   onUpdateTrip: (trip: Trip) => void | Promise<void>;
   onDeleteTrip: (tripId: string) => void | Promise<void>;
   onInvoiceUploaded: (tripId: string, url: string) => void;
@@ -68,6 +76,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
   onInvoiceUploaded,
 }) => {
   const isAdmin = user.role === 'admin';
+  const { showInfo } = useToast();
 
   const [searchText, setSearchText] = useState('');
   const [estadoFilter, setEstadoFilter] = useState<TripStatus | ''>('');
@@ -90,6 +99,23 @@ export const TripManager: React.FC<TripManagerProps> = ({
     estado: 'Pendiente',
     fecha: new Date().toISOString().split('T')[0],
   });
+
+  const [showRemitoUploader, setShowRemitoUploader] = useState(false);
+  const [pendingRemito, setPendingRemito] = useState<{
+    base64: string;
+    name: string;
+    mime: string;
+  } | null>(null);
+
+  const handleRemitoData = useCallback(
+    (fields: Partial<Trip>, imageBase64: string, imageName: string, imageMime: string) => {
+      setNewTrip((prev) => ({ ...prev, ...fields }));
+      setPendingRemito({ base64: imageBase64, name: imageName, mime: imageMime });
+      const n = Object.keys(fields).length;
+      showInfo(`Se pre-completaron ${n} campo${n !== 1 ? 's' : ''} desde el remito`);
+    },
+    [showInfo]
+  );
 
   const roleTrips = useMemo(() => {
     if (isAdmin) {
@@ -153,6 +179,8 @@ export const TripManager: React.FC<TripManagerProps> = ({
 
   const openNewForm = () => {
     setEditingId(null);
+    setPendingRemito(null);
+    setShowRemitoUploader(false);
     setNewTrip({
       estado: 'Pendiente',
       fecha: new Date().toISOString().split('T')[0],
@@ -176,6 +204,8 @@ export const TripManager: React.FC<TripManagerProps> = ({
       return;
     }
     setEditingId(trip.id);
+    setPendingRemito(null);
+    setShowRemitoUploader(false);
     setNewTrip({ ...trip });
     setFormOpen(true);
   };
@@ -187,6 +217,8 @@ export const TripManager: React.FC<TripManagerProps> = ({
     const trip = closedWarnTrip;
     setClosedWarnTrip(null);
     setEditingId(trip.id);
+    setPendingRemito(null);
+    setShowRemitoUploader(false);
     setNewTrip({ ...trip });
     setFormOpen(true);
   };
@@ -195,6 +227,8 @@ export const TripManager: React.FC<TripManagerProps> = ({
     setFormOpen(false);
     setEditingId(null);
     setSaveLoading(false);
+    setPendingRemito(null);
+    setShowRemitoUploader(false);
     setNewTrip({ estado: 'Pendiente', fecha: new Date().toISOString().split('T')[0] });
   };
 
@@ -250,6 +284,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
         destino: String(newTrip.destino).trim(),
         estado: (newTrip.estado as TripStatus) ?? 'Pendiente',
         facturaUrl: newTrip.facturaUrl,
+        remitoUrl: newTrip.remitoUrl,
         asignadoA: newTrip.asignadoA,
       };
 
@@ -264,7 +299,8 @@ export const TripManager: React.FC<TripManagerProps> = ({
           ...base,
           id: `V${Date.now()}`,
         };
-        await onAddTrip(trip);
+        const remito = pendingRemito ?? undefined;
+        await onAddTrip(trip, remito);
       }
       closeForm();
     } finally {
@@ -440,6 +476,40 @@ export const TripManager: React.FC<TripManagerProps> = ({
         size="lg"
       >
         <form onSubmit={(e) => void handleSave(e)} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {!editingId && (
+            <div className="mb-2 flex items-center justify-between border-b border-[var(--border)] pb-4 md:col-span-2">
+              <h4 className="text-sm font-semibold text-[var(--text-primary)]">Datos del viaje</h4>
+              <button
+                type="button"
+                onClick={() => setShowRemitoUploader(true)}
+                className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent-blue)] hover:text-[var(--accent-blue)]"
+              >
+                <FileImage size={14} aria-hidden />
+                Cargar remito
+                {pendingRemito ? (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--accent-emerald)]" aria-hidden />
+                ) : null}
+              </button>
+            </div>
+          )}
+
+          {!editingId && pendingRemito && (
+            <div className="mb-2 flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--accent-emerald)_35%,transparent)] bg-[color-mix(in_srgb,var(--accent-emerald)_10%,var(--bg-surface))] px-3 py-2 md:col-span-2">
+              <CheckCircle size={14} className="shrink-0 text-[var(--accent-emerald)]" aria-hidden />
+              <span className="flex-1 text-xs text-[var(--text-secondary)]">
+                Remito adjunto: {pendingRemito.name}
+              </span>
+              <button
+                type="button"
+                aria-label="Quitar remito adjunto"
+                onClick={() => setPendingRemito(null)}
+                className="text-[var(--accent-emerald)] transition-colors hover:text-[var(--accent-red)]"
+              >
+                <X size={12} aria-hidden />
+              </button>
+            </div>
+          )}
+
           <div className="md:col-span-2">
             <label className="mb-1 block text-sm font-medium text-slate-700">Cliente</label>
             <select
@@ -566,6 +636,38 @@ export const TripManager: React.FC<TripManagerProps> = ({
         </form>
       </Modal>
 
+      {showRemitoUploader ? (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div
+            className="w-full max-w-lg rounded-2xl border border-[var(--border)] shadow-[var(--shadow-lg)]"
+            style={{ backgroundColor: 'var(--bg-surface)' }}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
+              <div>
+                <h3 className="text-base font-semibold text-[var(--text-primary)]">Cargar remito</h3>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                  La IA extraerá los datos automáticamente
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar"
+                onClick={() => setShowRemitoUploader(false)}
+                className="text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
+              >
+                <X size={18} aria-hidden />
+              </button>
+            </div>
+            <div className="p-5">
+              <RemitoUploader
+                onDataExtracted={handleRemitoData}
+                onClose={() => setShowRemitoUploader(false)}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] text-sm">
@@ -622,7 +724,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                   scope="col"
                   className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
                 >
-                  Factura
+                  Documentos
                 </th>
                 <th
                   scope="col"
@@ -689,19 +791,33 @@ export const TripManager: React.FC<TripManagerProps> = ({
                       )}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      {trip.facturaUrl ? (
-                        <a
-                          href={trip.facturaUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent-blue)] hover:underline"
-                        >
-                          <ExternalLink className="h-3 w-3" aria-hidden />
-                          Ver
-                        </a>
-                      ) : (
-                        <span className="text-xs text-[var(--text-muted)]">—</span>
-                      )}
+                      <div className="flex flex-wrap items-center justify-center gap-2">
+                        {trip.facturaUrl ? (
+                          <a
+                            href={trip.facturaUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent-blue)] hover:underline"
+                          >
+                            <ExternalLink size={12} aria-hidden />
+                            Factura
+                          </a>
+                        ) : null}
+                        {trip.remitoUrl ? (
+                          <a
+                            href={trip.remitoUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent-emerald)] hover:underline"
+                          >
+                            <FileImage size={12} aria-hidden />
+                            Remito
+                          </a>
+                        ) : null}
+                        {!trip.facturaUrl && !trip.remitoUrl ? (
+                          <span className="text-xs text-[var(--text-muted)]">—</span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center justify-end gap-1">

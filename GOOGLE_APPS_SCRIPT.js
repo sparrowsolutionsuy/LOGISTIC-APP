@@ -37,12 +37,16 @@ function doGet(e) {
   let tripSheet = ss.getSheetByName('DB_Viajes');
   if (!tripSheet) {
     tripSheet = ss.insertSheet('DB_Viajes');
-    tripSheet.appendRow(['id', 'fecha', 'clientId', 'estado', 'contenido', 'pesoKg', 'kmRecorridos', 'tarifa', 'origen', 'destino', 'facturaUrl']);
+    tripSheet.appendRow(['id', 'fecha', 'clientId', 'estado', 'contenido', 'pesoKg', 'kmRecorridos', 'tarifa', 'origen', 'destino', 'facturaUrl', 'remitoUrl']);
   }
   
   const tripHeaders = tripSheet.getRange(1, 1, 1, tripSheet.getLastColumn()).getValues()[0];
   if (!tripHeaders.includes('facturaUrl')) {
     tripSheet.getRange(1, tripHeaders.length + 1).setValue('facturaUrl');
+  }
+  const tripHeaders2 = tripSheet.getRange(1, 1, 1, tripSheet.getLastColumn()).getValues()[0];
+  if (!tripHeaders2.includes('remitoUrl')) {
+    tripSheet.getRange(1, tripHeaders2.length + 1).setValue('remitoUrl');
   }
 
   const trips = getSheetData('DB_Viajes');
@@ -102,7 +106,8 @@ function doPost(e) {
         data.tarifa, 
         data.origen, 
         data.destino,
-        data.facturaUrl || ''
+        data.facturaUrl || '',
+        data.remitoUrl || ''
       ]);
     } else if (type === 'client') {
       const sheet = ss.getSheetByName('DB_Clientes');
@@ -119,12 +124,21 @@ function doPost(e) {
       ]);
     } else if (type === 'updateTrip') {
       const sheet = ss.getSheetByName('DB_Viajes');
-      const dataRange = sheet.getDataRange();
-      const values = dataRange.getValues();
+      let values = sheet.getDataRange().getValues();
+      let headers = values[0];
+      if (headers.indexOf('remitoUrl') === -1) {
+        sheet.getRange(1, headers.length + 1).setValue('remitoUrl');
+        values = sheet.getDataRange().getValues();
+        headers = values[0];
+      }
+      const facturaIdx = headers.indexOf('facturaUrl');
+      const remitoIdx = headers.indexOf('remitoUrl');
       
       for (let i = 1; i < values.length; i++) {
         if (String(values[i][0]) === String(data.id)) {
           const rowNum = i + 1;
+          const prevFactura = facturaIdx > -1 && values[i][facturaIdx] != null ? String(values[i][facturaIdx]) : '';
+          const prevRemito = remitoIdx > -1 && values[i][remitoIdx] != null ? String(values[i][remitoIdx]) : '';
           const newRow = [
             data.id, 
             data.fecha, 
@@ -136,7 +150,8 @@ function doPost(e) {
             data.tarifa, 
             data.origen, 
             data.destino,
-            data.facturaUrl || values[i][10] 
+            data.facturaUrl != null && data.facturaUrl !== '' ? data.facturaUrl : prevFactura,
+            data.remitoUrl != null && data.remitoUrl !== '' ? data.remitoUrl : prevRemito
           ];
           sheet.getRange(rowNum, 1, 1, newRow.length).setValues([newRow]);
           break;
@@ -177,6 +192,34 @@ function doPost(e) {
           if (urlIndex > -1) {
             sheet.getRange(i + 1, urlIndex + 1).setValue(fileUrl);
           }
+          break;
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success', url: fileUrl }))
+        .setMimeType(ContentService.MimeType.JSON);
+
+    } else if (type === 'uploadRemito') {
+      const contentType = data.mimeType || 'image/jpeg';
+      const decoded = Utilities.base64Decode(data.fileData);
+      const blob = Utilities.newBlob(decoded, contentType, data.fileName);
+      const file = DriveApp.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      const fileUrl = file.getUrl();
+
+      const sheet = ss.getSheetByName('DB_Viajes');
+      let values = sheet.getDataRange().getValues();
+      let headers = values[0];
+      let remitoUrlIdx = headers.indexOf('remitoUrl');
+      if (remitoUrlIdx === -1) {
+        sheet.getRange(1, headers.length + 1).setValue('remitoUrl');
+        values = sheet.getDataRange().getValues();
+        headers = values[0];
+        remitoUrlIdx = headers.indexOf('remitoUrl');
+      }
+      const idIdx = headers.indexOf('id');
+      for (let i = 1; i < values.length; i++) {
+        if (String(values[i][idIdx]) === String(data.tripId)) {
+          sheet.getRange(i + 1, remitoUrlIdx + 1).setValue(fileUrl);
           break;
         }
       }
