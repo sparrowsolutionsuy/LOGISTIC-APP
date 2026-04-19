@@ -11,7 +11,7 @@ export interface CardProps {
 }
 
 const PADDING: Record<CardPadding, string> = {
-  sm: 'p-3',
+  sm: 'p-4',
   md: 'p-4',
   lg: 'p-6',
 };
@@ -25,12 +25,12 @@ export const Card: React.FC<CardProps> = ({
 }) => {
   return (
     <section
-      className={`rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] shadow-sm ${PADDING[padding]} ${className}`.trim()}
+      className={`rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] shadow-sm ${PADDING[padding]} ${className}`.trim()}
     >
       {(title || action) && (
         <div className="mb-3 flex items-start justify-between gap-3">
           {title ? (
-            <h3 className="text-sm font-semibold tracking-tight text-[var(--text-primary)]">
+            <h3 className="text-base font-semibold tracking-tight text-[var(--text-primary)]">
               {title}
             </h3>
           ) : (

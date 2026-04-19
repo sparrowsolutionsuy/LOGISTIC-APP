@@ -31,7 +31,7 @@ export const KPICard: React.FC<KPICardProps> = ({
   accentColor = 'var(--accent-blue)',
 }) => {
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm">
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm transition-colors duration-150">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">

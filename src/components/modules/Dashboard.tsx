@@ -12,7 +12,7 @@ import {
   Legend,
 } from 'recharts';
 import type { TooltipProps } from 'recharts';
-import type { Client, Cost, Trip, User } from '../../types';
+import type { Client, Cost, KPIData, Trip, TripWithMetrics, User } from '../../types';
 import { buildKPIData, buildMonthlyStats, enrichTrips } from '../../utils/analytics';
 import { generateLogisticsInsights } from '../../services/geminiService';
 import {
@@ -33,6 +33,9 @@ export interface DashboardProps {
   user: User;
   /** Marcar viaje como completado (vista operativa). */
   onUpdateTrip?: (trip: Trip) => void | Promise<void>;
+  /** Opcional: evita recalcular en el hijo si el padre ya memoizó. */
+  enrichedTrips?: TripWithMetrics[];
+  kpiPrecomputed?: KPIData;
 }
 
 function localISODate(d: Date): string {
@@ -77,7 +80,7 @@ const ChartTooltipEs: React.FC<ChartTooltipProps> = ({ active, payload, label })
 };
 
 const DashboardChartSkeleton: React.FC = () => (
-  <div className="flex h-72 w-full animate-pulse flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50 p-4">
+  <div className="flex min-h-[200px] w-full animate-pulse flex-col gap-4 rounded-lg border border-slate-100 bg-slate-50 p-4">
     <div className="flex flex-1 items-end justify-between gap-2 pt-8">
       {Array.from({ length: 8 }).map((_, i) => (
         <div
@@ -98,7 +101,7 @@ const KpiCard: React.FC<{
   bg: string;
 }> = ({ title, value, icon, bg }) => (
   <div
-    className={`${bg} rounded-xl p-4 text-white shadow-lg transition-transform sm:p-5 md:hover:scale-[1.01]`}
+    className={`${bg} rounded-lg p-4 text-white shadow-lg transition-colors duration-150 md:hover:scale-[1.01]`}
   >
     <div className="flex items-start justify-between gap-2">
       <div className="min-w-0 flex-1">
@@ -116,6 +119,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   costs,
   user,
   onUpdateTrip,
+  enrichedTrips: enrichedTripsProp,
+  kpiPrecomputed,
 }) => {
   const isAdmin = user.role === 'admin';
   const [chartsReady, setChartsReady] = useState(false);
@@ -128,9 +133,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
     return () => window.clearTimeout(t);
   }, [trips, clients, costs]);
 
-  const kpi = useMemo(() => buildKPIData(trips, clients, costs), [trips, clients, costs]);
+  const kpi = useMemo(
+    () => kpiPrecomputed ?? buildKPIData(trips, clients, costs),
+    [kpiPrecomputed, trips, clients, costs]
+  );
   const monthly = useMemo(() => buildMonthlyStats(trips, costs, 6), [trips, costs]);
-  const enriched = useMemo(() => enrichTrips(trips, clients, costs), [trips, clients, costs]);
+  const enriched = useMemo(
+    () => enrichedTripsProp ?? enrichTrips(trips, clients, costs),
+    [enrichedTripsProp, trips, clients, costs]
+  );
   const enrichedById = useMemo(() => {
     const m = new Map<string, (typeof enriched)[0]>();
     enriched.forEach((e) => m.set(e.id, e));
@@ -207,7 +218,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       {isAdmin ? (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <KpiCard
               title="Ingresos MTD"
               value={formatUsd(kpi.totalRevenueMTD)}
@@ -240,7 +251,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 Ingresos vs costos (últimos 6 meses)
               </h2>
               <div className="w-full overflow-x-auto overscroll-x-contain touch-pan-x">
-                <div className="h-72 min-w-[520px]">
+                <div className="min-h-[200px] h-[220px] min-w-[520px]">
                   {!chartsReady ? (
                     <DashboardChartSkeleton />
                   ) : (
@@ -285,7 +296,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
               <h2 className="mb-4 text-base font-semibold text-slate-800">Viajes por mes</h2>
               <div className="w-full overflow-x-auto overscroll-x-contain touch-pan-x">
-                <div className="h-72 min-w-[520px]">
+                <div className="min-h-[200px] h-[220px] min-w-[520px]">
                   {!chartsReady ? (
                     <DashboardChartSkeleton />
                   ) : (
@@ -330,32 +341,51 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 ))}
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[520px] text-left text-sm text-slate-600">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-slate-700">
-                    <tr>
-                      <th className="p-3 font-semibold">Viaje</th>
-                      <th className="p-3 font-semibold">Fecha</th>
-                      <th className="p-3 font-semibold">Estado</th>
-                      <th className="p-3 text-right font-semibold">Margen (USD)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {topRecent.map((t) => {
-                      const m = enrichedById.get(t.id);
-                      return (
-                        <tr key={t.id} className="hover:bg-slate-50">
-                          <td className="p-3 font-mono text-xs text-slate-500">{t.id}</td>
-                          <td className="p-3">{t.fecha}</td>
-                          <td className="p-3">{t.estado}</td>
-                          <td className="p-3 text-right font-medium text-slate-900">
-                            {m ? formatUsd(m.netMargin) : '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-sm">
+                    <thead>
+                      <tr
+                        className="border-b border-[var(--border)]"
+                        style={{ backgroundColor: 'var(--bg-elevated)' }}
+                      >
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                          Viaje
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                          Fecha
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                          Estado
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                          Margen (USD)
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                      {topRecent.map((t, i) => {
+                        const m = enrichedById.get(t.id);
+                        return (
+                          <tr
+                            key={t.id}
+                            style={{
+                              backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                            }}
+                            className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                          >
+                            <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{t.id}</td>
+                            <td className="px-4 py-3 text-[var(--text-primary)]">{t.fecha}</td>
+                            <td className="px-4 py-3 text-[var(--text-primary)]">{t.estado}</td>
+                            <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
+                              {m ? formatUsd(m.netMargin) : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -389,7 +419,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
             <KpiCard
               title="Viajes activos"
               value={`${operativoKpis.active}`}

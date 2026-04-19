@@ -1,15 +1,107 @@
-:root {
-  --bg-base: #0f172a; /* slate-950 */
-  --bg-surface: #1e293b; /* slate-800 */
-  --bg-elevated: #334155; /* slate-700 */
+/* ═══════════════════════════════════════
+   GDC LOGISTICS — DESIGN TOKENS
+   ═══════════════════════════════════════ */
+
+:root[data-theme='dark'] {
+  /* Backgrounds */
+  --bg-base: #0f172a; /* página principal */
+  --bg-surface: #1e293b; /* cards, sidebar */
+  --bg-elevated: #2d3f55; /* inputs, hover */
+  --bg-table-row: #1e293b;
+  --bg-table-alt: #253347; /* filas alternadas */
+  --bg-table-hover: #2d3f55;
+
+  /* Borders */
   --border: #334155;
-  --text-primary: #f8fafc;
+  --border-subtle: #1e293b;
+  --border-focus: #3b82f6;
+
+  /* Text */
+  --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
+  --text-inverse: #0f172a;
+
+  /* Accents */
   --accent-blue: #3b82f6;
   --accent-emerald: #10b981;
   --accent-amber: #f59e0b;
   --accent-red: #ef4444;
+  --accent-purple: #8b5cf6;
+  --accent-cyan: #06b6d4;
+
+  /* Status badges — ALTA VISIBILIDAD en dark */
+  --status-pendiente-bg: rgba(245, 158, 11, 0.2);
+  --status-pendiente-text: #fcd34d;
+  --status-pendiente-border: rgba(245, 158, 11, 0.5);
+
+  --status-transito-bg: rgba(59, 130, 246, 0.2);
+  --status-transito-text: #93c5fd;
+  --status-transito-border: rgba(59, 130, 246, 0.5);
+
+  --status-completado-bg: rgba(16, 185, 129, 0.2);
+  --status-completado-text: #6ee7b7;
+  --status-completado-border: rgba(16, 185, 129, 0.5);
+
+  --status-cerrado-bg: rgba(148, 163, 184, 0.15);
+  --status-cerrado-text: #cbd5e1;
+  --status-cerrado-border: rgba(148, 163, 184, 0.4);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme='light'] {
+  /* Backgrounds */
+  --bg-base: #f1f5f9;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f8fafc;
+  --bg-table-row: #ffffff;
+  --bg-table-alt: #f8fafc;
+  --bg-table-hover: #f0f7ff;
+
+  /* Borders */
+  --border: #e2e8f0;
+  --border-subtle: #f1f5f9;
+  --border-focus: #3b82f6;
+
+  /* Text */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --text-inverse: #f1f5f9;
+
+  /* Accents — mismos colores, funcionan en ambos temas */
+  --accent-blue: #2563eb;
+  --accent-emerald: #059669;
+  --accent-amber: #d97706;
+  --accent-red: #dc2626;
+  --accent-purple: #7c3aed;
+  --accent-cyan: #0891b2;
+
+  /* Status badges — ALTA VISIBILIDAD en light */
+  --status-pendiente-bg: #fef3c7;
+  --status-pendiente-text: #92400e;
+  --status-pendiente-border: #fcd34d;
+
+  --status-transito-bg: #dbeafe;
+  --status-transito-text: #1e40af;
+  --status-transito-border: #93c5fd;
+
+  --status-completado-bg: #d1fae5;
+  --status-completado-text: #065f46;
+  --status-completado-border: #6ee7b7;
+
+  --status-cerrado-bg: #f1f5f9;
+  --status-cerrado-text: #475569;
+  --status-cerrado-border: #cbd5e1;
+
+  /* Shadows — más suaves en light */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.14);
 }
 
 *,
@@ -30,6 +122,7 @@ body {
     Noto Sans, Helvetica Neue, Arial, 'Apple Color Emoji', 'Segoe UI Emoji';
   background-color: var(--bg-base);
   color: var(--text-primary);
+  transition: background-color 200ms ease, color 200ms ease;
   -webkit-font-smoothing: antialiased;
 }
 

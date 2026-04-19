@@ -24,8 +24,10 @@ import {
   updateTripInSheet,
 } from './services/api';
 import { generateLogisticsInsights } from './services/geminiService';
+import { useTheme } from './hooks/useTheme';
 
 const STORAGE_USER_KEY = 'gdc_user';
+const THEME_KEY = 'gdc_theme';
 
 const ADMIN_ONLY_TABS = new Set<ActiveTab>(['costs', 'financial', 'billing', 'clients', 'newClient']);
 
@@ -53,6 +55,9 @@ function parseStoredUser(raw: string | null): User | null {
 }
 
 const App: React.FC = () => {
+  const { theme } = useTheme();
+  void theme;
+
   const [hydrated, setHydrated] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -124,7 +129,11 @@ const App: React.FC = () => {
   }, []);
 
   const onLogout = useCallback(() => {
+    const savedTheme = localStorage.getItem(THEME_KEY);
     localStorage.clear();
+    if (savedTheme) {
+      localStorage.setItem(THEME_KEY, savedTheme);
+    }
     setUser(null);
     setActiveTab('dashboard');
     setTrips([]);

@@ -53,17 +53,17 @@ function formatUsd(n: number): string {
   return n.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
 
-function marginRowClass(pct: number, revenue: number): string {
+function marginRowStyle(pct: number, revenue: number): React.CSSProperties {
   if (revenue <= 0) {
-    return 'text-slate-500';
+    return { color: 'var(--text-muted)' };
   }
   if (pct > 30) {
-    return 'text-emerald-600 font-semibold';
+    return { color: 'var(--accent-emerald)', fontWeight: 600 };
   }
   if (pct >= 10) {
-    return 'text-amber-600 font-semibold';
+    return { color: 'var(--accent-amber)', fontWeight: 600 };
   }
-  return 'text-red-600 font-semibold';
+  return { color: 'var(--accent-red)', fontWeight: 600 };
 }
 
 const Kpi: React.FC<{ title: string; value: string; sub?: string }> = ({ title, value, sub }) => (
@@ -266,34 +266,56 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
               </AreaChart>
             </ResponsiveContainer>
           </ChartBox>
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-4 py-3">
-              <h3 className="text-sm font-semibold text-slate-800">Rentabilidad por viaje</h3>
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+            <div className="border-b border-[var(--border)] px-4 py-3">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Rentabilidad por viaje</h3>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="p-3">Viaje</th>
-                    <th className="p-3">Cliente</th>
-                    <th className="p-3 text-right">Ingreso</th>
-                    <th className="p-3 text-right">Costos</th>
-                    <th className="p-3 text-right">Margen</th>
-                    <th className="p-3 text-right">Margen %</th>
+              <table className="w-full min-w-[720px] text-sm">
+                <thead>
+                  <tr style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Viaje
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Cliente
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Ingreso
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Costos
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Margen
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Margen %
+                    </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {enriched.map((row) => {
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                  {enriched.map((row, i) => {
                     const rev = tripRevenue(row);
                     const pct = row.marginPct;
                     return (
-                      <tr key={row.id}>
-                        <td className="p-3 font-mono text-xs text-slate-500">{row.id}</td>
-                        <td className="p-3 text-slate-800">{row.clientName}</td>
-                        <td className="p-3 text-right">{formatUsd(rev)}</td>
-                        <td className="p-3 text-right">{formatUsd(row.totalCosts)}</td>
-                        <td className="p-3 text-right">{formatUsd(row.netMargin)}</td>
-                        <td className={`p-3 text-right ${marginRowClass(pct, rev)}`}>
+                      <tr
+                        key={row.id}
+                        style={{
+                          backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                        }}
+                        className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                      >
+                        <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{row.id}</td>
+                        <td className="px-4 py-3 text-[var(--text-primary)]">{row.clientName}</td>
+                        <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(rev)}</td>
+                        <td className="px-4 py-3 text-right text-[var(--text-primary)]">
+                          {formatUsd(row.totalCosts)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-[var(--text-primary)]">
+                          {formatUsd(row.netMargin)}
+                        </td>
+                        <td className="px-4 py-3 text-right" style={marginRowStyle(pct, rev)}>
                           {rev > 0 ? `${pct.toFixed(1)}%` : '—'}
                         </td>
                       </tr>
@@ -446,29 +468,47 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
               </AreaChart>
             </ResponsiveContainer>
           </ChartBox>
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-4 py-3">
-              <h3 className="text-sm font-semibold text-slate-800">Top 5 rutas más rentables</h3>
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+            <div className="border-b border-[var(--border)] px-4 py-3">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Top 5 rutas más rentables</h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] text-sm">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="p-3 text-left">Ruta</th>
-                    <th className="p-3 text-right">Ingresos</th>
-                    <th className="p-3 text-right">Costos</th>
-                    <th className="p-3 text-right">Margen</th>
-                    <th className="p-3 text-right">Margen %</th>
+                <thead>
+                  <tr style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Ruta
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Ingresos
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Costos
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Margen
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Margen %
+                    </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {top5Routes.map((r) => (
-                    <tr key={r.route}>
-                      <td className="p-3 font-medium text-slate-800">{r.route}</td>
-                      <td className="p-3 text-right">{formatUsd(r.revenue)}</td>
-                      <td className="p-3 text-right">{formatUsd(r.cost)}</td>
-                      <td className="p-3 text-right text-blue-700">{formatUsd(r.margin)}</td>
-                      <td className={`p-3 text-right ${marginRowClass(r.marginPct, r.revenue)}`}>
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                  {top5Routes.map((r, i) => (
+                    <tr
+                      key={r.route}
+                      style={{
+                        backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                      }}
+                      className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                    >
+                      <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{r.route}</td>
+                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(r.revenue)}</td>
+                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(r.cost)}</td>
+                      <td className="px-4 py-3 text-right" style={{ color: 'var(--accent-blue)' }}>
+                        {formatUsd(r.margin)}
+                      </td>
+                      <td className="px-4 py-3 text-right" style={marginRowStyle(r.marginPct, r.revenue)}>
                         {r.revenue > 0 ? `${r.marginPct.toFixed(1)}%` : '—'}
                       </td>
                     </tr>

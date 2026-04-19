@@ -189,28 +189,40 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
                 <Truck className="h-4 w-4" />
                 Historial de viajes
               </h4>
-              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200">
+              <div className="max-h-56 overflow-y-auto overflow-x-auto rounded-lg border border-[var(--border)] shadow-[var(--shadow-sm)]">
                 <table className="w-full text-left text-xs">
-                  <thead className="sticky top-0 bg-slate-100 text-slate-600">
-                    <tr>
-                      <th className="p-2">Fecha</th>
-                      <th className="p-2">Ruta</th>
-                      <th className="p-2 text-right">Ingreso</th>
+                  <thead className="sticky top-0 z-[1]" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                    <tr className="border-b border-[var(--border)]">
+                      <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Fecha
+                      </th>
+                      <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Ruta
+                      </th>
+                      <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Ingreso
+                      </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {clientTripsDetail.map((trip) => (
-                      <tr key={trip.id}>
-                        <td className="p-2 font-mono text-slate-500">{trip.fecha}</td>
-                        <td className="p-2">
-                          <span className="flex items-center gap-1 text-slate-800">
+                  <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                    {clientTripsDetail.map((trip, i) => (
+                      <tr
+                        key={trip.id}
+                        style={{
+                          backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                        }}
+                        className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                      >
+                        <td className="px-4 py-3 font-mono text-[var(--text-muted)]">{trip.fecha}</td>
+                        <td className="px-4 py-3">
+                          <span className="flex items-center gap-1 text-[var(--text-primary)]">
                             {trip.origen}
-                            <ArrowRight className="h-3 w-3 text-slate-400" />
+                            <ArrowRight className="h-3 w-3 shrink-0 text-[var(--text-muted)]" aria-hidden />
                             {trip.destino}
                           </span>
-                          <span className="text-slate-400">{trip.contenido}</span>
+                          <span className="text-[var(--text-secondary)]">{trip.contenido}</span>
                         </td>
-                        <td className="p-2 text-right font-medium">
+                        <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
                           {tripRevenue(trip).toLocaleString('es-UY', {
                             style: 'currency',
                             currency: 'USD',

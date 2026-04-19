@@ -1,6 +1,8 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import type { Cost, CostCategory, Trip, Client } from '../../types';
+import { useSortableTable } from '../../hooks/useSortableTable';
 import { Modal } from '../ui/Modal';
+import SortableHeader from '../ui/SortableHeader';
 import {
   Fuel,
   Wrench,
@@ -92,49 +94,54 @@ export const CostManager: React.FC<CostManagerProps> = ({
     [trips]
   );
 
-  const filtered = useMemo(() => {
-    return costs
-      .filter((c) => {
-        if (catFilter && c.categoria !== catFilter) {
-          return false;
-        }
-        if (tripFilter === 'general' && c.tripId !== null) {
-          return false;
-        }
-        if (tripFilter && tripFilter !== 'general' && c.tripId !== tripFilter) {
-          return false;
-        }
-        if (dateFrom && c.fecha < dateFrom) {
-          return false;
-        }
-        if (dateTo && c.fecha > dateTo) {
-          return false;
-        }
-        return true;
-      })
-      .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id.localeCompare(a.id));
+  const filteredCosts = useMemo(() => {
+    return costs.filter((c) => {
+      if (catFilter && c.categoria !== catFilter) {
+        return false;
+      }
+      if (tripFilter === 'general' && c.tripId !== null) {
+        return false;
+      }
+      if (tripFilter && tripFilter !== 'general' && c.tripId !== tripFilter) {
+        return false;
+      }
+      if (dateFrom && c.fecha < dateFrom) {
+        return false;
+      }
+      if (dateTo && c.fecha > dateTo) {
+        return false;
+      }
+      return true;
+    });
   }, [costs, catFilter, tripFilter, dateFrom, dateTo]);
 
-  const totalFiltered = useMemo(() => filtered.reduce((s, c) => s + c.monto, 0), [filtered]);
+  type CostSortKey = 'fecha' | 'categoria' | 'descripcion' | 'monto';
+
+  const { sorted: sortedCosts, sort: costSort, handleSort: handleCostSort } = useSortableTable<
+    Cost,
+    CostSortKey
+  >(filteredCosts, { column: 'fecha', direction: 'desc' });
+
+  const totalFiltered = useMemo(() => sortedCosts.reduce((s, c) => s + c.monto, 0), [sortedCosts]);
 
   const metrics = useMemo(() => {
     const mk = monthKeyNow();
-    const totalMonth = filtered
+    const totalMonth = sortedCosts
       .filter((c) => c.fecha.startsWith(mk))
       .reduce((s, c) => s + c.monto, 0);
     const byCat = new Map<string, number>();
-    filtered.forEach((c) => {
+    sortedCosts.forEach((c) => {
       byCat.set(c.categoria, (byCat.get(c.categoria) ?? 0) + c.monto);
     });
     const topEntry = Array.from(byCat.entries()).sort((a, b) => b[1] - a[1])[0];
     const topCat = topEntry ? { name: topEntry[0], total: topEntry[1] } : null;
-    const totalM = filtered.reduce((s, c) => s + c.monto, 0);
-    const linked = filtered.filter((c) => c.tripId !== null).reduce((s, c) => s + c.monto, 0);
-    const general = filtered.filter((c) => c.tripId === null).reduce((s, c) => s + c.monto, 0);
+    const totalM = sortedCosts.reduce((s, c) => s + c.monto, 0);
+    const linked = sortedCosts.filter((c) => c.tripId !== null).reduce((s, c) => s + c.monto, 0);
+    const general = sortedCosts.filter((c) => c.tripId === null).reduce((s, c) => s + c.monto, 0);
     const pctLinked = totalM > 0 ? (linked / totalM) * 100 : 0;
     const pctGeneral = totalM > 0 ? (general / totalM) * 100 : 0;
     return { totalMonth, topCat, pctLinked, pctGeneral };
-  }, [filtered]);
+  }, [sortedCosts]);
 
   const openNew = () => {
     setEditingId(null);
@@ -315,46 +322,95 @@ export const CostManager: React.FC<CostManagerProps> = ({
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-700/60 bg-slate-800/20">
+      <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="border-b border-slate-600/50 bg-slate-900/40 text-xs uppercase tracking-wide text-[var(--text-muted)]">
-              <tr>
-                <th className="p-3">Fecha</th>
-                <th className="p-3">Categoría</th>
-                <th className="p-3">Descripción</th>
-                <th className="p-3">Viaje</th>
-                <th className="p-3 text-right">Monto</th>
-                <th className="p-3 text-right">Acciones</th>
+          <table className="w-full min-w-[720px] text-sm">
+            <thead>
+              <tr
+                className="border-b border-[var(--border)]"
+                style={{ backgroundColor: 'var(--bg-elevated)' }}
+              >
+                <SortableHeader
+                  label="Fecha"
+                  column="fecha"
+                  currentColumn={costSort.column}
+                  direction={costSort.direction}
+                  onClick={(col) => handleCostSort(col as CostSortKey)}
+                />
+                <SortableHeader
+                  label="Categoría"
+                  column="categoria"
+                  currentColumn={costSort.column}
+                  direction={costSort.direction}
+                  onClick={(col) => handleCostSort(col as CostSortKey)}
+                />
+                <SortableHeader
+                  label="Descripción"
+                  column="descripcion"
+                  currentColumn={costSort.column}
+                  direction={costSort.direction}
+                  onClick={(col) => handleCostSort(col as CostSortKey)}
+                />
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                >
+                  Viaje
+                </th>
+                <SortableHeader
+                  label="Monto"
+                  column="monto"
+                  currentColumn={costSort.column}
+                  direction={costSort.direction}
+                  onClick={(col) => handleCostSort(col as CostSortKey)}
+                  align="right"
+                />
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                >
+                  Acciones
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/40 text-[var(--text-secondary)]">
-              {filtered.map((c) => {
+            <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+              {sortedCosts.map((c, i) => {
                 const ui = CATEGORY_UI[c.categoria];
                 const Icon = ui.Icon;
                 const trip = c.tripId ? trips.find((t) => t.id === c.tripId) : null;
                 return (
-                  <tr key={c.id} className="hover:bg-slate-700/20">
-                    <td className="p-3 whitespace-nowrap text-[var(--text-primary)]">{c.fecha}</td>
-                    <td className="p-3">
+                  <tr
+                    key={c.id}
+                    style={{
+                      backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                    }}
+                    className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                  >
+                    <td className="whitespace-nowrap px-4 py-3 text-[var(--text-primary)]">
+                      {c.fecha}
+                    </td>
+                    <td className="px-4 py-3">
                       <span
                         className={`inline-flex items-center gap-2 rounded-full px-2 py-1 text-xs font-medium ${ui.iconClass}`}
                       >
-                        <Icon className="h-3.5 w-3.5" />
+                        <Icon className="h-3.5 w-3.5" aria-hidden />
                         {ui.label}
                       </span>
                     </td>
-                    <td className="p-3 text-[var(--text-primary)]">{c.descripcion}</td>
-                    <td className="max-w-[220px] truncate p-3 text-xs">
+                    <td className="px-4 py-3 text-[var(--text-primary)]">{c.descripcion}</td>
+                    <td className="max-w-[220px] truncate px-4 py-3 text-xs text-[var(--text-secondary)]">
                       {trip ? tripOptionLabel(trip, clients) : 'Costo general'}
                     </td>
-                    <td className="p-3 text-right font-medium text-emerald-300">
+                    <td
+                      className="px-4 py-3 text-right font-medium"
+                      style={{ color: 'var(--accent-emerald)' }}
+                    >
                       {c.monto.toLocaleString('es-UY', { style: 'currency', currency: 'USD' })}
                     </td>
-                    <td className="p-3 text-right">
+                    <td className="px-4 py-3 text-right">
                       <button
                         type="button"
-                        className="mr-1 rounded p-1.5 text-blue-300 hover:bg-slate-700/50"
+                        className="mr-1 rounded p-1.5 text-[var(--accent-blue)] hover:bg-[var(--bg-elevated)]"
                         title="Editar"
                         onClick={() => openEdit(c)}
                       >
@@ -362,7 +418,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
                       </button>
                       <button
                         type="button"
-                        className="rounded p-1.5 text-red-300 hover:bg-slate-700/50"
+                        className="rounded p-1.5 text-[var(--accent-red)] hover:bg-[var(--bg-elevated)]"
                         title="Eliminar"
                         onClick={() => void handleDelete(c.id)}
                       >
@@ -372,9 +428,9 @@ export const CostManager: React.FC<CostManagerProps> = ({
                   </tr>
                 );
               })}
-              {filtered.length === 0 && (
+              {sortedCosts.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={6} className="px-4 py-8 text-center text-[var(--text-muted)]">
                     No hay costos con los filtros seleccionados.
                   </td>
                 </tr>

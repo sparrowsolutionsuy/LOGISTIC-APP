@@ -1,6 +1,9 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import type { Trip, TripStatus, Client, User, Cost } from '../../types';
-import { Badge } from '../ui/Badge';
+import type { Trip, TripStatus, Client, User, Cost, TripWithMetrics } from '../../types';
+import { enrichTrips } from '../../utils/analytics';
+import { useSortableTable } from '../../hooks/useSortableTable';
+import Badge from '../ui/Badge';
+import SortableHeader from '../ui/SortableHeader';
 import { Modal } from '../ui/Modal';
 import { uploadInvoice } from '../../services/api';
 import {
@@ -121,16 +124,28 @@ export const TripManager: React.FC<TripManagerProps> = ({
     });
   }, [roleTrips, searchText, estadoFilter, startDate, endDate, clients]);
 
+  const enrichedFiltered = useMemo(
+    () => enrichTrips(filteredTrips, clients, costs),
+    [filteredTrips, clients, costs]
+  );
+
+  type TripSortKey = 'fecha' | 'clientName' | 'estado' | 'tarifa' | 'netMargin';
+
+  const { sorted: sortedTrips, sort, handleSort } = useSortableTable<TripWithMetrics, TripSortKey>(
+    enrichedFiltered,
+    { column: 'fecha', direction: 'desc' }
+  );
+
   useEffect(() => {
     setPage(1);
   }, [searchText, estadoFilter, startDate, endDate, roleTrips.length]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredTrips.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(sortedTrips.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const pageSlice = useMemo(() => {
     const start = (safePage - 1) * PAGE_SIZE;
-    return filteredTrips.slice(start, start + PAGE_SIZE);
-  }, [filteredTrips, safePage]);
+    return sortedTrips.slice(start, start + PAGE_SIZE);
+  }, [sortedTrips, safePage]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
@@ -551,23 +566,74 @@ export const TripManager: React.FC<TripManagerProps> = ({
         </form>
       </Modal>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] text-left text-sm text-slate-600">
-            <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-700">
-              <tr>
-                <th className="p-3">Fecha</th>
-                <th className="p-3">Cliente</th>
-                <th className="p-3">Ruta</th>
-                <th className="p-3">Estado</th>
-                <th className="p-3 text-right">Tarifa / t</th>
-                <th className="p-3 text-right">Margen</th>
-                <th className="p-3 text-center">Factura</th>
-                <th className="p-3 text-right">Acciones</th>
+          <table className="w-full min-w-[880px] text-sm">
+            <thead>
+              <tr
+                className="border-b border-[var(--border)]"
+                style={{ backgroundColor: 'var(--bg-elevated)' }}
+              >
+                <SortableHeader
+                  label="Fecha"
+                  column="fecha"
+                  currentColumn={sort.column}
+                  direction={sort.direction}
+                  onClick={(col) => handleSort(col as TripSortKey)}
+                />
+                <SortableHeader
+                  label="Cliente"
+                  column="clientName"
+                  currentColumn={sort.column}
+                  direction={sort.direction}
+                  onClick={(col) => handleSort(col as TripSortKey)}
+                />
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                >
+                  Ruta
+                </th>
+                <SortableHeader
+                  label="Estado"
+                  column="estado"
+                  currentColumn={sort.column}
+                  direction={sort.direction}
+                  onClick={(col) => handleSort(col as TripSortKey)}
+                  align="center"
+                />
+                <SortableHeader
+                  label="Tarifa"
+                  column="tarifa"
+                  currentColumn={sort.column}
+                  direction={sort.direction}
+                  onClick={(col) => handleSort(col as TripSortKey)}
+                  align="right"
+                />
+                <SortableHeader
+                  label="Margen"
+                  column="netMargin"
+                  currentColumn={sort.column}
+                  direction={sort.direction}
+                  onClick={(col) => handleSort(col as TripSortKey)}
+                  align="right"
+                />
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                >
+                  Factura
+                </th>
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                >
+                  Acciones
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {pageSlice.map((trip) => {
+            <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+              {pageSlice.map((trip, i) => {
                 const c = sumCostsForTrip(costs, trip.id);
                 const rev = tripRevenue(trip);
                 const hasCosts = costs.some((x) => x.tripId === trip.id);
@@ -575,57 +641,69 @@ export const TripManager: React.FC<TripManagerProps> = ({
                 const uploadingThis = uploadLoading && uploadTripId === trip.id;
 
                 return (
-                  <tr key={trip.id} className="hover:bg-slate-50">
-                    <td className="p-3">
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <Calendar className="h-3 w-3" />
-                        {trip.fecha}
+                  <tr
+                    key={trip.id}
+                    style={{
+                      backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                    }}
+                    className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 text-xs text-[var(--text-secondary)]">
+                        <Calendar className="h-3 w-3 shrink-0" aria-hidden />
+                        <span className="text-[var(--text-primary)]">{trip.fecha}</span>
                       </div>
-                      <div className="font-mono text-[10px] text-slate-400">{trip.id}</div>
+                      <div className="font-mono text-[10px] text-[var(--text-muted)]">{trip.id}</div>
                     </td>
-                    <td className="p-3 font-medium text-slate-800">
-                      {getClientName(clients, trip.clientId)}
+                    <td className="px-4 py-3 font-medium text-[var(--text-primary)]">
+                      {trip.clientName}
                     </td>
-                    <td className="p-3">
-                      <div className="flex items-center gap-1 text-xs">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 text-xs text-[var(--text-primary)]">
                         <span>{trip.origen}</span>
-                        <ArrowRight className="h-3 w-3 text-slate-400" />
+                        <ArrowRight className="h-3 w-3 shrink-0 text-[var(--text-muted)]" aria-hidden />
                         <span>{trip.destino}</span>
                       </div>
-                      <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
-                        <Package className="h-3 w-3" />
+                      <div className="mt-0.5 flex items-center gap-1 text-xs text-[var(--text-secondary)]">
+                        <Package className="h-3 w-3 shrink-0" aria-hidden />
                         {trip.contenido}
                       </div>
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-3 text-center">
                       <Badge status={trip.estado} />
                     </td>
-                    <td className="p-3 text-right font-medium">${trip.tarifa}</td>
-                    <td className="p-3 text-right text-xs">
+                    <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
+                      ${trip.tarifa}
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs">
                       {margin !== null ? (
-                        <span className={margin >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+                        <span
+                          style={{
+                            color: margin >= 0 ? 'var(--accent-emerald)' : 'var(--accent-red)',
+                          }}
+                        >
                           ${margin.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
                         </span>
                       ) : (
-                        <span className="text-slate-400">—</span>
+                        <span className="text-[var(--text-muted)]">—</span>
                       )}
                     </td>
-                    <td className="p-3 text-center">
+                    <td className="px-4 py-3 text-center">
                       {trip.facturaUrl ? (
                         <a
                           href={trip.facturaUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline"
+                          className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent-blue)] hover:underline"
                         >
-                          <ExternalLink className="h-3 w-3" />
+                          <ExternalLink className="h-3 w-3" aria-hidden />
                           Ver
                         </a>
                       ) : (
-                        <span className="text-xs text-slate-400">—</span>
+                        <span className="text-xs text-[var(--text-muted)]">—</span>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center justify-end gap-1">
                         {isAdmin && (
                           <button
@@ -676,8 +754,8 @@ export const TripManager: React.FC<TripManagerProps> = ({
                           )}
                       </div>
                         {isAdmin && invoicePreview?.tripId === trip.id && (
-                          <p className="mt-1 max-w-[160px] truncate text-[10px] text-slate-500">
-                            <FileText className="mr-1 inline h-3 w-3" />
+                          <p className="mt-1 max-w-[160px] truncate text-[10px] text-[var(--text-muted)]">
+                            <FileText className="mr-1 inline h-3 w-3" aria-hidden />
                             {invoicePreview.name}
                             {uploadingThis ? ' · subiendo…' : ''}
                           </p>
@@ -688,7 +766,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
               })}
               {pageSlice.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-400">
+                  <td colSpan={8} className="px-4 py-8 text-center text-[var(--text-muted)]">
                     No hay viajes que coincidan con los filtros.
                   </td>
                 </tr>
@@ -696,17 +774,17 @@ export const TripManager: React.FC<TripManagerProps> = ({
             </tbody>
           </table>
         </div>
-        {filteredTrips.length > PAGE_SIZE && (
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2 text-sm text-slate-600">
+        {sortedTrips.length > PAGE_SIZE && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] px-3 py-2 text-sm text-[var(--text-secondary)]">
             <span>
-              Página {safePage} de {totalPages} · {filteredTrips.length} viajes
+              Página {safePage} de {totalPages} · {sortedTrips.length} viajes
             </span>
             <div className="flex gap-1">
               <button
                 type="button"
                 disabled={safePage <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="rounded-md border border-slate-200 p-2 hover:bg-slate-50 disabled:opacity-40"
+                className="rounded-md border border-[var(--border)] p-2 hover:bg-[var(--bg-elevated)] disabled:opacity-40"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -714,7 +792,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                 type="button"
                 disabled={safePage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                className="rounded-md border border-slate-200 p-2 hover:bg-slate-50 disabled:opacity-40"
+                className="rounded-md border border-[var(--border)] p-2 hover:bg-[var(--bg-elevated)] disabled:opacity-40"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>

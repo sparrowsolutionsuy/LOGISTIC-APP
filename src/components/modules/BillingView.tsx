@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import type { Trip, Client } from '../../types';
 import { uploadInvoice } from '../../services/api';
+import { useSortableTable } from '../../hooks/useSortableTable';
 import { Modal } from '../ui/Modal';
+import SortableHeader from '../ui/SortableHeader';
 import {
   UploadCloud,
   CheckCircle,
@@ -36,6 +38,16 @@ function daysSince(dateStr: string): number {
 const MAX_BYTES = 5 * 1024 * 1024;
 const ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
 
+type BillingSortKey = 'fecha' | 'clientName' | 'tarifa' | 'diasSinFacturar';
+
+interface BillingRow {
+  trip: Trip;
+  fecha: string;
+  clientName: string;
+  tarifa: number;
+  diasSinFacturar: number;
+}
+
 export const BillingView: React.FC<BillingViewProps> = ({ trips, clients, onInvoiceUploaded }) => {
   const [tab, setTab] = useState<'pending' | 'invoiced'>('pending');
   const [invoicedMonth, setInvoicedMonth] = useState('');
@@ -66,6 +78,42 @@ export const BillingView: React.FC<BillingViewProps> = ({ trips, clients, onInvo
     invoicedTrips.forEach((t) => s.add(t.fecha.slice(0, 7)));
     return Array.from(s).sort((a, b) => b.localeCompare(a));
   }, [invoicedTrips]);
+
+  const pendingRows: BillingRow[] = useMemo(
+    () =>
+      pendingTrips.map((t) => ({
+        trip: t,
+        fecha: t.fecha,
+        clientName: getClientName(clients, t.clientId),
+        tarifa: tripTarifaTotal(t),
+        diasSinFacturar: daysSince(t.fecha),
+      })),
+    [pendingTrips, clients]
+  );
+
+  const invoicedRows: BillingRow[] = useMemo(
+    () =>
+      invoicedFiltered.map((t) => ({
+        trip: t,
+        fecha: t.fecha,
+        clientName: getClientName(clients, t.clientId),
+        tarifa: tripTarifaTotal(t),
+        diasSinFacturar: daysSince(t.fecha),
+      })),
+    [invoicedFiltered, clients]
+  );
+
+  const { sorted: sortedPending, sort: sortPending, handleSort: handleSortPending } =
+    useSortableTable<BillingRow, BillingSortKey>(pendingRows, {
+      column: 'fecha',
+      direction: 'desc',
+    });
+
+  const { sorted: sortedInvoiced, sort: sortInvoiced, handleSort: handleSortInvoiced } =
+    useSortableTable<BillingRow, BillingSortKey>(invoicedRows, {
+      column: 'fecha',
+      direction: 'desc',
+    });
 
   const runUpload = (trip: Trip, file: File) => {
     if (file.size > MAX_BYTES) {
@@ -171,92 +219,160 @@ export const BillingView: React.FC<BillingViewProps> = ({ trips, clients, onInvo
         )}
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <table className="w-full min-w-[640px] text-left text-sm text-slate-600">
-          <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-700">
-            <tr>
-              <th className="p-4">Cliente</th>
-              <th className="p-4">Ruta</th>
-              <th className="p-4">Fecha</th>
-              <th className="p-4 text-right">Tarifa (total)</th>
-              {tab === 'pending' && <th className="p-4">Estado</th>}
-              <th className="p-4 text-center">Acción</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {(tab === 'pending' ? pendingTrips : invoicedFiltered).map((trip) => {
-              const days = daysSince(trip.fecha);
-              const overdue = tab === 'pending' && days > 7;
-              return (
-                <tr
-                  key={trip.id}
-                  className={overdue ? 'border-l-4 border-amber-500 bg-amber-50/60' : 'hover:bg-slate-50'}
+      <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead>
+              <tr
+                className="border-b border-[var(--border)]"
+                style={{ backgroundColor: 'var(--bg-elevated)' }}
+              >
+                <SortableHeader
+                  label="Fecha"
+                  column="fecha"
+                  currentColumn={tab === 'pending' ? sortPending.column : sortInvoiced.column}
+                  direction={tab === 'pending' ? sortPending.direction : sortInvoiced.direction}
+                  onClick={(col) =>
+                    tab === 'pending'
+                      ? handleSortPending(col as BillingSortKey)
+                      : handleSortInvoiced(col as BillingSortKey)
+                  }
+                />
+                <SortableHeader
+                  label="Cliente"
+                  column="clientName"
+                  currentColumn={tab === 'pending' ? sortPending.column : sortInvoiced.column}
+                  direction={tab === 'pending' ? sortPending.direction : sortInvoiced.direction}
+                  onClick={(col) =>
+                    tab === 'pending'
+                      ? handleSortPending(col as BillingSortKey)
+                      : handleSortInvoiced(col as BillingSortKey)
+                  }
+                />
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
                 >
-                  <td className="p-4">
-                    <div className="font-medium text-slate-900">{getClientName(clients, trip.clientId)}</div>
-                    <div className="font-mono text-[10px] text-slate-400">{trip.id}</div>
-                  </td>
-                  <td className="p-4 text-xs">
-                    {trip.origen} → {trip.destino}
-                  </td>
-                  <td className="p-4 whitespace-nowrap">
-                    {trip.fecha}
-                    {tab === 'invoiced' && (
-                      <span className="ml-2 block text-[10px] font-normal text-slate-400">
-                        (fecha de cierre / registro)
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-4 text-right font-semibold text-slate-800">
-                    ${tripTarifaTotal(trip).toLocaleString('es-UY', { maximumFractionDigits: 0 })}
-                  </td>
-                  {tab === 'pending' && (
-                    <td className="p-4">
-                      <div className="flex flex-col gap-1 text-xs">
-                        <span>Hace {days} día{days === 1 ? '' : 's'}</span>
-                        {overdue && (
-                          <span className="inline-flex items-center gap-1 font-semibold text-amber-800">
-                            <AlertTriangle className="h-3 w-3" />
+                  Ruta
+                </th>
+                <SortableHeader
+                  label="Tarifa (total)"
+                  column="tarifa"
+                  currentColumn={tab === 'pending' ? sortPending.column : sortInvoiced.column}
+                  direction={tab === 'pending' ? sortPending.direction : sortInvoiced.direction}
+                  onClick={(col) =>
+                    tab === 'pending'
+                      ? handleSortPending(col as BillingSortKey)
+                      : handleSortInvoiced(col as BillingSortKey)
+                  }
+                  align="right"
+                />
+                <SortableHeader
+                  label="Días sin facturar"
+                  column="diasSinFacturar"
+                  currentColumn={tab === 'pending' ? sortPending.column : sortInvoiced.column}
+                  direction={tab === 'pending' ? sortPending.direction : sortInvoiced.direction}
+                  onClick={(col) =>
+                    tab === 'pending'
+                      ? handleSortPending(col as BillingSortKey)
+                      : handleSortInvoiced(col as BillingSortKey)
+                  }
+                  align="center"
+                />
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                >
+                  Acción
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+              {(tab === 'pending' ? sortedPending : sortedInvoiced).map((row, i) => {
+                const { trip } = row;
+                const days = row.diasSinFacturar;
+                const overdue = tab === 'pending' && days > 7;
+                return (
+                  <tr
+                    key={trip.id}
+                    style={{
+                      backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                      borderLeft: overdue ? '4px solid var(--accent-amber)' : undefined,
+                    }}
+                    className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                  >
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span className="text-[var(--text-primary)]">{trip.fecha}</span>
+                      {tab === 'invoiced' && (
+                        <span className="mt-0.5 block text-[10px] font-normal text-[var(--text-muted)]">
+                          (fecha de cierre / registro)
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-[var(--text-primary)]">{row.clientName}</div>
+                      <div className="font-mono text-[10px] text-[var(--text-muted)]">{trip.id}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[var(--text-secondary)]">
+                      {trip.origen} → {trip.destino}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-[var(--text-primary)]">
+                      ${row.tarifa.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                    </td>
+                    <td className="px-4 py-3 text-center text-xs text-[var(--text-secondary)]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>
+                          Hace {days} día{days === 1 ? '' : 's'}
+                        </span>
+                        {tab === 'pending' && overdue && (
+                          <span
+                            className="inline-flex items-center gap-1 font-semibold"
+                            style={{ color: 'var(--accent-amber)' }}
+                          >
+                            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
                             Más de 7 días sin facturar
                           </span>
                         )}
                       </div>
                     </td>
-                  )}
-                  <td className="p-4 text-center">
-                    {tab === 'pending' ? (
-                      <button
-                        type="button"
-                        onClick={() => setUploadTrip(trip)}
-                        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700"
-                      >
-                        <UploadCloud className="h-3 w-3" />
-                        Subir factura
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => trip.facturaUrl && window.open(trip.facturaUrl, '_blank', 'noopener,noreferrer')}
-                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        Ver factura
-                      </button>
-                    )}
+                    <td className="px-4 py-3 text-center">
+                      {tab === 'pending' ? (
+                        <button
+                          type="button"
+                          onClick={() => setUploadTrip(trip)}
+                          className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-[var(--text-inverse)]"
+                          style={{ backgroundColor: 'var(--accent-blue)' }}
+                        >
+                          <UploadCloud className="h-3 w-3 shrink-0" aria-hidden />
+                          Subir factura
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            trip.facturaUrl && window.open(trip.facturaUrl, '_blank', 'noopener,noreferrer')
+                          }
+                          className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-xs font-medium text-[var(--accent-emerald)] hover:border-[var(--accent-emerald)]"
+                        >
+                          <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+                          Ver factura
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {(tab === 'pending' ? sortedPending : sortedInvoiced).length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-12 text-center text-[var(--text-muted)]">
+                    <CheckCircle className="mx-auto mb-2 h-10 w-10 opacity-40" aria-hidden />
+                    No hay registros en esta sección.
                   </td>
                 </tr>
-              );
-            })}
-            {(tab === 'pending' ? pendingTrips : invoicedFiltered).length === 0 && (
-              <tr>
-                <td colSpan={tab === 'pending' ? 6 : 5} className="p-12 text-center text-slate-400">
-                  <CheckCircle className="mx-auto mb-2 h-10 w-10 text-slate-300" />
-                  No hay registros en esta sección.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <Modal
