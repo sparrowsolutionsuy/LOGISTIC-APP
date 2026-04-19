@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { Client } from '../../types';
 import { DEPARTAMENTOS } from '../../constants';
-import { Save, User, MapPin, Hash, Mail, Phone } from 'lucide-react';
+import { Save, User, MapPin, Hash, Mail, Phone, Info } from 'lucide-react';
 
 interface ClientFormProps {
   onAddClient: (client: Client) => void | Promise<void>;
@@ -28,7 +28,13 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
     e.preventDefault();
     if (formData.nombreComercial && formData.latitud && formData.longitud && formData.rut) {
       if (formData.rut.length !== 12) {
-        alert('El RUT debe tener 12 dígitos.');
+        alert('El RUT uruguayo debe tener exactamente 12 dígitos (sin guiones).');
+        return;
+      }
+      const lat = Number(formData.latitud);
+      const lng = Number(formData.longitud);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        alert('Ingresá latitud y longitud numéricas válidas.');
         return;
       }
 
@@ -37,8 +43,8 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
         nombreComercial: formData.nombreComercial,
         departamento: formData.departamento || 'Montevideo',
         localidad: formData.localidad || '',
-        latitud: Number(formData.latitud),
-        longitud: Number(formData.longitud),
+        latitud: lat,
+        longitud: lng,
         rut: formData.rut,
         email: formData.email || '',
         telefono: formData.telefono || '',
@@ -129,6 +135,13 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
           <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center">
             <MapPin className="w-4 h-4 mr-1" /> Ubicación
           </h3>
+          <div className="mb-4 flex gap-2 rounded-lg border border-blue-100 bg-blue-50/80 p-3 text-xs text-slate-700">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+            <p>
+              Para obtener coordenadas, buscá la dirección en{' '}
+              <strong>Google Maps</strong>, hacé clic derecho sobre el punto y copiá latitud y longitud.
+            </p>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Departamento</label>
@@ -179,6 +192,24 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
               />
             </div>
           </div>
+          {(() => {
+            const la = Number(formData.latitud);
+            const lo = Number(formData.longitud);
+            if (!Number.isFinite(la) || !Number.isFinite(lo)) {
+              return null;
+            }
+            const pad = 0.06;
+            const bbox = `${lo - pad},${la - pad},${lo + pad},${la + pad}`;
+            const src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${la},${lo}`;
+            return (
+              <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                <p className="border-b border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">
+                  Vista previa de ubicación
+                </p>
+                <iframe title="Mapa ubicación cliente" className="h-48 w-full" src={src} loading="lazy" />
+              </div>
+            );
+          })()}
         </div>
 
         <div className="pt-6">

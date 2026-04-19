@@ -7,7 +7,7 @@ import { ClientDirectory } from './components/modules/ClientDirectory';
 import { ClientForm } from './components/modules/ClientForm';
 import { BillingView } from './components/modules/BillingView';
 import { Login } from './components/modules/Login';
-import { PlaceholderModule } from './components/modules/PlaceholderModule';
+import { FinancialDashboard } from './components/modules/FinancialDashboard';
 import { CostManager } from './components/modules/CostManager';
 import { AppShell } from './components/layout/AppShell';
 import { AdminGuard } from './components/layout/AdminGuard';
@@ -28,11 +28,6 @@ import { generateLogisticsInsights } from './services/geminiService';
 const STORAGE_USER_KEY = 'gdc_user';
 
 const ADMIN_ONLY_TABS = new Set<ActiveTab>(['costs', 'financial', 'billing', 'clients', 'newClient']);
-
-const SHELL_COPY = {
-  financialTitle: 'Finanzas',
-  financialDesc: 'Panel financiero (margen, flujo y cierre) se integrará con analytics y Sheets.',
-} as const;
 
 function parseStoredUser(raw: string | null): User | null {
   if (!raw) {
@@ -298,10 +293,7 @@ const App: React.FC = () => {
       )}
       {activeTab === 'financial' && (
         <AdminGuard user={user} onRedirect={adminRedirect}>
-          <PlaceholderModule
-            title={SHELL_COPY.financialTitle}
-            description={`${SHELL_COPY.financialDesc} Dataset: ${trips.length} viajes, ${costs.length} costos.`}
-          />
+          <FinancialDashboard trips={trips} clients={clients} costs={costs} />
         </AdminGuard>
       )}
     </AppShell>

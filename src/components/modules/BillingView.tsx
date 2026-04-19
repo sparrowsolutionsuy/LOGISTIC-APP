@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Trip, Client } from '../../types';
 import { uploadInvoice } from '../../services/api';
+import { Modal } from '../ui/Modal';
 import {
   UploadCloud,
   CheckCircle,
   Loader2,
   ExternalLink,
   Calendar,
-  Search,
-  X,
+  AlertTriangle,
+  FileText,
 } from 'lucide-react';
 
 interface BillingViewProps {
@@ -17,62 +18,66 @@ interface BillingViewProps {
   onInvoiceUploaded: (tripId: string, url: string) => void;
 }
 
+function getClientName(clients: Client[], id: string): string {
+  return clients.find((c) => c.id === id)?.nombreComercial ?? 'Desconocido';
+}
+
+function tripTarifaTotal(t: Trip): number {
+  return t.tarifa * (t.pesoKg / 1000);
+}
+
+/** Días transcurridos desde la fecha del viaje (referencia de “completado”). */
+function daysSince(dateStr: string): number {
+  const start = new Date(`${dateStr}T12:00:00`);
+  const now = new Date();
+  return Math.floor((now.getTime() - start.getTime()) / 86400000);
+}
+
+const MAX_BYTES = 5 * 1024 * 1024;
+const ACCEPT = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
+
 export const BillingView: React.FC<BillingViewProps> = ({ trips, clients, onInvoiceUploaded }) => {
-  const [uploadingId, setUploadingId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'pending' | 'closed'>('pending');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [tab, setTab] = useState<'pending' | 'invoiced'>('pending');
+  const [invoicedMonth, setInvoicedMonth] = useState('');
+  const [uploadTrip, setUploadTrip] = useState<Trip | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [filePreview, setFilePreview] = useState('');
 
-  const [filters, setFilters] = useState({
-    dateStart: '',
-    dateEnd: '',
-    clientId: '',
-    searchId: '',
-  });
+  const pendingTrips = useMemo(
+    () => trips.filter((t) => t.estado === 'Completado' && !t.facturaUrl),
+    [trips]
+  );
 
-  const visibleTrips = trips.filter((t) => {
-    if (activeTab === 'pending' && t.estado !== 'Completado') {
-      return false;
-    }
-    if (activeTab === 'closed' && t.estado !== 'Cerrado') {
-      return false;
-    }
+  const invoicedTrips = useMemo(
+    () => trips.filter((t) => t.estado === 'Cerrado' && Boolean(t.facturaUrl)),
+    [trips]
+  );
 
-    const client = clients.find((c) => c.id === t.clientId);
-    const rutMatch = client?.rut?.includes(filters.searchId) ?? false;
+  const invoicedFiltered = useMemo(
+    () =>
+      invoicedMonth
+        ? invoicedTrips.filter((t) => t.fecha.startsWith(invoicedMonth))
+        : invoicedTrips,
+    [invoicedTrips, invoicedMonth]
+  );
 
-    if (
-      filters.searchId &&
-      !t.id.toLowerCase().includes(filters.searchId.toLowerCase()) &&
-      !rutMatch
-    ) {
-      return false;
-    }
-    if (filters.clientId && t.clientId !== filters.clientId) {
-      return false;
-    }
-    if (filters.dateStart && t.fecha < filters.dateStart) {
-      return false;
-    }
-    if (filters.dateEnd && t.fecha > filters.dateEnd) {
-      return false;
-    }
+  const monthOptions = useMemo(() => {
+    const s = new Set<string>();
+    invoicedTrips.forEach((t) => s.add(t.fecha.slice(0, 7)));
+    return Array.from(s).sort((a, b) => b.localeCompare(a));
+  }, [invoicedTrips]);
 
-    return true;
-  });
-
-  const handleFileUpload = async (trip: Trip, e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) {
+  const runUpload = (trip: Trip, file: File) => {
+    if (file.size > MAX_BYTES) {
+      alert('El archivo supera 5 MB.');
       return;
     }
-
-    const file = e.target.files[0];
-    const clientName =
-      clients.find((c) => c.id === trip.clientId)?.nombreComercial ?? 'Unknown';
+    const clientName = getClientName(clients, trip.clientId).replace(/\s+/g, '');
     const ext = file.name.includes('.') ? file.name.split('.').pop() : 'pdf';
-    const fileName = `Factura_${trip.id}_${clientName.replace(/\s+/g, '')}.${ext ?? 'pdf'}`;
+    const fileName = `Factura_${trip.id}_${clientName}.${ext ?? 'pdf'}`;
     const mimeType = file.type || 'application/octet-stream';
-
-    setUploadingId(trip.id);
+    setFilePreview(file.name);
+    setUploading(true);
 
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -89,195 +94,164 @@ export const BillingView: React.FC<BillingViewProps> = ({ trips, clients, onInvo
           alert('No se pudo obtener el contenido del archivo.');
           return;
         }
-
         const url = await uploadInvoice(trip.id, fileData, fileName, mimeType);
         if (url) {
           onInvoiceUploaded(trip.id, url);
+          setUploadTrip(null);
+          setFilePreview('');
         } else {
-          alert('No se recibió URL de factura. Verifique la conexión o la configuración.');
+          alert('No se recibió URL de factura. Verificá la configuración.');
         }
-      } catch (error) {
-        console.error(error);
-        alert('Error al subir la factura. Intente nuevamente.');
+      } catch (e) {
+        console.error(e);
+        alert('Error al subir la factura.');
       } finally {
-        setUploadingId(null);
+        setUploading(false);
+        setFilePreview('');
       }
     };
     reader.onerror = () => {
-      setUploadingId(null);
+      setUploading(false);
+      setFilePreview('');
       alert('Error al leer el archivo.');
     };
   };
 
-  const handleViewInvoice = (url: string) => {
-    const embedUrl = url.includes('/view') ? url.replace('/view', '/preview') : url;
-    setPreviewUrl(embedUrl);
-  };
-
   return (
     <div className="space-y-6">
-      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-xl font-bold text-slate-800 mb-1">Módulo de Facturación</h2>
-            <p className="text-slate-500 text-sm">Auditoría y carga de comprobantes fiscales.</p>
+            <h2 className="text-xl font-bold text-slate-800">Facturación y cierre</h2>
+            <p className="text-sm text-slate-500">Pendientes de factura y viajes facturados.</p>
           </div>
-          <div className="flex space-x-2 mt-4 md:mt-0">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => setActiveTab('pending')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'pending'
-                  ? 'bg-orange-100 text-orange-700 border border-orange-200'
-                  : 'text-slate-500 hover:bg-slate-50'
+              onClick={() => setTab('pending')}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                tab === 'pending'
+                  ? 'border border-amber-200 bg-amber-100 text-amber-800'
+                  : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              Pendientes
+              Pendientes de factura
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('closed')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === 'closed'
-                  ? 'bg-green-100 text-green-700 border border-green-200'
-                  : 'text-slate-500 hover:bg-slate-50'
+              onClick={() => setTab('invoiced')}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                tab === 'invoiced'
+                  ? 'border border-emerald-200 bg-emerald-100 text-emerald-800'
+                  : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
-              Cerrados
+              Facturados
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-4 border-t border-slate-100">
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar ID Viaje o RUT..."
-              className="w-full pl-9 p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none"
-              value={filters.searchId}
-              onChange={(e) => setFilters({ ...filters, searchId: e.target.value })}
-            />
+        {tab === 'invoiced' && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
+            <Calendar className="h-4 w-4 text-slate-400" />
+            <span className="text-sm text-slate-600">Filtrar por mes:</span>
+            <select
+              className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm outline-none"
+              value={invoicedMonth}
+              onChange={(e) => setInvoicedMonth(e.target.value)}
+            >
+              <option value="">Todos los meses</option>
+              {monthOptions.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
           </div>
-          <select
-            className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none"
-            value={filters.clientId}
-            onChange={(e) => setFilters({ ...filters, clientId: e.target.value })}
-          >
-            <option value="">Todos los Clientes</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.nombreComercial}
-              </option>
-            ))}
-          </select>
-          <div className="flex items-center space-x-2 col-span-2">
-            <Calendar className="w-4 h-4 text-slate-400" />
-            <input
-              type="date"
-              className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none"
-              value={filters.dateStart}
-              onChange={(e) => setFilters({ ...filters, dateStart: e.target.value })}
-            />
-            <span className="text-slate-400">-</span>
-            <input
-              type="date"
-              className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none"
-              value={filters.dateEnd}
-              onChange={(e) => setFilters({ ...filters, dateEnd: e.target.value })}
-            />
-          </div>
-        </div>
+        )}
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <table className="w-full text-left text-sm text-slate-600">
-          <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <table className="w-full min-w-[640px] text-left text-sm text-slate-600">
+          <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-700">
             <tr>
-              <th className="p-4">ID / Estado</th>
+              <th className="p-4">Cliente</th>
+              <th className="p-4">Ruta</th>
               <th className="p-4">Fecha</th>
-              <th className="p-4">Cliente (RUT)</th>
-              <th className="p-4">Detalle Carga</th>
-              <th className="p-4 text-right">Monto Total</th>
+              <th className="p-4 text-right">Tarifa (total)</th>
+              {tab === 'pending' && <th className="p-4">Estado</th>}
               <th className="p-4 text-center">Acción</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {visibleTrips.map((trip) => {
-              const client = clients.find((c) => c.id === trip.clientId);
-              const clientName = client?.nombreComercial ?? 'Desconocido';
-              const clientRut = client?.rut ?? 'S/D';
-              const totalAmount = trip.tarifa * (trip.pesoKg / 1000);
-
+            {(tab === 'pending' ? pendingTrips : invoicedFiltered).map((trip) => {
+              const days = daysSince(trip.fecha);
+              const overdue = tab === 'pending' && days > 7;
               return (
-                <tr key={trip.id} className="hover:bg-slate-50 transition-colors">
+                <tr
+                  key={trip.id}
+                  className={overdue ? 'border-l-4 border-amber-500 bg-amber-50/60' : 'hover:bg-slate-50'}
+                >
                   <td className="p-4">
-                    <div className="font-mono text-slate-500">{trip.id}</div>
-                    {trip.estado === 'Cerrado' && (
-                      <div className="flex items-center text-xs text-green-600 mt-1 font-medium">
-                        <CheckCircle className="w-3 h-3 mr-1" /> Cerrado
-                      </div>
+                    <div className="font-medium text-slate-900">{getClientName(clients, trip.clientId)}</div>
+                    <div className="font-mono text-[10px] text-slate-400">{trip.id}</div>
+                  </td>
+                  <td className="p-4 text-xs">
+                    {trip.origen} → {trip.destino}
+                  </td>
+                  <td className="p-4 whitespace-nowrap">
+                    {trip.fecha}
+                    {tab === 'invoiced' && (
+                      <span className="ml-2 block text-[10px] font-normal text-slate-400">
+                        (fecha de cierre / registro)
+                      </span>
                     )}
                   </td>
-                  <td className="p-4">{trip.fecha}</td>
-                  <td className="p-4">
-                    <div className="font-medium text-slate-800">{clientName}</div>
-                    <div className="text-xs text-slate-400 font-mono mt-0.5">RUT: {clientRut}</div>
+                  <td className="p-4 text-right font-semibold text-slate-800">
+                    ${tripTarifaTotal(trip).toLocaleString('es-UY', { maximumFractionDigits: 0 })}
                   </td>
-                  <td className="p-4">
-                    <span className="block text-slate-800">{trip.contenido}</span>
-                    <span className="text-xs text-slate-400">
-                      {(trip.pesoKg / 1000).toFixed(1)} tons - {trip.origen} &rarr; {trip.destino}
-                    </span>
-                  </td>
-                  <td className="p-4 text-right font-bold text-slate-800">
-                    ${totalAmount.toLocaleString()}
-                  </td>
+                  {tab === 'pending' && (
+                    <td className="p-4">
+                      <div className="flex flex-col gap-1 text-xs">
+                        <span>Hace {days} día{days === 1 ? '' : 's'}</span>
+                        {overdue && (
+                          <span className="inline-flex items-center gap-1 font-semibold text-amber-800">
+                            <AlertTriangle className="h-3 w-3" />
+                            Más de 7 días sin facturar
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  )}
                   <td className="p-4 text-center">
-                    {trip.estado === 'Cerrado' ? (
+                    {tab === 'pending' ? (
                       <button
                         type="button"
-                        onClick={() => trip.facturaUrl && handleViewInvoice(trip.facturaUrl)}
-                        className="inline-flex items-center px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg transition-colors text-xs font-medium border border-green-200"
+                        onClick={() => setUploadTrip(trip)}
+                        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700"
                       >
-                        <ExternalLink className="w-3 h-3 mr-2" /> Ver Factura
-                      </button>
-                    ) : uploadingId === trip.id ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="inline-flex items-center px-4 py-2 bg-blue-100 text-blue-700 rounded-lg cursor-wait text-xs font-medium"
-                      >
-                        <Loader2 className="w-3 h-3 mr-2 animate-spin" /> Subiendo...
+                        <UploadCloud className="h-3 w-3" />
+                        Subir factura
                       </button>
                     ) : (
-                      <div className="relative inline-block">
-                        <input
-                          type="file"
-                          accept=".pdf,image/*"
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                          onChange={(ev) => void handleFileUpload(trip, ev)}
-                        />
-                        <button
-                          type="button"
-                          className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors shadow-sm text-xs font-medium"
-                        >
-                          <UploadCloud className="w-3 h-3 mr-2" /> Cargar
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => trip.facturaUrl && window.open(trip.facturaUrl, '_blank', 'noopener,noreferrer')}
+                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Ver factura
+                      </button>
                     )}
                   </td>
                 </tr>
               );
             })}
-            {visibleTrips.length === 0 && (
+            {(tab === 'pending' ? pendingTrips : invoicedFiltered).length === 0 && (
               <tr>
-                <td colSpan={6} className="p-12 text-center">
-                  <div className="flex flex-col items-center justify-center text-slate-400">
-                    <CheckCircle className="w-12 h-12 mb-4 text-slate-300" />
-                    <p className="text-lg font-medium text-slate-600">Sin registros</p>
-                    <p className="text-sm">No hay viajes que coincidan con los filtros.</p>
-                  </div>
+                <td colSpan={tab === 'pending' ? 6 : 5} className="p-12 text-center text-slate-400">
+                  <CheckCircle className="mx-auto mb-2 h-10 w-10 text-slate-300" />
+                  No hay registros en esta sección.
                 </td>
               </tr>
             )}
@@ -285,40 +259,62 @@ export const BillingView: React.FC<BillingViewProps> = ({ trips, clients, onInvo
         </table>
       </div>
 
-      {previewUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden animate-fade-in-up">
-            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-              <h3 className="font-bold text-slate-800 flex items-center">
-                <ExternalLink className="w-4 h-4 mr-2" /> Vista Previa de Factura
-              </h3>
+      <Modal
+        open={!!uploadTrip}
+        onClose={() => {
+          if (!uploading) {
+            setUploadTrip(null);
+            setFilePreview('');
+          }
+        }}
+        title="Subir factura"
+        size="md"
+      >
+        {uploadTrip && (
+          <div className="space-y-4 text-sm text-slate-600">
+            <p>
+              Viaje <span className="font-mono font-medium">{uploadTrip.id}</span> —{' '}
+              {getClientName(clients, uploadTrip.clientId)}
+            </p>
+            <p className="rounded-lg bg-slate-50 p-2 text-xs">
+              PDF, JPG o PNG. Máximo 5 MB. Al completar, el viaje pasará a <strong>Cerrado</strong>.
+            </p>
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/80 p-6 hover:border-blue-400">
+              <FileText className="mb-2 h-8 w-8 text-slate-400" />
+              <span className="text-blue-700">Elegir archivo</span>
+              <input
+                type="file"
+                accept={ACCEPT}
+                className="hidden"
+                disabled={uploading}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f && uploadTrip) {
+                    runUpload(uploadTrip, f);
+                  }
+                }}
+              />
+            </label>
+            {uploading && (
+              <div className="flex items-center justify-center gap-2 text-blue-700">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Subiendo{filePreview ? `: ${filePreview}` : '…'}
+              </div>
+            )}
+            <div className="flex justify-end">
               <button
                 type="button"
-                onClick={() => setPreviewUrl(null)}
-                className="p-1 hover:bg-slate-200 rounded-full transition-colors"
+                disabled={uploading}
+                className="rounded-lg px-3 py-2 text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                onClick={() => setUploadTrip(null)}
               >
-                <X className="w-6 h-6 text-slate-500" />
+                Cancelar
               </button>
             </div>
-            <div className="flex-1 bg-slate-100 relative">
-              <iframe src={previewUrl} className="w-full h-full" title="Invoice Preview" />
-              <div className="absolute bottom-4 left-0 right-0 text-center pointer-events-none">
-                <span className="bg-slate-800 text-white text-xs px-3 py-1 rounded-full opacity-75">
-                  ¿No carga?{' '}
-                  <a
-                    href={previewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline pointer-events-auto"
-                  >
-                    Abrir en nueva pestaña
-                  </a>
-                </span>
-              </div>
-            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </div>
   );
 };
