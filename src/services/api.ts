@@ -32,6 +32,10 @@ export function normalizeTrip(row: unknown): Trip {
     origen: String(r.origen ?? ''),
     destino: String(r.destino ?? ''),
     facturaUrl: r.facturaUrl ? String(r.facturaUrl) : undefined,
+    asignadoA:
+      r.asignadoA != null && String(r.asignadoA).trim() !== ''
+        ? String(r.asignadoA).trim()
+        : undefined,
   };
 }
 

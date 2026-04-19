@@ -1,532 +1,733 @@
-import React, { useState, useEffect } from 'react';
-import type { Trip, TripStatus, Client, User } from '../../types';
+import React, { useMemo, useState, useEffect } from 'react';
+import type { Trip, TripStatus, Client, User, Cost } from '../../types';
 import { Badge } from '../ui/Badge';
+import { Modal } from '../ui/Modal';
+import { uploadInvoice } from '../../services/api';
 import {
   Plus,
   Calendar,
   Package,
   ArrowRight,
-  DollarSign,
   Search,
   Filter,
-  Sparkles,
   Pencil,
   Trash2,
-  X,
+  Upload,
+  FileText,
+  ExternalLink,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
-interface TripManagerProps {
+const PAGE_SIZE = 15;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const ACCEPT_INVOICE = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
+
+export interface TripManagerProps {
   trips: Trip[];
   clients: Client[];
+  costs: Cost[];
   user: User;
   onAddTrip: (trip: Trip) => void | Promise<void>;
   onUpdateTrip: (trip: Trip) => void | Promise<void>;
   onDeleteTrip: (tripId: string) => void | Promise<void>;
+  onInvoiceUploaded: (tripId: string, url: string) => void;
+}
+
+function getClientName(clients: Client[], id: string): string {
+  return clients.find((c) => c.id === id)?.nombreComercial ?? 'Desconocido';
+}
+
+function sumCostsForTrip(costs: Cost[], tripId: string): number {
+  return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + c.monto, 0);
+}
+
+function tripRevenue(t: Trip): number {
+  return t.tarifa * (t.pesoKg / 1000);
+}
+
+function operativoCanSeeTrip(t: Trip, user: User): boolean {
+  if (t.estado === 'Cerrado') {
+    return false;
+  }
+  return !t.asignadoA || t.asignadoA === user.username;
 }
 
 export const TripManager: React.FC<TripManagerProps> = ({
   trips,
   clients,
+  costs,
+  user,
   onAddTrip,
   onUpdateTrip,
   onDeleteTrip,
-  user,
+  onInvoiceUploaded,
 }) => {
   const isAdmin = user.role === 'admin';
-  const [activeTab, setActiveTab] = useState<'current' | 'programmed' | 'all'>('current');
-  const [showForm, setShowForm] = useState(false);
-  const [suggestedKm, setSuggestedKm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
 
-  const [filters, setFilters] = useState({
-    searchId: '',
-    startDate: '',
-    endDate: '',
-    clientId: '',
-    status: '',
-  });
+  const [searchText, setSearchText] = useState('');
+  const [estadoFilter, setEstadoFilter] = useState<TripStatus | ''>('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [page, setPage] = useState(1);
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [closedWarnTrip, setClosedWarnTrip] = useState<Trip | null>(null);
+
+  const [uploadTripId, setUploadTripId] = useState<string | null>(null);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [invoicePreview, setInvoicePreview] = useState<{ tripId: string; name: string } | null>(
+    null
+  );
 
   const [newTrip, setNewTrip] = useState<Partial<Trip>>({
     estado: 'Pendiente',
     fecha: new Date().toISOString().split('T')[0],
   });
 
-  useEffect(() => {
-    if (!editingId && newTrip.origen && newTrip.destino && showForm) {
-      const origin = newTrip.origen.trim().toLowerCase();
-      const dest = newTrip.destino.trim().toLowerCase();
+  const roleTrips = useMemo(() => {
+    if (isAdmin) {
+      return trips;
+    }
+    return trips.filter((t) => operativoCanSeeTrip(t, user));
+  }, [trips, isAdmin, user]);
 
-      const matchingTrips = trips.filter(
-        (t) =>
-          t.origen.toLowerCase() === origin &&
-          t.destino.toLowerCase() === dest &&
-          t.kmRecorridos > 0
+  const filteredTrips = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
+    return roleTrips.filter((t) => {
+      if (estadoFilter && t.estado !== estadoFilter) {
+        return false;
+      }
+      if (startDate && t.fecha < startDate) {
+        return false;
+      }
+      if (endDate && t.fecha > endDate) {
+        return false;
+      }
+      if (!q) {
+        return true;
+      }
+      const clientName = getClientName(clients, t.clientId).toLowerCase();
+      return (
+        t.id.toLowerCase().includes(q) ||
+        clientName.includes(q) ||
+        t.origen.toLowerCase().includes(q) ||
+        t.destino.toLowerCase().includes(q) ||
+        t.contenido.toLowerCase().includes(q)
       );
+    });
+  }, [roleTrips, searchText, estadoFilter, startDate, endDate, clients]);
 
-      if (matchingTrips.length > 0) {
-        const totalKm = matchingTrips.reduce((acc, t) => acc + t.kmRecorridos, 0);
-        const avgKm = Math.round(totalKm / matchingTrips.length);
-        setNewTrip((prev) => ({ ...prev, kmRecorridos: avgKm }));
-        setSuggestedKm(true);
-      } else {
-        setSuggestedKm(false);
-      }
-    }
-  }, [newTrip.origen, newTrip.destino, trips, showForm, editingId]);
+  useEffect(() => {
+    setPage(1);
+  }, [searchText, estadoFilter, startDate, endDate, roleTrips.length]);
 
-  const filteredTrips = trips.filter((t) => {
-    if (activeTab === 'current' && t.estado !== 'En Tránsito') {
-      return false;
-    }
-    if (activeTab === 'programmed' && t.estado !== 'Pendiente') {
-      return false;
-    }
+  const totalPages = Math.max(1, Math.ceil(filteredTrips.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageSlice = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filteredTrips.slice(start, start + PAGE_SIZE);
+  }, [filteredTrips, safePage]);
 
-    if (filters.searchId && !t.id.toLowerCase().includes(filters.searchId.toLowerCase())) {
-      return false;
-    }
-    if (filters.clientId && t.clientId !== filters.clientId) {
-      return false;
-    }
-    if (filters.status && t.estado !== filters.status) {
-      return false;
-    }
-    if (filters.startDate && t.fecha < filters.startDate) {
-      return false;
-    }
-    if (filters.endDate && t.fecha > filters.endDate) {
-      return false;
-    }
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages));
+  }, [totalPages]);
 
-    return true;
-  });
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newTrip.clientId && newTrip.pesoKg) {
-      const finalTarifa = newTrip.tarifa !== undefined ? Number(newTrip.tarifa) : 0;
-
-      if (editingId) {
-        if (!isAdmin) {
-          alert('Solo los administradores pueden editar viajes existentes.');
-          return;
-        }
-        const updatedTrip: Trip = {
-          ...(newTrip as Trip),
-          id: editingId,
-        };
-        await onUpdateTrip(updatedTrip);
-      } else {
-        const trip: Trip = {
-          id: `V${Date.now()}`,
-          fecha: newTrip.fecha || '',
-          clientId: newTrip.clientId,
-          estado: newTrip.estado || 'Pendiente',
-          contenido: newTrip.contenido || '',
-          pesoKg: Number(newTrip.pesoKg),
-          kmRecorridos: Number(newTrip.kmRecorridos || 0),
-          tarifa: finalTarifa,
-          origen: newTrip.origen || '',
-          destino: newTrip.destino || '',
-        };
-        await onAddTrip(trip);
-      }
-
-      closeForm();
-    }
+  const openNewForm = () => {
+    setEditingId(null);
+    setNewTrip({
+      estado: 'Pendiente',
+      fecha: new Date().toISOString().split('T')[0],
+      clientId: '',
+      contenido: '',
+      origen: '',
+      destino: '',
+      pesoKg: undefined,
+      kmRecorridos: 0,
+      tarifa: undefined,
+    });
+    setFormOpen(true);
   };
 
-  const handleEdit = (trip: Trip) => {
+  const openEditForm = (trip: Trip) => {
+    if (trip.estado === 'Cerrado' && isAdmin) {
+      setClosedWarnTrip(trip);
+      return;
+    }
     if (!isAdmin) {
       return;
     }
-    setNewTrip(trip);
     setEditingId(trip.id);
-    setShowForm(true);
+    setNewTrip({ ...trip });
+    setFormOpen(true);
+  };
+
+  const proceedEditClosedTrip = () => {
+    if (!closedWarnTrip) {
+      return;
+    }
+    const trip = closedWarnTrip;
+    setClosedWarnTrip(null);
+    setEditingId(trip.id);
+    setNewTrip({ ...trip });
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    setFormOpen(false);
+    setEditingId(null);
+    setSaveLoading(false);
+    setNewTrip({ estado: 'Pendiente', fecha: new Date().toISOString().split('T')[0] });
+  };
+
+  const validateForm = (): string | null => {
+    if (!newTrip.fecha?.trim()) {
+      return 'La fecha es obligatoria.';
+    }
+    if (!newTrip.clientId) {
+      return 'Seleccioná un cliente.';
+    }
+    if (!newTrip.origen?.trim() || !newTrip.destino?.trim()) {
+      return 'Origen y destino son obligatorios.';
+    }
+    if (!newTrip.contenido?.trim()) {
+      return 'El contenido de carga es obligatorio.';
+    }
+    const peso = Number(newTrip.pesoKg);
+    if (!Number.isFinite(peso) || peso <= 0) {
+      return 'El peso debe ser mayor a 0.';
+    }
+    const tarifa = Number(newTrip.tarifa);
+    if (!Number.isFinite(tarifa) || tarifa <= 0) {
+      return 'La tarifa debe ser mayor a 0.';
+    }
+    const km = Number(newTrip.kmRecorridos ?? 0);
+    if (!Number.isFinite(km) || km < 0) {
+      return 'KM recorridos inválidos.';
+    }
+    return null;
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const err = validateForm();
+    if (err) {
+      alert(err);
+      return;
+    }
+    if (!isAdmin) {
+      return;
+    }
+
+    setSaveLoading(true);
+    try {
+      const base = {
+        fecha: String(newTrip.fecha),
+        clientId: String(newTrip.clientId),
+        contenido: String(newTrip.contenido).trim(),
+        pesoKg: Number(newTrip.pesoKg),
+        kmRecorridos: Number(newTrip.kmRecorridos ?? 0),
+        tarifa: Number(newTrip.tarifa),
+        origen: String(newTrip.origen).trim(),
+        destino: String(newTrip.destino).trim(),
+        estado: (newTrip.estado as TripStatus) ?? 'Pendiente',
+        facturaUrl: newTrip.facturaUrl,
+        asignadoA: newTrip.asignadoA,
+      };
+
+      if (editingId) {
+        const updated: Trip = {
+          ...base,
+          id: editingId,
+        };
+        await onUpdateTrip(updated);
+      } else {
+        const trip: Trip = {
+          ...base,
+          id: `V${Date.now()}`,
+        };
+        await onAddTrip(trip);
+      }
+      closeForm();
+    } finally {
+      setSaveLoading(false);
+    }
   };
 
   const handleDelete = async (id: string) => {
     if (!isAdmin) {
       return;
     }
-    if (!id) {
+    if (!window.confirm(`¿Eliminar el viaje ${id}? Esta acción no se puede deshacer.`)) {
       return;
     }
-
-    const confirmed = window.confirm(
-      `ATENCIÓN: ¿Está seguro de que desea eliminar el viaje ${id}?\n\nEsta acción eliminará el registro de la hoja de cálculo y no se puede deshacer.`
-    );
-
-    if (confirmed) {
-      await onDeleteTrip(id);
-    }
+    await onDeleteTrip(id);
   };
 
-  const closeForm = () => {
-    setShowForm(false);
-    setEditingId(null);
-    setNewTrip({ estado: 'Pendiente', fecha: new Date().toISOString().split('T')[0] });
-    setSuggestedKm(false);
+  const handleMarkCompleted = async (trip: Trip) => {
+    await onUpdateTrip({ ...trip, estado: 'Completado' });
   };
 
-  const getClientName = (id: string): string =>
-    clients.find((c) => c.id === id)?.nombreComercial ?? 'Desconocido';
-
-  const calculateBenefit = (trip: Trip): string => {
-    if (trip.kmRecorridos <= 0) {
-      return '0';
+  const handleInvoiceChange = (trip: Trip, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) {
+      return;
     }
-    const revenue = trip.tarifa * (trip.pesoKg / 1000);
-    return (revenue / trip.kmRecorridos).toFixed(2);
+    if (file.size > MAX_FILE_BYTES) {
+      alert('El archivo supera el máximo de 5 MB.');
+      return;
+    }
+    setInvoicePreview({ tripId: trip.id, name: file.name });
+    setUploadTripId(trip.id);
+    setUploadLoading(true);
+
+    const mimeType = file.type || 'application/octet-stream';
+    const ext = file.name.includes('.') ? file.name.split('.').pop() : 'pdf';
+    const fileName = `Factura_${trip.id}_${Date.now()}.${ext ?? 'pdf'}`;
+
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = async () => {
+      try {
+        const raw = reader.result;
+        if (typeof raw !== 'string') {
+          alert('No se pudo leer el archivo.');
+          return;
+        }
+        const parts = raw.split(',');
+        const fileData = parts.length > 1 ? parts[1] : '';
+        if (!fileData) {
+          alert('No se pudo obtener el contenido del archivo.');
+          return;
+        }
+        const url = await uploadInvoice(trip.id, fileData, fileName, mimeType);
+        if (url) {
+          onInvoiceUploaded(trip.id, url);
+        } else {
+          alert('No se recibió URL de la factura. Reintentá o verificá la configuración.');
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error al subir la factura.');
+      } finally {
+        setUploadLoading(false);
+        setUploadTripId(null);
+        setInvoicePreview(null);
+      }
+    };
+    reader.onerror = () => {
+      setUploadLoading(false);
+      setUploadTripId(null);
+      setInvoicePreview(null);
+      alert('Error al leer el archivo.');
+    };
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-        <div className="flex bg-slate-200 p-1 rounded-lg">
-          <button
-            type="button"
-            onClick={() => setActiveTab('current')}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-              activeTab === 'current' ? 'bg-white text-blue-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            En Tránsito
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('programmed')}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-              activeTab === 'programmed' ? 'bg-white text-blue-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            Pendientes
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('all')}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-              activeTab === 'all' ? 'bg-white text-blue-900 shadow-sm' : 'text-slate-600'
-            }`}
-          >
-            Historial
-          </button>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Gestión de viajes</h1>
+          <p className="text-sm text-slate-500">
+            {isAdmin ? 'Administración completa del ciclo de vida.' : 'Tus asignaciones operativas.'}
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowForm(true)}
-          className="bg-blue-900 hover:bg-blue-800 text-white px-4 py-2 rounded-lg flex items-center shadow-lg transition-colors"
-        >
-          <Plus className="w-4 h-4 mr-2" /> Nuevo Viaje
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={openNewForm}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-900 px-4 py-2 text-sm font-medium text-white shadow hover:bg-blue-800"
+          >
+            <Plus className="h-4 w-4" />
+            Nuevo viaje
+          </button>
+        )}
       </div>
 
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-        <div className="flex items-center text-sm font-semibold text-slate-700 mb-3">
-          <Filter className="w-4 h-4 mr-2" /> Filtros Avanzados
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center text-sm font-semibold text-slate-700">
+          <Filter className="mr-2 h-4 w-4" />
+          Filtros y búsqueda
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
+          <div className="relative lg:col-span-2">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Buscar ID Viaje..."
-              className="w-full pl-9 p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none focus:border-blue-500"
-              value={filters.searchId}
-              onChange={(e) => setFilters({ ...filters, searchId: e.target.value })}
+              placeholder="Cliente, origen, destino, carga o ID…"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
             />
           </div>
           <select
-            className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none focus:border-blue-500"
-            value={filters.clientId}
-            onChange={(e) => setFilters({ ...filters, clientId: e.target.value })}
+            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm outline-none"
+            value={estadoFilter}
+            onChange={(e) => setEstadoFilter((e.target.value || '') as TripStatus | '')}
           >
-            <option value="">Todos los Clientes</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.nombreComercial}
-              </option>
-            ))}
-          </select>
-          <select
-            className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none focus:border-blue-500"
-            value={filters.status}
-            onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-          >
-            <option value="">Todos los Estados</option>
+            <option value="">Todos los estados</option>
             <option value="Pendiente">Pendiente</option>
-            <option value="En Tránsito">En Tránsito</option>
+            <option value="En Tránsito">En tránsito</option>
             <option value="Completado">Completado</option>
             <option value="Cerrado">Cerrado</option>
           </select>
-          <div className="flex items-center space-x-2 col-span-2">
-            <input
-              type="date"
-              className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none"
-              value={filters.startDate}
-              onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
-            />
-            <span className="text-slate-400">-</span>
-            <input
-              type="date"
-              className="w-full p-2 bg-slate-50 border border-slate-300 rounded-lg text-sm outline-none"
-              value={filters.endDate}
-              onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
-            />
-          </div>
+          <input
+            type="date"
+            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+          />
+          <input
+            type="date"
+            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+          />
         </div>
       </div>
 
-      {showForm && (
-        <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200 animate-fade-in-down">
-          <div className="flex justify-between items-center mb-4 border-b pb-2">
-            <h3 className="text-lg font-bold text-slate-800">
-              {editingId ? 'Editar Viaje' : 'Registrar Nuevo Viaje'}
-            </h3>
-            <button type="button" onClick={closeForm} className="text-slate-400 hover:text-slate-600">
-              <X className="w-5 h-5" />
+      <Modal
+        open={!!closedWarnTrip}
+        onClose={() => setClosedWarnTrip(null)}
+        title="Viaje cerrado"
+        size="sm"
+      >
+        <p className="text-sm text-[var(--text-secondary)]">
+          Este viaje está en estado <strong>Cerrado</strong>. Editarlo puede afectar auditoría y
+          facturación. ¿Deseás continuar?
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            className="rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
+            onClick={() => setClosedWarnTrip(null)}
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700"
+            onClick={proceedEditClosedTrip}
+          >
+            Continuar
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={formOpen}
+        onClose={closeForm}
+        title={editingId ? 'Editar viaje' : 'Nuevo viaje'}
+        size="lg"
+      >
+        <form onSubmit={(e) => void handleSave(e)} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700">Cliente</label>
+            <select
+              required
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.clientId || ''}
+              onChange={(e) => setNewTrip({ ...newTrip, clientId: e.target.value })}
+            >
+              <option value="">Seleccionar…</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nombreComercial}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Fecha</label>
+            <input
+              type="date"
+              required
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.fecha || ''}
+              onChange={(e) => setNewTrip({ ...newTrip, fecha: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Estado</label>
+            <select
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.estado || 'Pendiente'}
+              onChange={(e) =>
+                setNewTrip({ ...newTrip, estado: e.target.value as TripStatus })
+              }
+            >
+              <option value="Pendiente">Pendiente</option>
+              <option value="En Tránsito">En tránsito</option>
+              <option value="Completado">Completado</option>
+              <option value="Cerrado">Cerrado</option>
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700">Contenido de carga</label>
+            <input
+              type="text"
+              required
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.contenido || ''}
+              onChange={(e) => setNewTrip({ ...newTrip, contenido: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Origen</label>
+            <input
+              type="text"
+              required
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.origen || ''}
+              onChange={(e) => setNewTrip({ ...newTrip, origen: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Destino</label>
+            <input
+              type="text"
+              required
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.destino || ''}
+              onChange={(e) => setNewTrip({ ...newTrip, destino: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Peso (kg)</label>
+            <input
+              type="number"
+              required
+              min={0.01}
+              step="0.01"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.pesoKg ?? ''}
+              onChange={(e) => setNewTrip({ ...newTrip, pesoKg: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">KM recorridos</label>
+            <input
+              type="number"
+              required
+              min={0}
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.kmRecorridos ?? ''}
+              onChange={(e) => setNewTrip({ ...newTrip, kmRecorridos: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Tarifa (USD / ton)</label>
+            <input
+              type="number"
+              required
+              min={0.01}
+              step="0.01"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              value={newTrip.tarifa ?? ''}
+              onChange={(e) => setNewTrip({ ...newTrip, tarifa: Number(e.target.value) })}
+            />
+          </div>
+          <div className="md:col-span-2 flex justify-end gap-2 border-t border-slate-100 pt-4">
+            <button
+              type="button"
+              onClick={closeForm}
+              className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={saveLoading}
+              className="inline-flex min-w-[140px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              {saveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {editingId ? 'Guardar cambios' : 'Crear viaje'}
             </button>
           </div>
-          <form
-            onSubmit={handleSave}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
-          >
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Cliente</label>
-              <select
-                required
-                className="w-full border-slate-300 rounded-lg p-2 bg-slate-50 outline-none"
-                value={newTrip.clientId || ''}
-                onChange={(e) => setNewTrip({ ...newTrip, clientId: e.target.value })}
-              >
-                <option value="">Seleccionar Cliente...</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nombreComercial}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Fecha</label>
-              <input
-                type="date"
-                required
-                className="w-full border-slate-300 rounded-lg p-2 bg-slate-50 outline-none border"
-                value={newTrip.fecha}
-                onChange={(e) => setNewTrip({ ...newTrip, fecha: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Estado</label>
-              <select
-                className="w-full border-slate-300 rounded-lg p-2 bg-slate-50 outline-none border"
-                value={newTrip.estado}
-                onChange={(e) =>
-                  setNewTrip({ ...newTrip, estado: e.target.value as TripStatus })
-                }
-              >
-                <option value="Pendiente">Pendiente</option>
-                <option value="En Tránsito">En Tránsito</option>
-                <option value="Completado">Completado</option>
-                <option value="Cerrado">Cerrado</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Producto</label>
-              <input
-                type="text"
-                required
-                className="w-full border-slate-300 rounded-lg p-2 bg-slate-50 outline-none border"
-                value={newTrip.contenido}
-                onChange={(e) => setNewTrip({ ...newTrip, contenido: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Origen</label>
-              <input
-                type="text"
-                required
-                className="w-full border-slate-300 rounded-lg p-2 bg-slate-50 outline-none border"
-                value={newTrip.origen}
-                onChange={(e) => setNewTrip({ ...newTrip, origen: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Destino</label>
-              <input
-                type="text"
-                required
-                className="w-full border-slate-300 rounded-lg p-2 bg-slate-50 outline-none border"
-                value={newTrip.destino || ''}
-                onChange={(e) => setNewTrip({ ...newTrip, destino: e.target.value })}
-              />
-            </div>
+        </form>
+      </Modal>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1 flex justify-between">
-                <span>KM Recorridos</span>
-                {suggestedKm && (
-                  <span className="text-xs text-blue-600 flex items-center animate-pulse">
-                    <Sparkles className="w-3 h-3 mr-1" /> Historial
-                  </span>
-                )}
-              </label>
-              <input
-                type="number"
-                required
-                className={`w-full border rounded-lg p-2 outline-none transition-colors ${
-                  suggestedKm
-                    ? 'bg-blue-50 border-blue-300 text-blue-800 font-semibold'
-                    : 'bg-slate-50 border-slate-300'
-                }`}
-                value={newTrip.kmRecorridos || ''}
-                onChange={(e) => {
-                  setNewTrip({ ...newTrip, kmRecorridos: Number(e.target.value) });
-                  setSuggestedKm(false);
-                }}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Peso (KG)</label>
-              <input
-                type="number"
-                required
-                className="w-full border-slate-300 rounded-lg p-2 bg-slate-50 outline-none border"
-                value={newTrip.pesoKg || ''}
-                onChange={(e) => setNewTrip({ ...newTrip, pesoKg: Number(e.target.value) })}
-              />
-            </div>
-
-            {isAdmin && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Tarifa (USD/Ton)
-                </label>
-                <input
-                  type="number"
-                  required
-                  className="w-full border-slate-300 rounded-lg p-2 bg-slate-50 outline-none border"
-                  value={newTrip.tarifa || ''}
-                  onChange={(e) => setNewTrip({ ...newTrip, tarifa: Number(e.target.value) })}
-                />
-              </div>
-            )}
-
-            <div className="md:col-span-2 lg:col-span-4 flex justify-end space-x-3 pt-2">
-              <button
-                type="button"
-                onClick={closeForm}
-                className="text-slate-500 hover:text-slate-700 font-medium"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium shadow-md"
-              >
-                {editingId ? 'Actualizar Viaje' : 'Guardar Viaje'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-slate-600">
-            <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200">
+          <table className="w-full min-w-[880px] text-left text-sm text-slate-600">
+            <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-700">
               <tr>
-                <th className="p-4">ID / Fecha</th>
-                <th className="p-4">Estado</th>
-                <th className="p-4">Cliente / Carga</th>
-                <th className="p-4">Ruta</th>
-                {isAdmin && <th className="p-4 text-right">Métricas</th>}
-                {isAdmin && <th className="p-4 text-right">Beneficio/KM</th>}
-                {isAdmin && <th className="p-4 text-center">Acciones</th>}
+                <th className="p-3">Fecha</th>
+                <th className="p-3">Cliente</th>
+                <th className="p-3">Ruta</th>
+                <th className="p-3">Estado</th>
+                <th className="p-3 text-right">Tarifa / t</th>
+                <th className="p-3 text-right">Margen</th>
+                <th className="p-3 text-center">Factura</th>
+                <th className="p-3 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredTrips.map((trip) => (
-                <tr key={trip.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="p-4">
-                    <div className="font-mono text-xs text-slate-500">{trip.id}</div>
-                    <div className="flex items-center mt-1">
-                      <Calendar className="w-3 h-3 mr-1 text-slate-400" /> {trip.fecha}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <Badge status={trip.estado} />
-                  </td>
-                  <td className="p-4">
-                    <div className="font-medium text-slate-800">{getClientName(trip.clientId)}</div>
-                    <div className="flex items-center text-xs mt-1">
-                      <Package className="w-3 h-3 mr-1 text-slate-400" /> {(trip.pesoKg / 1000).toFixed(1)}t{' '}
-                      {trip.contenido}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <div className="flex items-center space-x-2 text-xs">
-                      <span className="font-medium text-slate-700">{trip.origen}</span>
-                      <ArrowRight className="w-3 h-3 text-slate-400" />
-                      <span className="font-medium text-slate-700">{trip.destino}</span>
-                    </div>
-                    <div className="text-xs text-slate-400 mt-1">{trip.kmRecorridos} km</div>
-                  </td>
-                  {isAdmin && (
-                    <td className="p-4 text-right text-xs">
-                      <div>
-                        Tarifa: <span className="font-semibold">${trip.tarifa}/t</span>
+              {pageSlice.map((trip) => {
+                const c = sumCostsForTrip(costs, trip.id);
+                const rev = tripRevenue(trip);
+                const hasCosts = costs.some((x) => x.tripId === trip.id);
+                const margin = hasCosts ? rev - c : null;
+                const uploadingThis = uploadLoading && uploadTripId === trip.id;
+
+                return (
+                  <tr key={trip.id} className="hover:bg-slate-50">
+                    <td className="p-3">
+                      <div className="flex items-center gap-1 text-xs text-slate-500">
+                        <Calendar className="h-3 w-3" />
+                        {trip.fecha}
                       </div>
-                      <div className="text-slate-500">
-                        Total: ${Math.round(trip.tarifa * (trip.pesoKg / 1000))}
+                      <div className="font-mono text-[10px] text-slate-400">{trip.id}</div>
+                    </td>
+                    <td className="p-3 font-medium text-slate-800">
+                      {getClientName(clients, trip.clientId)}
+                    </td>
+                    <td className="p-3">
+                      <div className="flex items-center gap-1 text-xs">
+                        <span>{trip.origen}</span>
+                        <ArrowRight className="h-3 w-3 text-slate-400" />
+                        <span>{trip.destino}</span>
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
+                        <Package className="h-3 w-3" />
+                        {trip.contenido}
                       </div>
                     </td>
-                  )}
-                  {isAdmin && (
-                    <td className="p-4 text-right">
-                      <div className="font-bold text-slate-800 flex items-center justify-end">
-                        <DollarSign className="w-3 h-3 text-green-600" />
-                        {calculateBenefit(trip)}
-                      </div>
+                    <td className="p-3">
+                      <Badge status={trip.estado} />
                     </td>
-                  )}
-                  {isAdmin && (
-                    <td className="p-4 text-center">
-                      <div className="flex items-center justify-center space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => handleEdit(trip)}
-                          className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-md transition-colors"
-                          title="Editar"
+                    <td className="p-3 text-right font-medium">${trip.tarifa}</td>
+                    <td className="p-3 text-right text-xs">
+                      {margin !== null ? (
+                        <span className={margin >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+                          ${margin.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-center">
+                      {trip.facturaUrl ? (
+                        <a
+                          href={trip.facturaUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline"
                         >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(trip.id)}
-                          className="p-1.5 text-red-500 hover:bg-red-100 rounded-md transition-colors"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                          <ExternalLink className="h-3 w-3" />
+                          Ver
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
                     </td>
-                  )}
-                </tr>
-              ))}
-              {filteredTrips.length === 0 && (
+                    <td className="p-3">
+                      <div className="flex flex-wrap items-center justify-end gap-1">
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            title="Editar"
+                            onClick={() => openEditForm(trip)}
+                            className="rounded-md p-1.5 text-blue-600 hover:bg-blue-50"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            title="Eliminar"
+                            onClick={() => void handleDelete(trip.id)}
+                            className="rounded-md p-1.5 text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isAdmin && trip.estado !== 'Cerrado' && (
+                          <label className="cursor-pointer rounded-md p-1.5 text-slate-600 hover:bg-slate-100">
+                            <input
+                              type="file"
+                              accept={ACCEPT_INVOICE}
+                              className="hidden"
+                              disabled={uploadingThis}
+                              onChange={(ev) => handleInvoiceChange(trip, ev)}
+                            />
+                            {uploadingThis ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Upload className="h-4 w-4" />
+                            )}
+                          </label>
+                        )}
+                        {!isAdmin &&
+                          trip.estado === 'En Tránsito' &&
+                          (!trip.asignadoA || trip.asignadoA === user.username) && (
+                            <button
+                              type="button"
+                              onClick={() => void handleMarkCompleted(trip)}
+                              className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+                            >
+                              Completado
+                            </button>
+                          )}
+                      </div>
+                        {isAdmin && invoicePreview?.tripId === trip.id && (
+                          <p className="mt-1 max-w-[160px] truncate text-[10px] text-slate-500">
+                            <FileText className="mr-1 inline h-3 w-3" />
+                            {invoicePreview.name}
+                            {uploadingThis ? ' · subiendo…' : ''}
+                          </p>
+                        )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {pageSlice.length === 0 && (
                 <tr>
-                  <td colSpan={isAdmin ? 7 : 4} className="p-8 text-center text-slate-400 italic">
-                    No se encontraron viajes.
+                  <td colSpan={8} className="p-8 text-center text-slate-400">
+                    No hay viajes que coincidan con los filtros.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+        {filteredTrips.length > PAGE_SIZE && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2 text-sm text-slate-600">
+            <span>
+              Página {safePage} de {totalPages} · {filteredTrips.length} viajes
+            </span>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="rounded-md border border-slate-200 p-2 hover:bg-slate-50 disabled:opacity-40"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                className="rounded-md border border-slate-200 p-2 hover:bg-slate-50 disabled:opacity-40"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {isAdmin && (
+        <p className="text-xs text-slate-500">
+          Facturas: PDF, JPG o PNG, máximo 5 MB. Al completar la subida el viaje pasa a estado Cerrado.
+        </p>
+      )}
     </div>
   );
 };

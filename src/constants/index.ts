@@ -156,6 +156,7 @@ const MOCK_TRIPS: Trip[] = [
     tarifa: 30,
     origen: 'Rivera',
     destino: 'Montevideo',
+    asignadoA: 'operativo',
   },
   {
     id: 'V2026-004',
@@ -168,6 +169,7 @@ const MOCK_TRIPS: Trip[] = [
     tarifa: 38,
     origen: 'Treinta y Tres',
     destino: 'Punta del Este',
+    asignadoA: 'operativo',
   },
   {
     id: 'V2026-005',
@@ -204,6 +206,7 @@ const MOCK_TRIPS: Trip[] = [
     tarifa: 52,
     origen: 'Montevideo',
     destino: 'Rivera',
+    asignadoA: 'operativo',
   },
   {
     id: 'V2026-008',
@@ -216,6 +219,7 @@ const MOCK_TRIPS: Trip[] = [
     tarifa: 41,
     origen: 'Maldonado',
     destino: 'Punta del Este',
+    asignadoA: 'operativo',
   },
 ];
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   XAxis,
   YAxis,
@@ -7,403 +7,446 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  BarChart,
+  Bar,
+  Legend,
 } from 'recharts';
-import type { Client, Trip, User } from '../../types';
-import { DEPARTAMENTOS } from '../../constants';
+import type { TooltipProps } from 'recharts';
+import type { Client, Cost, Trip, User } from '../../types';
+import { buildKPIData, buildMonthlyStats, enrichTrips } from '../../utils/analytics';
+import { generateLogisticsInsights } from '../../services/geminiService';
 import {
   DollarSign,
   Truck,
-  TrendingUp,
-  Filter,
-  Calendar,
-  Map,
+  Percent,
+  Wallet,
+  Sparkles,
+  CheckCircle2,
   Clock,
-  Package,
-  Lock,
+  Loader2,
 } from 'lucide-react';
 
-interface DashboardProps {
+export interface DashboardProps {
   trips: Trip[];
   clients: Client[];
+  costs: Cost[];
   user: User;
+  /** Marcar viaje como completado (vista operativa). */
+  onUpdateTrip?: (trip: Trip) => void | Promise<void>;
 }
 
-interface KpiCardProps {
+function localISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatUsd(n: number): string {
+  return n.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+}
+
+type ChartTooltipProps = TooltipProps<number, string>;
+
+const ChartTooltipEs: React.FC<ChartTooltipProps> = ({ active, payload, label }) => {
+  if (!active || !payload?.length) {
+    return null;
+  }
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-md">
+      <p className="mb-1 font-semibold text-slate-800">{label}</p>
+      <ul className="space-y-0.5 text-slate-600">
+        {payload.map((p) => (
+          <li key={String(p.dataKey)}>
+            <span className="text-slate-500">{p.name}: </span>
+            <span className="font-medium text-slate-900">
+              {typeof p.value === 'number'
+                ? String(p.dataKey) === 'Viajes' ||
+                  String(p.name ?? '')
+                    .toLowerCase()
+                    .includes('viaje')
+                  ? p.value
+                  : formatUsd(p.value)
+                : p.value}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+const DashboardChartSkeleton: React.FC = () => (
+  <div className="flex h-72 w-full animate-pulse flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50 p-4">
+    <div className="flex flex-1 items-end justify-between gap-2 pt-8">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div
+          key={i}
+          className="flex-1 rounded-t bg-slate-200"
+          style={{ height: `${30 + ((i * 17) % 55)}%` }}
+        />
+      ))}
+    </div>
+    <div className="h-3 w-2/3 rounded bg-slate-200" />
+  </div>
+);
+
+const KpiCard: React.FC<{
   title: string;
   value: string;
   icon: React.ReactNode;
   bg: string;
-}
-
-const KpiCard: React.FC<KpiCardProps> = ({ title, value, icon, bg }) => (
+}> = ({ title, value, icon, bg }) => (
   <div
-    className={`${bg} rounded-xl p-6 text-white shadow-lg transition-transform hover:scale-[1.02]`}
+    className={`${bg} rounded-xl p-4 text-white shadow-lg transition-transform sm:p-5 md:hover:scale-[1.01]`}
   >
-    <div className="flex justify-between items-start">
-      <div>
-        <p className="text-blue-200 text-sm font-medium mb-1">{title}</p>
-        <h3 className="text-2xl font-bold">{value}</h3>
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0 flex-1">
+        <p className="mb-1 text-xs font-medium text-white/80 sm:text-sm">{title}</p>
+        <h3 className="truncate text-xl font-bold sm:text-2xl">{value}</h3>
       </div>
-      <div className="p-2 bg-white/10 rounded-lg backdrop-blur-sm">{icon}</div>
+      <div className="shrink-0 rounded-lg bg-white/10 p-2 backdrop-blur-sm">{icon}</div>
     </div>
   </div>
 );
 
-export const Dashboard: React.FC<DashboardProps> = ({ trips, clients, user }) => {
-  const clientCount = clients.length;
+export const Dashboard: React.FC<DashboardProps> = ({
+  trips,
+  clients,
+  costs,
+  user,
+  onUpdateTrip,
+}) => {
   const isAdmin = user.role === 'admin';
+  const [chartsReady, setChartsReady] = useState(false);
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaLines, setIaLines] = useState<string[]>([]);
 
-  const [dateRange, setDateRange] = useState({ start: '', end: '' });
-  const [selectedDept, setSelectedDept] = useState('Todos');
-  const [selectedProduct, setSelectedProduct] = useState('Todos');
+  useEffect(() => {
+    setChartsReady(false);
+    const t = window.setTimeout(() => setChartsReady(true), 380);
+    return () => window.clearTimeout(t);
+  }, [trips, clients, costs]);
 
-  const products = useMemo(
-    () => Array.from(new Set(trips.map((t) => t.contenido))),
-    [trips]
+  const kpi = useMemo(() => buildKPIData(trips, clients, costs), [trips, clients, costs]);
+  const monthly = useMemo(() => buildMonthlyStats(trips, costs, 6), [trips, costs]);
+  const enriched = useMemo(() => enrichTrips(trips, clients, costs), [trips, clients, costs]);
+  const enrichedById = useMemo(() => {
+    const m = new Map<string, (typeof enriched)[0]>();
+    enriched.forEach((e) => m.set(e.id, e));
+    return m;
+  }, [enriched]);
+
+  const areaData = useMemo(
+    () =>
+      monthly.map((row) => ({
+        label: row.label,
+        Ingresos: row.revenue,
+        Costos: row.costs,
+      })),
+    [monthly]
   );
 
-  const filteredTrips = useMemo(() => {
-    return trips.filter((t) => {
-      if (dateRange.start && t.fecha < dateRange.start) {
-        return false;
-      }
-      if (dateRange.end && t.fecha > dateRange.end) {
-        return false;
-      }
-      if (selectedProduct !== 'Todos' && t.contenido !== selectedProduct) {
-        return false;
-      }
-      if (
-        selectedDept !== 'Todos' &&
-        t.origen !== selectedDept &&
-        t.destino !== selectedDept
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [trips, dateRange, selectedDept, selectedProduct]);
+  const barData = useMemo(
+    () =>
+      monthly.map((row) => ({
+        label: row.label,
+        Viajes: row.tripCount,
+      })),
+    [monthly]
+  );
 
-  const kpis = useMemo(() => {
-    const closedTrips = filteredTrips.filter((t) => t.estado === 'Cerrado');
-    const completedTrips = filteredTrips.filter((t) => t.estado === 'Completado');
-    const inProgressTrips = filteredTrips.filter((t) => t.estado === 'En Tránsito');
-    const finishedTrips = [...closedTrips, ...completedTrips];
-
-    const realizedRevenue = closedTrips.reduce(
-      (acc, curr) => acc + curr.tarifa * (curr.pesoKg / 1000),
-      0
-    );
-    const pendingRevenue = completedTrips.reduce(
-      (acc, curr) => acc + curr.tarifa * (curr.pesoKg / 1000),
-      0
-    );
-
-    const totalTripsCount = finishedTrips.length;
-    const activeTripsCount = inProgressTrips.length;
-    const totalKm = finishedTrips.reduce((acc, curr) => acc + curr.kmRecorridos, 0);
-
-    return {
-      totalTrips: totalTripsCount,
-      activeTrips: activeTripsCount,
-      totalKm: totalKm.toLocaleString(),
-      realizedRevenue,
-      pendingRevenue,
-    };
-  }, [filteredTrips]);
-
-  const monthlyRevenue = useMemo(() => {
-    const data: Record<string, number> = {};
-
-    filteredTrips
-      .filter((t) => t.estado === 'Cerrado')
-      .forEach((trip) => {
-        const monthKey = trip.fecha.substring(0, 7);
-        const revenue = trip.tarifa * (trip.pesoKg / 1000);
-        data[monthKey] = (data[monthKey] || 0) + revenue;
-      });
-
-    return Object.entries(data)
-      .map(([date, val]) => ({ date, value: val }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-  }, [filteredTrips]);
-
-  const productPerformance = useMemo(() => {
-    const stats: Record<
-      string,
-      { revenue: number; count: number; efficiencySum: number; effCount: number }
-    > = {};
-
-    trips
-      .filter((t) => t.estado === 'Completado' || t.estado === 'Cerrado')
-      .forEach((t) => {
-        if (!stats[t.contenido]) {
-          stats[t.contenido] = { revenue: 0, count: 0, efficiencySum: 0, effCount: 0 };
-        }
-
-        const rev = t.tarifa * (t.pesoKg / 1000);
-        stats[t.contenido].revenue += rev;
-        stats[t.contenido].count += 1;
-
-        if (t.kmRecorridos > 0) {
-          stats[t.contenido].efficiencySum += rev / t.kmRecorridos;
-          stats[t.contenido].effCount += 1;
-        }
-      });
-
-    return Object.entries(stats)
-      .map(([name, row]) => ({
-        name,
-        revenue: row.revenue,
-        count: row.count,
-        avgEfficiency: row.effCount > 0 ? row.efficiencySum / row.effCount : 0,
-      }))
-      .sort((a, b) => b.revenue - a.revenue);
+  const topRecent = useMemo(() => {
+    return [...trips]
+      .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id.localeCompare(a.id))
+      .slice(0, 5);
   }, [trips]);
 
-  const totalPotential = kpis.realizedRevenue + kpis.pendingRevenue;
-  const progressPercent =
-    totalPotential > 0 ? (kpis.realizedRevenue / totalPotential) * 100 : 0;
+  const todayStr = useMemo(() => localISODate(new Date()), []);
+  const operativoKpis = useMemo(() => {
+    const mine = (t: Trip) => !t.asignadoA || t.asignadoA === user.username;
+    const active = trips.filter((t) => t.estado === 'En Tránsito' && mine(t)).length;
+    const pending = trips.filter((t) => t.estado === 'Pendiente' && mine(t)).length;
+    const completedToday = trips.filter(
+      (t) => t.estado === 'Completado' && t.fecha === todayStr && mine(t)
+    ).length;
+    return { active, pending, completedToday };
+  }, [trips, todayStr, user.username]);
 
-  const topProductRevenue = productPerformance[0]?.revenue ?? 0;
+  const operativoActiveTrips = useMemo(
+    () =>
+      trips.filter(
+        (t) =>
+          t.estado === 'En Tránsito' &&
+          (!t.asignadoA || t.asignadoA === user.username)
+      ),
+    [trips, user.username]
+  );
+
+  const handleGenerarIA = useCallback(async () => {
+    setIaLoading(true);
+    try {
+      const lines = await generateLogisticsInsights(trips, clients);
+      setIaLines(lines.slice(0, 3));
+    } catch (e) {
+      console.error(e);
+      setIaLines([]);
+    } finally {
+      setIaLoading(false);
+    }
+  }, [trips, clients]);
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-4 items-center">
-        <div className="flex items-center text-slate-500 font-medium mr-2">
-          <Filter className="w-5 h-5 mr-2" />
-          Filtros
-        </div>
-
-        <div className="flex items-center space-x-2 bg-slate-50 rounded-lg p-1 border border-slate-300">
-          <Calendar className="w-4 h-4 text-slate-400 ml-2" />
-          <input
-            type="date"
-            className="bg-transparent text-sm p-1 outline-none text-slate-700"
-            value={dateRange.start}
-            onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-          />
-          <span className="text-slate-400">-</span>
-          <input
-            type="date"
-            className="bg-transparent text-sm p-1 outline-none text-slate-700"
-            value={dateRange.end}
-            onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-          />
-        </div>
-
-        <select
-          className="bg-slate-50 border border-slate-300 text-slate-700 text-sm rounded-lg p-2 outline-none"
-          value={selectedDept}
-          onChange={(e) => setSelectedDept(e.target.value)}
-        >
-          <option value="Todos">Todos los Departamentos</option>
-          {DEPARTAMENTOS.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className="bg-slate-50 border border-slate-300 text-slate-700 text-sm rounded-lg p-2 outline-none"
-          value={selectedProduct}
-          onChange={(e) => setSelectedProduct(e.target.value)}
-        >
-          <option value="Todos">Todos los productos</option>
-          {products.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-
-        <div className="ml-auto text-xs text-slate-400">
-          Mostrando {filteredTrips.length} viajes · {clientCount} clientes
-        </div>
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <h1 className="text-lg font-bold text-slate-900 sm:text-xl">Panel ejecutivo</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          {isAdmin ? 'Vista financiera y operativa completa.' : 'Vista operativa — tus asignaciones.'}
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard
-          title="Viajes Finalizados"
-          value={`${kpis.totalTrips}`}
-          icon={<Truck className="w-6 h-6 text-blue-100" />}
-          bg="bg-slate-700"
-        />
-        <KpiCard
-          title="Total KM (Recorridos)"
-          value={`${kpis.totalKm}`}
-          icon={<Map className="w-6 h-6 text-slate-100" />}
-          bg="bg-slate-600"
-        />
-
-        {isAdmin ? (
-          <>
+      {isAdmin ? (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <KpiCard
-              title="Facturación Cerrada"
-              value={kpis.realizedRevenue.toLocaleString('es-UY', {
-                style: 'currency',
-                currency: 'USD',
-              })}
-              icon={<DollarSign className="w-6 h-6 text-green-100" />}
+              title="Ingresos MTD"
+              value={formatUsd(kpi.totalRevenueMTD)}
+              icon={<Wallet className="h-6 w-6 text-emerald-100" />}
+              bg="bg-emerald-700"
+            />
+            <KpiCard
+              title="Costos MTD"
+              value={formatUsd(kpi.totalCostsMTD)}
+              icon={<DollarSign className="h-6 w-6 text-amber-100" />}
+              bg="bg-slate-700"
+            />
+            <KpiCard
+              title="Margen %"
+              value={`${kpi.marginPctMTD.toFixed(1)}%`}
+              icon={<Percent className="h-6 w-6 text-cyan-100" />}
+              bg="bg-cyan-800"
+            />
+            <KpiCard
+              title="Viajes activos"
+              value={`${kpi.activeTrips}`}
+              icon={<Truck className="h-6 w-6 text-blue-100" />}
               bg="bg-blue-900"
             />
-            <KpiCard
-              title="Pendiente Facturar"
-              value={kpis.pendingRevenue.toLocaleString('es-UY', {
-                style: 'currency',
-                currency: 'USD',
-              })}
-              icon={<Clock className="w-6 h-6 text-yellow-100" />}
-              bg="bg-orange-600"
-            />
-          </>
-        ) : (
-          <>
-            <KpiCard
-              title="Viajes en Curso"
-              value={`${kpis.activeTrips}`}
-              icon={<Truck className="w-6 h-6 text-yellow-100" />}
-              bg="bg-slate-500"
-            />
-            <div className="bg-slate-200 rounded-xl p-6 flex flex-col items-center justify-center text-slate-400">
-              <Lock className="w-6 h-6 mb-2" />
-              <span className="text-xs">Información Financiera Restringida</span>
-            </div>
-          </>
-        )}
-      </div>
+          </div>
 
-      {isAdmin && (
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="text-sm font-semibold text-slate-700">
-              Estado de Cobranza (Real vs Potencial)
-            </h3>
-            <span className="text-sm font-bold text-slate-800">
-              {progressPercent.toFixed(1)}% Cobrado
-            </span>
-          </div>
-          <div className="w-full bg-slate-100 rounded-full h-4 overflow-hidden relative">
-            <div
-              className="bg-blue-600 h-4 rounded-full transition-all duration-1000 ease-out z-10 relative"
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-xs text-slate-500 mt-2">
-            <span className="flex items-center">
-              <div className="w-2 h-2 bg-blue-600 rounded-full mr-1" /> Cerrado:{' '}
-              {kpis.realizedRevenue.toLocaleString('es-UY', {
-                style: 'currency',
-                currency: 'USD',
-              })}
-            </span>
-            <span className="flex items-center">
-              Pendiente:{' '}
-              {kpis.pendingRevenue.toLocaleString('es-UY', {
-                style: 'currency',
-                currency: 'USD',
-              })}{' '}
-              <div className="w-2 h-2 bg-slate-200 rounded-full ml-1" />
-            </span>
-          </div>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {isAdmin ? (
-          <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="text-lg font-semibold text-slate-800 mb-4">Evolución de Ingresos</h3>
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={monthlyRevenue}>
-                  <defs>
-                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.8} />
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                  <YAxis hide />
-                  <Tooltip
-                    contentStyle={{
-                      borderRadius: '8px',
-                      border: 'none',
-                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                    }}
-                    formatter={(value: number) => [`$${value.toLocaleString()}`, 'Ingresos']}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="value"
-                    stroke="#2563eb"
-                    fillOpacity={1}
-                    fill="url(#colorRevenue)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        ) : (
-          <div className="lg:col-span-2 bg-slate-50 p-6 rounded-xl border border-slate-200 flex flex-col items-center justify-center text-slate-400">
-            <Lock className="w-12 h-12 mb-4 opacity-50" />
-            <p>Gráficos de facturación no disponibles para su rol.</p>
-          </div>
-        )}
-
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 lg:col-span-1 overflow-y-auto max-h-[400px]">
-          <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center">
-            <Package className="w-5 h-5 mr-2 text-blue-600" />
-            Rendimiento por Rubro
-          </h3>
-          <div className="space-y-4">
-            {productPerformance.map((item) => (
-              <div
-                key={item.name}
-                className="border-b border-slate-50 pb-3 last:border-0 last:pb-0"
-              >
-                <div className="flex justify-between items-center mb-1">
-                  <span className="font-semibold text-slate-700 text-sm">{item.name}</span>
-                  <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                    {item.count} Viajes
-                  </span>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="mb-4 text-base font-semibold text-slate-800">
+                Ingresos vs costos (últimos 6 meses)
+              </h2>
+              <div className="w-full overflow-x-auto overscroll-x-contain touch-pan-x">
+                <div className="h-72 min-w-[520px]">
+                  {!chartsReady ? (
+                    <DashboardChartSkeleton />
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={areaData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="dashIng" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#059669" stopOpacity={0.35} />
+                            <stop offset="95%" stopColor="#059669" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="dashCost" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#dc2626" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#dc2626" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#64748b" />
+                        <YAxis tick={{ fontSize: 11 }} stroke="#64748b" tickFormatter={(v) => `$${v}`} />
+                        <Tooltip content={<ChartTooltipEs />} />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Area
+                          type="monotone"
+                          dataKey="Ingresos"
+                          name="Ingresos"
+                          stroke="#059669"
+                          fill="url(#dashIng)"
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="Costos"
+                          name="Costos"
+                          stroke="#dc2626"
+                          fill="url(#dashCost)"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
+              </div>
+            </div>
 
-                {isAdmin && (
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <div>
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wide">Ganancia</p>
-                      <p className="text-sm font-medium text-slate-800">
-                        ${item.revenue.toLocaleString()}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wide">
-                        Eficiencia
-                      </p>
-                      <div className="flex items-center justify-end text-sm font-medium text-green-600">
-                        <TrendingUp className="w-3 h-3 mr-1" />${item.avgEfficiency.toFixed(2)}{' '}
-                        /km
-                      </div>
-                    </div>
-                  </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+              <h2 className="mb-4 text-base font-semibold text-slate-800">Viajes por mes</h2>
+              <div className="w-full overflow-x-auto overscroll-x-contain touch-pan-x">
+                <div className="h-72 min-w-[520px]">
+                  {!chartsReady ? (
+                    <DashboardChartSkeleton />
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={barData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#64748b" />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11 }} stroke="#64748b" />
+                        <Tooltip content={<ChartTooltipEs />} />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Bar dataKey="Viajes" name="Cantidad de viajes" fill="#1d4ed8" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-base font-semibold text-slate-800">Top 5 viajes recientes</h2>
+              <button
+                type="button"
+                onClick={() => void handleGenerarIA()}
+                disabled={iaLoading || trips.length === 0}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {iaLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
                 )}
-                {isAdmin && topProductRevenue > 0 && (
-                  <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2">
-                    <div
-                      className="bg-blue-500 h-1.5 rounded-full"
-                      style={{
-                        width: `${(item.revenue / topProductRevenue) * 100}%`,
-                      }}
-                    />
+                Generar insights IA
+              </button>
+            </div>
+
+            {!chartsReady ? (
+              <div className="space-y-2">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="h-10 animate-pulse rounded bg-slate-100" />
+                ))}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[520px] text-left text-sm text-slate-600">
+                  <thead className="border-b border-slate-200 bg-slate-50 text-slate-700">
+                    <tr>
+                      <th className="p-3 font-semibold">Viaje</th>
+                      <th className="p-3 font-semibold">Fecha</th>
+                      <th className="p-3 font-semibold">Estado</th>
+                      <th className="p-3 text-right font-semibold">Margen (USD)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {topRecent.map((t) => {
+                      const m = enrichedById.get(t.id);
+                      return (
+                        <tr key={t.id} className="hover:bg-slate-50">
+                          <td className="p-3 font-mono text-xs text-slate-500">{t.id}</td>
+                          <td className="p-3">{t.fecha}</td>
+                          <td className="p-3">{t.estado}</td>
+                          <td className="p-3 text-right font-medium text-slate-900">
+                            {m ? formatUsd(m.netMargin) : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {(iaLoading || iaLines.length > 0) && (
+              <div className="mt-6 border-t border-slate-100 pt-6">
+                <h3 className="mb-3 text-sm font-semibold text-slate-700">Insights generados</h3>
+                {iaLoading ? (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="h-24 animate-pulse rounded-lg bg-slate-100" />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {iaLines.map((text, i) => (
+                      <div
+                        key={i}
+                        className="rounded-lg border border-indigo-100 bg-indigo-50/80 p-4 text-sm text-slate-800 shadow-sm"
+                      >
+                        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-indigo-700">
+                          Insight {i + 1}
+                        </p>
+                        <p>{text}</p>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      </div>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <KpiCard
+              title="Viajes activos"
+              value={`${operativoKpis.active}`}
+              icon={<Truck className="h-6 w-6 text-blue-100" />}
+              bg="bg-blue-900"
+            />
+            <KpiCard
+              title="Pendientes"
+              value={`${operativoKpis.pending}`}
+              icon={<Clock className="h-6 w-6 text-amber-100" />}
+              bg="bg-amber-600"
+            />
+            <KpiCard
+              title="Completados hoy"
+              value={`${operativoKpis.completedToday}`}
+              icon={<CheckCircle2 className="h-6 w-6 text-emerald-100" />}
+              bg="bg-emerald-700"
+            />
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            <h2 className="mb-4 text-base font-semibold text-slate-800">Viajes en curso asignados</h2>
+            {operativoActiveTrips.length === 0 ? (
+              <p className="text-sm text-slate-500">No tenés viajes en tránsito asignados.</p>
+            ) : (
+              <ul className="space-y-3">
+                {operativoActiveTrips.map((t) => {
+                  const client = clients.find((c) => c.id === t.clientId);
+                  return (
+                    <li
+                      key={t.id}
+                      className="flex flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div>
+                        <p className="font-mono text-xs text-slate-500">{t.id}</p>
+                        <p className="font-medium text-slate-900">{client?.nombreComercial ?? 'Cliente'}</p>
+                        <p className="text-sm text-slate-600">
+                          {t.origen} → {t.destino} · {t.estado}
+                        </p>
+                      </div>
+                      {onUpdateTrip && (
+                        <button
+                          type="button"
+                          onClick={() => void onUpdateTrip({ ...t, estado: 'Completado' })}
+                          className="shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow hover:bg-emerald-700"
+                        >
+                          Marcar como completado
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 };

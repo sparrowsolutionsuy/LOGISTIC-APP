@@ -40,6 +40,8 @@ export interface Trip {
   origen: string;
   destino: string;
   facturaUrl?: string;
+  /** Usuario operativo asignado (viajes visibles solo para ese usuario). */
+  asignadoA?: string;
 }
 
 export interface Cost {

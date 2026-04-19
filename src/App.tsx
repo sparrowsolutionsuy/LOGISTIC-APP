@@ -156,11 +156,16 @@ const App: React.FC = () => {
   }, []);
 
   const onUploadInvoice = useCallback((tripId: string, url: string) => {
-    setTrips((prev) =>
-      prev.map((t) =>
+    setTrips((prev) => {
+      const next = prev.map((t) =>
         t.id === tripId ? { ...t, facturaUrl: url, estado: 'Cerrado' as const } : t
-      )
-    );
+      );
+      const updated = next.find((t) => t.id === tripId);
+      if (updated) {
+        void updateTripInSheet(updated);
+      }
+      return next;
+    });
   }, []);
 
   const onAddClient = useCallback(async (newClient: Client) => {
@@ -239,15 +244,25 @@ const App: React.FC = () => {
       onLogout={onLogout}
       headerBadge={headerBadge}
     >
-      {activeTab === 'dashboard' && <Dashboard trips={trips} clients={clients} user={user} />}
+      {activeTab === 'dashboard' && (
+        <Dashboard
+          trips={trips}
+          clients={clients}
+          costs={costs}
+          user={user}
+          onUpdateTrip={onUpdateTrip}
+        />
+      )}
       {activeTab === 'trips' && (
         <TripManager
           trips={trips}
           clients={clients}
+          costs={costs}
           user={user}
           onAddTrip={onAddTrip}
           onUpdateTrip={onUpdateTrip}
           onDeleteTrip={onDeleteTrip}
+          onInvoiceUploaded={onUploadInvoice}
         />
       )}
       {activeTab === 'map' && <StrategicMap clients={clients} trips={trips} />}
