@@ -89,8 +89,26 @@ export interface Cost {
   categoria: CostCategory;
   descripcion: string;
   monto: number;
+  /** Referencia al costo programado que lo originó (si aplica). */
+  scheduledCostId?: string;
   comprobante?: string;
   registradoPor: string;
+}
+
+export type ScheduledCostFrequency = 'monthly';
+
+export interface ScheduledCost {
+  id: string;
+  nombre: string;
+  categoria: CostCategory;
+  descripcion: string;
+  monto: number;
+  activo: boolean;
+  frecuencia: ScheduledCostFrequency;
+  diaDelMes: number;
+  tripId: string | null;
+  creadoEn: string;
+  ultimaEjecucion: string | null;
 }
 
 // === ANALYTICS ===

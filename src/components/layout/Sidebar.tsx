@@ -12,13 +12,11 @@ import {
 } from 'lucide-react';
 import type { ActiveTab, User, UserRole } from '../../types';
 import { ROUTE_NAMES } from '../../constants';
-import ThemeToggle from '../ui/ThemeToggle';
 
 export interface SidebarProps {
   user: User;
   currentView: ActiveTab;
   onNavigate: (view: ActiveTab) => void;
-  offline: boolean;
   pendingTripsCount: number;
   onRequestClose?: () => void;
   onLogout: () => void;
@@ -76,7 +74,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   user,
   currentView,
   onNavigate,
-  offline,
   pendingTripsCount,
   onRequestClose,
   onLogout,
@@ -206,32 +203,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </nav>
 
       <div className="mt-auto border-t border-[var(--border)] px-4 py-6">
-        <div
-          style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
-          className="border border-[var(--border)] bg-[var(--bg-base)] p-4"
-        >
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-[var(--text-primary)]">{user.nombre}</p>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--accent-blue)]">
-                {user.role}
-              </p>
-            </div>
-            <span
-              className={`mt-1 inline-flex h-2.5 w-2.5 shrink-0 rounded-[var(--radius-full)] ${
-                offline ? 'bg-[var(--accent-amber)]' : 'bg-[var(--accent-emerald)]'
-              }`}
-              title={offline ? 'Modo demo / sin hoja remota' : 'Sincronización esperada'}
-              aria-label={offline ? 'Modo demo' : 'Conectado'}
-            />
-          </div>
-          <p className="mt-2 text-xs leading-relaxed text-[var(--text-muted)]">
-            {offline ? 'Modo demo — los cambios son locales' : 'Sincronización activa'}
-          </p>
-        </div>
-
-        <div className="mt-4 flex justify-center">
-          <ThemeToggle />
+        <div className="flex flex-col items-center px-1 pb-0.5">
+          <img
+            src="/LOGISTIC-APP/LOGO.jpeg"
+            alt="Gorrión del Cielo SAS"
+            className="w-full max-w-[300px] object-contain transition-opacity hover:opacity-100"
+            style={{
+              maxHeight: '190px',
+              opacity: 0.99,
+              mixBlendMode: 'normal',
+              borderRadius: '12px',
+              padding: '8px',
+              backgroundColor: 'rgba(255,255,255,0.12)',
+            }}
+            draggable={false}
+          />
         </div>
 
         <button

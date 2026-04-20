@@ -91,7 +91,6 @@ export const AppShell: React.FC<AppShellProps> = ({
                 user={user}
                 currentView={currentView}
                 onNavigate={onNavigate}
-                offline={offline}
                 pendingTripsCount={pendingTripsCount}
                 onRequestClose={() => setDrawerOpen(false)}
                 onLogout={() => {
@@ -110,7 +109,6 @@ export const AppShell: React.FC<AppShellProps> = ({
             user={user}
             currentView={currentView}
             onNavigate={onNavigate}
-            offline={offline}
             pendingTripsCount={pendingTripsCount}
             onLogout={onLogout}
           />

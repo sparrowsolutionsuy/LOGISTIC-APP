@@ -109,6 +109,10 @@ export function normalizeCost(row: unknown): Cost {
     categoria: normalizeCostCategory(r.categoria),
     descripcion: String(r.descripcion ?? ''),
     monto: Number(r.monto) || 0,
+    scheduledCostId:
+      r.scheduledCostId != null && String(r.scheduledCostId).trim() !== ''
+        ? String(r.scheduledCostId).trim()
+        : undefined,
     comprobante:
       r.comprobante !== undefined && r.comprobante !== null ? String(r.comprobante) : undefined,
     registradoPor: String(r.registradoPor ?? ''),

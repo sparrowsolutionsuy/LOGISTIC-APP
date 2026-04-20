@@ -28,9 +28,11 @@ import {
 import { generateLogisticsInsights } from './services/geminiService';
 import { useTheme } from './hooks/useTheme';
 import { useToast } from './hooks/useToast';
+import { useScheduledCosts } from './hooks/useScheduledCosts';
 
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
+const SCHEDULED_COSTS_KEY = 'gdc_scheduled_costs';
 
 const ADMIN_ONLY_TABS = new Set<ActiveTab>([
   'costs',
@@ -78,6 +80,15 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [insights, setInsights] = useState<AIInsight[]>([]);
+  const {
+    scheduledCosts,
+    addScheduledCost,
+    updateScheduledCost: updateScheduledCostLocal,
+    deleteScheduledCost,
+    toggleActive,
+    getPendingScheduledCosts,
+    nextDueDate,
+  } = useScheduledCosts();
 
   useEffect(() => {
     const stored = parseStoredUser(localStorage.getItem(STORAGE_USER_KEY));
@@ -141,9 +152,13 @@ const App: React.FC = () => {
 
   const onLogout = useCallback(() => {
     const savedTheme = localStorage.getItem(THEME_KEY);
+    const savedScheduled = localStorage.getItem(SCHEDULED_COSTS_KEY);
     localStorage.clear();
     if (savedTheme) {
       localStorage.setItem(THEME_KEY, savedTheme);
+    }
+    if (savedScheduled) {
+      localStorage.setItem(SCHEDULED_COSTS_KEY, savedScheduled);
     }
     setUser(null);
     setActiveTab('dashboard');
@@ -231,6 +246,32 @@ const App: React.FC = () => {
     await deleteCostFromSheet(costId);
     setCosts((prev) => prev.filter((c) => c.id !== costId));
   }, []);
+
+  useEffect(() => {
+    if (loading || !user || user.role !== 'admin') {
+      return;
+    }
+    const pending = getPendingScheduledCosts(costs);
+    if (pending.length === 0) {
+      return;
+    }
+
+    pending.forEach(async ({ cost, scheduledCostId }) => {
+      const newCost: Cost = {
+        ...cost,
+        id: `K${Date.now()}_${scheduledCostId}`,
+      };
+      await onAddCost(newCost);
+      updateScheduledCostLocal(scheduledCostId, {
+        ultimaEjecucion: new Date().toISOString().split('T')[0],
+      });
+    });
+
+    showToast(
+      `Se generaron ${pending.length} costo${pending.length > 1 ? 's' : ''} programado${pending.length > 1 ? 's' : ''} automáticamente`,
+      'info'
+    );
+  }, [loading]);
 
   const pendingTripsCount = useMemo(
     () => trips.filter((t) => t.estado === 'Pendiente').length,
@@ -348,6 +389,12 @@ const App: React.FC = () => {
             onAddCost={onAddCost}
             onUpdateCost={onUpdateCost}
             onDeleteCost={onDeleteCost}
+            scheduledCosts={scheduledCosts}
+            onAddScheduledCost={addScheduledCost}
+            onUpdateScheduledCost={updateScheduledCostLocal}
+            onDeleteScheduledCost={deleteScheduledCost}
+            onToggleScheduledCost={toggleActive}
+            nextDueDate={nextDueDate()}
           />
         </AdminGuard>
       )}
