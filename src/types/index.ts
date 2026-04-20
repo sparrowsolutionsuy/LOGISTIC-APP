@@ -37,6 +37,12 @@ export interface Trip {
   pesoKg: number;
   kmRecorridos: number;
   tarifa: number;
+  /** Moneda en que se pactó la tarifa (por tonelada). */
+  moneda?: 'USD' | 'UYU';
+  /** TC USD→UYU vigente al momento del registro. */
+  tipoCambio?: number;
+  /** Total tarifa en UYU de referencia (opcional, persistido). */
+  tarifaUYU?: number;
   origen: string;
   destino: string;
   facturaUrl?: string;
@@ -89,6 +95,10 @@ export interface Cost {
   categoria: CostCategory;
   descripcion: string;
   monto: number;
+  moneda?: 'USD' | 'UYU';
+  tipoCambio?: number;
+  /** Siempre en USD para analytics y agregados. */
+  montoUSD?: number;
   /** Referencia al costo programado que lo originó (si aplica). */
   scheduledCostId?: string;
   comprobante?: string;
@@ -103,12 +113,23 @@ export interface ScheduledCost {
   categoria: CostCategory;
   descripcion: string;
   monto: number;
+  moneda?: 'USD' | 'UYU';
+  /** TC de referencia al crear el programado; usado al generar costos en UYU. */
+  tipoCambioReferencia?: number;
   activo: boolean;
   frecuencia: ScheduledCostFrequency;
   diaDelMes: number;
   tripId: string | null;
   creadoEn: string;
   ultimaEjecucion: string | null;
+}
+
+export type DisplayCurrency = 'USD' | 'UYU';
+
+export interface ExchangeRateContext {
+  displayCurrency: DisplayCurrency;
+  currentRate: number;
+  lastUpdated: string | null;
 }
 
 // === ANALYTICS ===

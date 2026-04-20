@@ -1,5 +1,5 @@
 import type { Client, Cost, Trip, TripStatus, User } from '../types';
-import { MOCK_DATA } from '../constants';
+import { DEFAULT_EXCHANGE_RATE, MOCK_DATA } from '../constants';
 
 const SHEET_URL = import.meta.env.VITE_SHEET_URL ?? '';
 export const IS_MOCK = !SHEET_URL;
@@ -37,6 +37,9 @@ export function normalizeTrip(row: unknown): Trip {
       r.asignadoA != null && String(r.asignadoA).trim() !== ''
         ? String(r.asignadoA).trim()
         : undefined,
+    moneda: (r.moneda === 'UYU' ? 'UYU' : 'USD') as 'USD' | 'UYU',
+    tipoCambio: Number(r.tipoCambio) || DEFAULT_EXCHANGE_RATE,
+    ...(Number(r.tarifaUYU) > 0 ? { tarifaUYU: Number(r.tarifaUYU) } : {}),
     ...(normalizeBillingFlags(r) as Partial<Pick<Trip, 'facturaGenerada' | 'facturaSolicitada' | 'facturaCobrada'>>),
     ...(r.facturaFechaSolicitud ? { facturaFechaSolicitud: String(r.facturaFechaSolicitud) } : {}),
     ...(r.facturaFechaCobro ? { facturaFechaCobro: String(r.facturaFechaCobro) } : {}),
@@ -102,13 +105,26 @@ export function normalizeCost(row: unknown): Cost {
       ? null
       : String(tripIdRaw);
 
+  const montoRaw = Number(r.monto) || 0;
+  const moneda = (r.moneda === 'UYU' ? 'UYU' : 'USD') as 'USD' | 'UYU';
+  const tipoCambio = Number(r.tipoCambio) || DEFAULT_EXCHANGE_RATE;
+  const montoUSD =
+    r.montoUSD != null && String(r.montoUSD).trim() !== ''
+      ? Number(r.montoUSD)
+      : moneda === 'UYU'
+        ? montoRaw / tipoCambio
+        : montoRaw;
+
   return {
     id: String(r.id ?? ''),
     fecha: String(r.fecha ?? ''),
     tripId,
     categoria: normalizeCostCategory(r.categoria),
     descripcion: String(r.descripcion ?? ''),
-    monto: Number(r.monto) || 0,
+    monto: montoRaw,
+    moneda,
+    tipoCambio,
+    montoUSD,
     scheduledCostId:
       r.scheduledCostId != null && String(r.scheduledCostId).trim() !== ''
         ? String(r.scheduledCostId).trim()

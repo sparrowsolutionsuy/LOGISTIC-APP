@@ -1,7 +1,22 @@
 import type { Client, Cost, KPIData, MonthlyStats, Trip, TripWithMetrics } from '../types';
+import { DEFAULT_EXCHANGE_RATE } from '../constants';
 
-/** Ingreso bruto del viaje (tarifa × tonelada), sin filtrar por cobro. */
+/** Monto del costo en USD (histórico). */
+export function costUsd(c: Cost): number {
+  if (c.montoUSD != null && Number.isFinite(c.montoUSD)) {
+    return c.montoUSD;
+  }
+  const mon = c.moneda === 'UYU' ? 'UYU' : 'USD';
+  const tc = c.tipoCambio ?? DEFAULT_EXCHANGE_RATE;
+  return mon === 'UYU' ? c.monto / tc : c.monto;
+}
+
+/** Ingreso bruto del viaje en USD (tarifa × tonelada, con TC histórico si la tarifa está en UYU). */
 export function tripRevenueUsd(trip: Trip): number {
+  if (trip.moneda === 'UYU') {
+    const tc = trip.tipoCambio ?? DEFAULT_EXCHANGE_RATE;
+    return (trip.tarifa * (trip.pesoKg / 1000)) / tc;
+  }
   return trip.tarifa * (trip.pesoKg / 1000);
 }
 
@@ -27,7 +42,7 @@ function realizedMonthKey(trip: Trip): string | null {
 }
 
 function sumCostsForTrip(costs: Cost[], tripId: string): number {
-  return costs.filter((c) => c.tripId === tripId).reduce((acc, c) => acc + c.monto, 0);
+  return costs.filter((c) => c.tripId === tripId).reduce((acc, c) => acc + costUsd(c), 0);
 }
 
 function monthLabel(ym: string): string {
@@ -137,7 +152,7 @@ export function buildMonthlyStats(trips: Trip[], costs: Cost[], months = 6): Mon
     const ids = tripIdsByMonth.get(month) ?? new Set<string>();
     const costSum = costs
       .filter((c) => c.fecha.startsWith(month) && (c.tripId === null || ids.has(c.tripId)))
-      .reduce((acc, c) => acc + c.monto, 0);
+      .reduce((acc, c) => acc + costUsd(c), 0);
     const margin = revenue - costSum;
     const marginPct = revenue > 0 ? (margin / revenue) * 100 : 0;
     const tonsTransported = monthTrips.reduce((acc, t) => acc + t.pesoKg / 1000, 0);
@@ -166,7 +181,7 @@ export function buildKPIData(trips: Trip[], clients: Client[], costs: Cost[]): K
   const tripIds = new Set(mtdTrips.map((t) => t.id));
   const totalCostsMTD = costs
     .filter((c) => c.tripId !== null && tripIds.has(c.tripId))
-    .reduce((acc, c) => acc + c.monto, 0);
+    .reduce((acc, c) => acc + costUsd(c), 0);
 
   const cobradosMtd = trips.filter((t) => realizedMonthKey(t) === mtdKey);
   const totalRevenueMTD = cobradosMtd.reduce((acc, t) => acc + tripRevenueRealized(t), 0);
@@ -237,8 +252,9 @@ export function getCostsByCategory(
   let grand = 0;
   costs.forEach((c) => {
     const cat = c.categoria;
-    totals.set(cat, (totals.get(cat) ?? 0) + c.monto);
-    grand += c.monto;
+    const u = costUsd(c);
+    totals.set(cat, (totals.get(cat) ?? 0) + u);
+    grand += u;
   });
   return Array.from(totals.entries())
     .map(([category, total]) => ({

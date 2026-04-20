@@ -25,6 +25,8 @@ export interface BillingViewProps {
   clients: Client[];
   onInvoiceUploaded: (tripId: string, url: string) => void;
   onUpdateTrip: (trip: Trip) => Promise<void>;
+  formatAmount?: (n: number) => string;
+  convertAggregateToDisplay?: (amountUSD: number) => number;
 }
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -111,8 +113,20 @@ export const BillingView: React.FC<BillingViewProps> = ({
   clients,
   onInvoiceUploaded,
   onUpdateTrip,
+  formatAmount: formatAmountProp,
+  convertAggregateToDisplay: convertAggregateToDisplayProp,
 }) => {
   const { showToast } = useToast();
+
+  const fmtAgg = useCallback(
+    (usd: number) => {
+      if (formatAmountProp && convertAggregateToDisplayProp) {
+        return formatAmountProp(convertAggregateToDisplayProp(usd));
+      }
+      return `USD ${usd.toLocaleString('es-UY', { maximumFractionDigits: 0 })}`;
+    },
+    [formatAmountProp, convertAggregateToDisplayProp]
+  );
   const [mainTab, setMainTab] = useState<MainTab>('sin');
 
   const [sinClient, setSinClient] = useState('');
@@ -965,7 +979,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
           >
             <Card className="min-w-[160px] flex-1" padding="md" title="Total cobrado (filtro)">
               <p className="text-xl font-bold text-[var(--accent-emerald)]">
-                USD {cobradosAnalytics.total.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                {fmtAgg(cobradosAnalytics.total)}
               </p>
             </Card>
             <Card className="min-w-[160px] flex-1" padding="md" title="Tiempo promedio de cobro">
@@ -1041,7 +1055,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                             {row.count}
                           </td>
                           <td className="px-4 py-3 text-right font-semibold tabular-nums text-[var(--text-primary)]">
-                            USD {row.totalUsd.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                            {fmtAgg(row.totalUsd)}
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-[var(--text-primary)]">
                             {Math.round(row.avgDays * 10) / 10}
@@ -1071,7 +1085,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                                           {calcDaysDiff(t.fecha, t.facturaFechaCobro)}
                                         </td>
                                         <td className="py-1 text-right font-medium">
-                                          USD {tripGrandTotalUsd(t).toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                                          {fmtAgg(tripGrandTotalUsd(t))}
                                         </td>
                                       </tr>
                                     ))}

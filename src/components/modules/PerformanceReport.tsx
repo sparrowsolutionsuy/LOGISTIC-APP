@@ -15,7 +15,7 @@ import {
   Cell,
 } from 'recharts';
 import type { Client, Cost, Trip, TripStatus, User } from '../../types';
-import { tripRevenueUsd } from '../../utils/analytics';
+import { tripRevenueUsd, costUsd } from '../../utils/analytics';
 import { Button } from '../ui/Button';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { ArrowLeft, Download, Sparkles } from 'lucide-react';
@@ -89,7 +89,7 @@ function calcWeeklyMetrics(trips: Trip[], costs: Cost[], _clients: Client[]): We
     totalViajes: weekTrips.length,
     viajesCobrados: weekCobrados.length,
     ingresoRealizado: weekCobrados.reduce((s, t) => s + tripRevenueUsd(t), 0),
-    costosOperativos: weekCosts.reduce((s, c) => s + c.monto, 0),
+    costosOperativos: weekCosts.reduce((s, c) => s + costUsd(c), 0),
     kgTransportados: weekTrips.reduce((s, t) => s + t.pesoKg, 0),
     kmRecorridos: weekTrips.reduce((s, t) => s + t.kmRecorridos, 0),
     clientesAtendidos: new Set(weekTrips.map((t) => t.clientId)).size,
@@ -120,7 +120,7 @@ function calcHistoricalMetrics(trips: Trip[], costs: Cost[]): HistoricalMetrics 
   const weeks = Math.max(1, Math.ceil((Date.now() - start) / (7 * 86400000)));
   const cobrados = trips.filter((t) => t.facturaCobrada === true);
   const ingresoRealizado = cobrados.reduce((s, t) => s + tripRevenueUsd(t), 0);
-  const costosOperativos = costs.reduce((s, c) => s + c.monto, 0);
+  const costosOperativos = costs.reduce((s, c) => s + costUsd(c), 0);
   const kgTransportados = trips.reduce((s, t) => s + t.pesoKg, 0);
   const kmRecorridos = trips.reduce((s, t) => s + t.kmRecorridos, 0);
   return {
@@ -259,7 +259,9 @@ function last7DaysSeries(trips: Trip[], costs: Cost[]) {
         return cob === ds || (!cob && t.fecha === ds);
       })
       .reduce((s, t) => s + tripRevenueUsd(t), 0);
-    const costos = costs.filter((c) => c.fecha.slice(0, 10) === ds).reduce((s, c) => s + c.monto, 0);
+    const costos = costs
+      .filter((c) => c.fecha.slice(0, 10) === ds)
+      .reduce((s, c) => s + costUsd(c), 0);
     out.push({ label, ingresos, costos });
   }
   return out;

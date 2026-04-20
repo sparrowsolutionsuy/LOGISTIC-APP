@@ -14,6 +14,8 @@ export interface AppShellProps {
   pendingTripsCount: number;
   onLogout: () => void;
   headerBadge?: React.ReactNode;
+  /** Selector de moneda y TC (header desktop y móvil). */
+  currencySwitch?: React.ReactNode;
   /** Banner fijo (p. ej. modo demo / offline). */
   demoBanner?: React.ReactNode;
   children: React.ReactNode;
@@ -27,6 +29,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   pendingTripsCount,
   onLogout,
   headerBadge,
+  currencySwitch,
   demoBanner,
   children,
 }) => {
@@ -60,6 +63,7 @@ export const AppShell: React.FC<AppShellProps> = ({
           </nav>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {currencySwitch}
           <ThemeToggle />
         </div>
       </header>
@@ -129,6 +133,7 @@ export const AppShell: React.FC<AppShellProps> = ({
               {headerBadge ? <div className="shrink-0">{headerBadge}</div> : null}
             </div>
             <div className="flex shrink-0 items-center gap-4">
+              {currencySwitch}
               <ThemeToggle />
               <div className="hidden text-right sm:block">
                 <p className="text-sm font-semibold text-[var(--text-primary)]">{user.nombre}</p>

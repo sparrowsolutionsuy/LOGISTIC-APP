@@ -13,6 +13,7 @@ import { CostManager } from './components/modules/CostManager';
 import { AppShell } from './components/layout/AppShell';
 import { AdminGuard } from './components/layout/AdminGuard';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
+import { CurrencySwitch } from './components/ui/CurrencySwitch';
 import {
   deleteCostFromSheet,
   deleteTripFromSheet,
@@ -29,6 +30,8 @@ import { generateLogisticsInsights } from './services/geminiService';
 import { useTheme } from './hooks/useTheme';
 import { useToast } from './hooks/useToast';
 import { useScheduledCosts } from './hooks/useScheduledCosts';
+import { useExchangeRate } from './hooks/useExchangeRate';
+import { EXCHANGE_RATE_STORAGE_KEY } from './constants';
 
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
@@ -89,6 +92,17 @@ const App: React.FC = () => {
     getPendingScheduledCosts,
     nextDueDate,
   } = useScheduledCosts();
+
+  const {
+    displayCurrency,
+    currentRate,
+    lastUpdated,
+    toggleCurrency,
+    setCurrentRate,
+    convertToDisplay,
+    convertAggregateToDisplay,
+    formatAmount,
+  } = useExchangeRate();
 
   useEffect(() => {
     const stored = parseStoredUser(localStorage.getItem(STORAGE_USER_KEY));
@@ -153,12 +167,16 @@ const App: React.FC = () => {
   const onLogout = useCallback(() => {
     const savedTheme = localStorage.getItem(THEME_KEY);
     const savedScheduled = localStorage.getItem(SCHEDULED_COSTS_KEY);
+    const savedExchange = localStorage.getItem(EXCHANGE_RATE_STORAGE_KEY);
     localStorage.clear();
     if (savedTheme) {
       localStorage.setItem(THEME_KEY, savedTheme);
     }
     if (savedScheduled) {
       localStorage.setItem(SCHEDULED_COSTS_KEY, savedScheduled);
+    }
+    if (savedExchange) {
+      localStorage.setItem(EXCHANGE_RATE_STORAGE_KEY, savedExchange);
     }
     setUser(null);
     setActiveTab('dashboard');
@@ -322,6 +340,15 @@ const App: React.FC = () => {
       pendingTripsCount={pendingTripsCount}
       onLogout={onLogout}
       headerBadge={headerBadge}
+      currencySwitch={
+        <CurrencySwitch
+          displayCurrency={displayCurrency}
+          currentRate={currentRate}
+          lastUpdated={lastUpdated}
+          onToggle={toggleCurrency}
+          onRateChange={setCurrentRate}
+        />
+      }
     >
       {activeTab === 'dashboard' && (
         <Dashboard
@@ -331,6 +358,10 @@ const App: React.FC = () => {
           user={user}
           onUpdateTrip={onUpdateTrip}
           onNavigateToReport={() => setActiveTab('report')}
+          displayCurrency={displayCurrency}
+          currentRate={currentRate}
+          formatAmount={formatAmount}
+          convertAggregateToDisplay={convertAggregateToDisplay}
         />
       )}
       {activeTab === 'report' && (
@@ -354,6 +385,11 @@ const App: React.FC = () => {
           onUpdateTrip={onUpdateTrip}
           onDeleteTrip={onDeleteTrip}
           onInvoiceUploaded={onUploadInvoice}
+          currentRate={currentRate}
+          displayCurrency={displayCurrency}
+          formatAmount={formatAmount}
+          convertToDisplay={convertToDisplay}
+          convertAggregateToDisplay={convertAggregateToDisplay}
         />
       )}
       {activeTab === 'map' && <StrategicMap clients={clients} trips={trips} />}
@@ -376,6 +412,8 @@ const App: React.FC = () => {
             clients={clients}
             onInvoiceUploaded={onUploadInvoice}
             onUpdateTrip={onUpdateTrip}
+            formatAmount={formatAmount}
+            convertAggregateToDisplay={convertAggregateToDisplay}
           />
         </AdminGuard>
       )}
@@ -395,12 +433,22 @@ const App: React.FC = () => {
             onDeleteScheduledCost={deleteScheduledCost}
             onToggleScheduledCost={toggleActive}
             nextDueDate={nextDueDate()}
+            currentRate={currentRate}
+            displayCurrency={displayCurrency}
+            formatAmount={formatAmount}
+            convertAggregateToDisplay={convertAggregateToDisplay}
           />
         </AdminGuard>
       )}
       {activeTab === 'financial' && (
         <AdminGuard user={user} onRedirect={adminRedirect}>
-          <FinancialDashboard trips={trips} clients={clients} costs={costs} />
+          <FinancialDashboard
+            trips={trips}
+            clients={clients}
+            costs={costs}
+            formatAmount={formatAmount}
+            convertAggregateToDisplay={convertAggregateToDisplay}
+          />
         </AdminGuard>
       )}
     </AppShell>

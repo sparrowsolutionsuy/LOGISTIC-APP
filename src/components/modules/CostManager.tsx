@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import type { Cost, CostCategory, Trip, Client, ScheduledCost } from '../../types';
+import type { Cost, CostCategory, Trip, Client, ScheduledCost, DisplayCurrency } from '../../types';
+import { costUsd } from '../../utils/analytics';
 import { useSortableTable } from '../../hooks/useSortableTable';
 import { Modal } from '../ui/Modal';
 import SortableHeader from '../ui/SortableHeader';
@@ -72,6 +73,10 @@ export interface CostManagerProps {
   onDeleteScheduledCost: (id: string) => void;
   onToggleScheduledCost: (id: string) => void;
   nextDueDate: string | null;
+  currentRate: number;
+  displayCurrency: DisplayCurrency;
+  formatAmount: (n: number) => string;
+  convertAggregateToDisplay: (amountUSD: number) => number;
 }
 
 export const CostManager: React.FC<CostManagerProps> = ({
@@ -88,6 +93,10 @@ export const CostManager: React.FC<CostManagerProps> = ({
   onDeleteScheduledCost,
   onToggleScheduledCost,
   nextDueDate,
+  currentRate,
+  displayCurrency,
+  formatAmount,
+  convertAggregateToDisplay,
 }) => {
   const [catFilter, setCatFilter] = useState<CostCategory | ''>('');
   const [tripFilter, setTripFilter] = useState<string>(''); // '' | 'general' | tripId
@@ -103,6 +112,8 @@ export const CostManager: React.FC<CostManagerProps> = ({
   const [categoria, setCategoria] = useState<CostCategory>('Otros');
   const [descripcion, setDescripcion] = useState('');
   const [monto, setMonto] = useState('');
+  const [costMoneda, setCostMoneda] = useState<'USD' | 'UYU'>('USD');
+  const [costTipoCambio, setCostTipoCambio] = useState<number>(currentRate);
   const [tripId, setTripId] = useState<string>(''); // '' = general
   const [scheduledCostId, setScheduledCostId] = useState('');
 
@@ -146,7 +157,10 @@ export const CostManager: React.FC<CostManagerProps> = ({
     CostSortKey
   >(filteredCosts, { column: 'fecha', direction: 'desc' });
 
-  const totalFiltered = useMemo(() => sortedCosts.reduce((s, c) => s + c.monto, 0), [sortedCosts]);
+  const totalFiltered = useMemo(
+    () => sortedCosts.reduce((s, c) => s + (c.montoUSD ?? costUsd(c)), 0),
+    [sortedCosts]
+  );
   const avgFiltered = useMemo(
     () => (sortedCosts.length > 0 ? totalFiltered / sortedCosts.length : 0),
     [sortedCosts.length, totalFiltered]
@@ -160,16 +174,21 @@ export const CostManager: React.FC<CostManagerProps> = ({
     const mk = monthKeyNow();
     const totalMonth = sortedCosts
       .filter((c) => c.fecha.startsWith(mk))
-      .reduce((s, c) => s + c.monto, 0);
+      .reduce((s, c) => s + (c.montoUSD ?? costUsd(c)), 0);
     const byCat = new Map<string, number>();
     sortedCosts.forEach((c) => {
-      byCat.set(c.categoria, (byCat.get(c.categoria) ?? 0) + c.monto);
+      const u = c.montoUSD ?? costUsd(c);
+      byCat.set(c.categoria, (byCat.get(c.categoria) ?? 0) + u);
     });
     const topEntry = Array.from(byCat.entries()).sort((a, b) => b[1] - a[1])[0];
     const topCat = topEntry ? { name: topEntry[0], total: topEntry[1] } : null;
-    const totalM = sortedCosts.reduce((s, c) => s + c.monto, 0);
-    const linked = sortedCosts.filter((c) => c.tripId !== null).reduce((s, c) => s + c.monto, 0);
-    const general = sortedCosts.filter((c) => c.tripId === null).reduce((s, c) => s + c.monto, 0);
+    const totalM = sortedCosts.reduce((s, c) => s + (c.montoUSD ?? costUsd(c)), 0);
+    const linked = sortedCosts
+      .filter((c) => c.tripId !== null)
+      .reduce((s, c) => s + (c.montoUSD ?? costUsd(c)), 0);
+    const general = sortedCosts
+      .filter((c) => c.tripId === null)
+      .reduce((s, c) => s + (c.montoUSD ?? costUsd(c)), 0);
     const pctLinked = totalM > 0 ? (linked / totalM) * 100 : 0;
     const pctGeneral = totalM > 0 ? (general / totalM) * 100 : 0;
     return { totalMonth, topCat, pctLinked, pctGeneral };
@@ -197,6 +216,8 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setCategoria('Otros');
     setDescripcion('');
     setMonto('');
+    setCostMoneda('USD');
+    setCostTipoCambio(currentRate);
     setTripId('');
     setScheduledCostId('');
     setModalOpen(true);
@@ -208,6 +229,8 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setCategoria(c.categoria);
     setDescripcion(c.descripcion);
     setMonto(String(c.monto));
+    setCostMoneda(c.moneda ?? 'USD');
+    setCostTipoCambio(c.tipoCambio ?? currentRate);
     setTripId(c.tripId ?? '');
     setScheduledCostId(c.scheduledCostId ?? '');
     setModalOpen(true);
@@ -234,11 +257,16 @@ export const CostManager: React.FC<CostManagerProps> = ({
 
     setSaveLoading(true);
     try {
+      const tcEffective = costMoneda === 'USD' ? currentRate : costTipoCambio;
+      const montoUSD = costMoneda === 'USD' ? amount : amount / tcEffective;
       const base = {
         fecha,
         categoria,
         descripcion: desc,
         monto: amount,
+        moneda: costMoneda,
+        tipoCambio: tcEffective,
+        montoUSD,
         tripId: tripId === '' ? null : tripId,
         scheduledCostId: scheduledCostId.trim() !== '' ? scheduledCostId.trim() : undefined,
         registradoPor,
@@ -306,6 +334,8 @@ export const CostManager: React.FC<CostManagerProps> = ({
       descripcion: descripcionValue,
       categoria: scCategoria,
       monto: montoValue,
+      moneda: 'USD',
+      tipoCambioReferencia: currentRate,
       activo: true,
       frecuencia: 'monthly',
       diaDelMes: dayValue,
@@ -322,7 +352,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
           <p className="text-sm text-[var(--text-secondary)]">
             Total filtrado:{' '}
             <span className="font-semibold" style={{ color: 'var(--accent-emerald)' }}>
-              {totalFiltered.toLocaleString('es-UY', { style: 'currency', currency: 'USD' })}
+              {formatAmount(convertAggregateToDisplay(totalFiltered))}
             </span>
           </p>
         </div>
@@ -362,7 +392,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
                 Mes actual
               </p>
               <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
-                {metrics.totalMonth.toLocaleString('es-UY', { style: 'currency', currency: 'USD' })}
+                {formatAmount(convertAggregateToDisplay(metrics.totalMonth))}
               </p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">{monthLabel}</p>
             </div>
@@ -413,15 +443,11 @@ export const CostManager: React.FC<CostManagerProps> = ({
                 {metrics.pctLinked.toFixed(0)}%
               </p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                {((metrics.pctLinked / 100) * totalFiltered).toLocaleString('es-UY', {
-                  style: 'currency',
-                  currency: 'USD',
-                })}{' '}
+                {formatAmount(
+                  convertAggregateToDisplay((metrics.pctLinked / 100) * totalFiltered)
+                )}{' '}
                 vs{' '}
-                {totalFiltered.toLocaleString('es-UY', {
-                  style: 'currency',
-                  currency: 'USD',
-                })}
+                {formatAmount(convertAggregateToDisplay(totalFiltered))}
               </p>
             </div>
             <div
@@ -506,7 +532,10 @@ export const CostManager: React.FC<CostManagerProps> = ({
 
       <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
+          <table
+            className="w-full min-w-[720px] text-sm"
+            aria-label={`Costos — total filtrado en ${displayCurrency === 'UYU' ? 'pesos uruguayos' : 'dólares'}`}
+          >
             <thead>
               <tr
                 className="border-b border-[var(--border)]"
@@ -601,10 +630,23 @@ export const CostManager: React.FC<CostManagerProps> = ({
                       ) : null}
                     </td>
                     <td
-                      className="px-4 py-3 text-right font-semibold"
-                      style={{ color: c.monto > avgFiltered ? 'var(--accent-emerald)' : 'var(--text-primary)' }}
+                      className="px-4 py-3 text-right"
+                      style={{
+                        color:
+                          costUsd(c) > avgFiltered ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                      }}
                     >
-                      {c.monto.toLocaleString('es-UY', { style: 'currency', currency: 'USD' })}
+                      <div>
+                        <p className="font-semibold text-[var(--text-primary)]">
+                          {c.moneda === 'UYU' ? '$' : 'USD'}{' '}
+                          {c.monto.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                        </p>
+                        {c.moneda === 'UYU' && c.montoUSD != null && (
+                          <p className="text-[10px] text-[var(--text-muted)]">
+                            ≈ USD {c.montoUSD.toFixed(0)}
+                          </p>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
@@ -676,7 +718,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Monto (USD)</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Monto</label>
             <input
               type="number"
               required
@@ -687,6 +729,53 @@ export const CostManager: React.FC<CostManagerProps> = ({
               onChange={(e) => setMonto(e.target.value)}
             />
           </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
+              Moneda del gasto
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCostMoneda('USD')}
+                className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
+                  costMoneda === 'USD'
+                    ? 'border-[var(--accent-blue)] bg-[var(--accent-blue-muted)] text-[var(--accent-blue)]'
+                    : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
+                }`}
+              >
+                USD
+              </button>
+              <button
+                type="button"
+                onClick={() => setCostMoneda('UYU')}
+                className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
+                  costMoneda === 'UYU'
+                    ? 'border-[var(--accent-amber)] bg-[color-mix(in_srgb,var(--accent-amber)_12%,transparent)] text-[var(--accent-amber)]'
+                    : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
+                }`}
+              >
+                $ UYU
+              </button>
+            </div>
+          </div>
+          {costMoneda === 'UYU' && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
+                Tipo de cambio al momento del gasto
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="1"
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 font-mono text-sm text-[var(--text-primary)] outline-none"
+                value={costTipoCambio}
+                onChange={(e) => setCostTipoCambio(Number(e.target.value))}
+              />
+              <p className="mt-1 text-[10px] text-[var(--text-muted)]">
+                Equivalente: USD {(Number(monto) / costTipoCambio || 0).toFixed(2)}
+              </p>
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
               Vincular a viaje (opcional)

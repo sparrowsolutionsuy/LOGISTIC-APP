@@ -18,6 +18,7 @@ import type { Client, Cost, Trip } from '../../types';
 import {
   buildKPIData,
   buildMonthlyStats,
+  costUsd,
   enrichTrips,
   getCostsByCategory,
   tripRevenueRealized,
@@ -50,7 +51,7 @@ const CATEGORY_FILL: Record<CostCategory, string> = {
 type FinTab = 'resumen' | 'ingresos' | 'costos' | 'rentabilidad';
 
 function sumCostsForTrip(costs: Cost[], tripId: string): number {
-  return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + c.monto, 0);
+  return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + costUsd(c), 0);
 }
 
 function formatUsd(n: number): string {
@@ -95,14 +96,25 @@ export interface FinancialDashboardProps {
   trips: Trip[];
   clients: Client[];
   costs: Cost[];
+  formatAmount?: (n: number) => string;
+  convertAggregateToDisplay?: (amountUSD: number) => number;
 }
 
 export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
   trips,
   clients,
   costs,
+  formatAmount: formatAmountProp,
+  convertAggregateToDisplay: convertAggregateToDisplayProp,
 }) => {
   const [tab, setTab] = useState<FinTab>('resumen');
+
+  const fmtMoney = useMemo(() => {
+    if (formatAmountProp && convertAggregateToDisplayProp) {
+      return (n: number) => formatAmountProp(convertAggregateToDisplayProp(n));
+    }
+    return formatUsd;
+  }, [formatAmountProp, convertAggregateToDisplayProp]);
 
   const kpi = useMemo(() => buildKPIData(trips, clients, costs), [trips, clients, costs]);
   const monthly = useMemo(() => buildMonthlyStats(trips, costs, 6), [trips, costs]);
@@ -149,7 +161,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     return top ? { name: top.name, revenue: top.value } : null;
   }, [revenueByClient]);
 
-  const totalCostsAll = useMemo(() => costs.reduce((s, c) => s + c.monto, 0), [costs]);
+  const totalCostsAll = useMemo(() => costs.reduce((s, c) => s + costUsd(c), 0), [costs]);
   const totalKm = useMemo(
     () => trips.filter((t) => t.kmRecorridos > 0).reduce((s, t) => s + t.kmRecorridos, 0),
     [trips]
@@ -242,9 +254,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       {tab === 'resumen' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi title="Ingresos MTD" value={formatUsd(kpi.totalRevenueMTD)} />
-            <Kpi title="Costos MTD" value={formatUsd(kpi.totalCostsMTD)} />
-            <Kpi title="Margen neto MTD" value={formatUsd(kpi.netMarginMTD)} />
+            <Kpi title="Ingresos MTD" value={fmtMoney(kpi.totalRevenueMTD)} />
+            <Kpi title="Costos MTD" value={fmtMoney(kpi.totalCostsMTD)} />
+            <Kpi title="Margen neto MTD" value={fmtMoney(kpi.netMarginMTD)} />
             <Kpi title="Margen %" value={`${kpi.marginPctMTD.toFixed(1)}%`} />
           </div>
           <ChartBox title="Ingresos vs costos (6 meses)">
@@ -263,7 +275,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-                <Tooltip formatter={(v: number) => formatUsd(v)} />
+                <Tooltip formatter={(v: number) => fmtMoney(v)} />
                 <Legend />
                 <Area
                   type="monotone"
@@ -328,15 +340,15 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                       >
                         <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{row.id}</td>
                         <td className="px-4 py-3 text-[var(--text-primary)]">{row.clientName}</td>
-                        <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(rev)}</td>
+                        <td className="px-4 py-3 text-right text-[var(--text-primary)]">{fmtMoney(rev)}</td>
                         <td className="px-4 py-3 text-left text-xs font-medium text-[var(--text-secondary)]">
                           {getBillingStatusLabel(st)}
                         </td>
                         <td className="px-4 py-3 text-right text-[var(--text-primary)]">
-                          {formatUsd(row.totalCosts)}
+                          {fmtMoney(row.totalCosts)}
                         </td>
                         <td className="px-4 py-3 text-right text-[var(--text-primary)]">
-                          {formatUsd(row.netMargin)}
+                          {fmtMoney(row.netMargin)}
                         </td>
                         <td className="px-4 py-3 text-right" style={marginRowStyle(pct, rev)}>
                           {rev > 0 ? `${pct.toFixed(1)}%` : '—'}
@@ -354,12 +366,12 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       {tab === 'ingresos' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Kpi title="Total histórico (ingresos)" value={formatUsd(totalHistoricRevenue)} />
-            <Kpi title="Promedio por viaje" value={formatUsd(avgRevenuePerTrip)} />
+            <Kpi title="Total histórico (ingresos)" value={fmtMoney(totalHistoricRevenue)} />
+            <Kpi title="Promedio por viaje" value={fmtMoney(avgRevenuePerTrip)} />
             <Kpi
               title="Mejor cliente (histórico)"
               value={bestClientHistoric?.name ?? '—'}
-              sub={bestClientHistoric ? formatUsd(bestClientHistoric.revenue) : undefined}
+              sub={bestClientHistoric ? fmtMoney(bestClientHistoric.revenue) : undefined}
             />
           </div>
           <ChartBox title="Ingresos mensuales">
@@ -368,7 +380,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-                <Tooltip formatter={(v: number) => formatUsd(v)} />
+                <Tooltip formatter={(v: number) => fmtMoney(v)} />
                 <Bar dataKey="Ingresos" fill={COL.ingreso} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -393,7 +405,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                     <Cell key={i} fill={PIE_EXTRA[i % PIE_EXTRA.length]} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(v: number) => formatUsd(v)} />
+                <Tooltip formatter={(v: number) => fmtMoney(v)} />
               </PieChart>
             </ResponsiveContainer>
           </ChartBox>
@@ -403,12 +415,12 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       {tab === 'costos' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Kpi title="Total costos" value={formatUsd(totalCostsAll)} />
-            <Kpi title="Costo / km promedio" value={totalKm > 0 ? formatUsd(costPerKm) : '—'} />
+            <Kpi title="Total costos" value={fmtMoney(totalCostsAll)} />
+            <Kpi title="Costo / km promedio" value={totalKm > 0 ? fmtMoney(costPerKm) : '—'} />
             <Kpi
               title="Categoría con mayor gasto"
               value={topCat?.category ?? '—'}
-              sub={topCat ? formatUsd(topCat.total) : undefined}
+              sub={topCat ? fmtMoney(topCat.total) : undefined}
             />
           </div>
           <ChartBox title="Costos mensuales">
@@ -417,7 +429,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-                <Tooltip formatter={(v: number) => formatUsd(v)} />
+                <Tooltip formatter={(v: number) => fmtMoney(v)} />
                 <Bar dataKey="Costos" fill={COL.costo} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -445,7 +457,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                     />
                   ))}
                 </Pie>
-                <Tooltip formatter={(v: number) => formatUsd(v)} />
+                <Tooltip formatter={(v: number) => fmtMoney(v)} />
               </PieChart>
             </ResponsiveContainer>
           </ChartBox>
@@ -460,7 +472,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-                <Tooltip formatter={(v: number) => formatUsd(v)} />
+                <Tooltip formatter={(v: number) => fmtMoney(v)} />
                 <Legend />
                 <Bar dataKey="Ingresos" fill={COL.ingreso} radius={[4, 4, 0, 0]} />
                 <Bar dataKey="Costos" fill={COL.costo} radius={[4, 4, 0, 0]} />
@@ -531,11 +543,11 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                       className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
                     >
                       <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{r.route}</td>
-                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(r.revenue)}</td>
-                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(r.pending)}</td>
-                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(r.cost)}</td>
+                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{fmtMoney(r.revenue)}</td>
+                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{fmtMoney(r.pending)}</td>
+                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{fmtMoney(r.cost)}</td>
                       <td className="px-4 py-3 text-right" style={{ color: 'var(--accent-blue)' }}>
-                        {formatUsd(r.margin)}
+                        {fmtMoney(r.margin)}
                       </td>
                       <td className="px-4 py-3 text-right" style={marginRowStyle(r.marginPct, gross)}>
                         {gross > 0 ? `${r.marginPct.toFixed(1)}%` : '—'}

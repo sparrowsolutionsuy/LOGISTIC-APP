@@ -12,7 +12,15 @@ import {
   Legend,
 } from 'recharts';
 import type { TooltipProps } from 'recharts';
-import type { Client, Cost, KPIData, Trip, TripWithMetrics, User } from '../../types';
+import type {
+  Client,
+  Cost,
+  DisplayCurrency,
+  KPIData,
+  Trip,
+  TripWithMetrics,
+  User,
+} from '../../types';
 import { buildKPIData, buildMonthlyStats, enrichTrips } from '../../utils/analytics';
 import {
   DollarSign,
@@ -38,6 +46,10 @@ export interface DashboardProps {
   kpiPrecomputed?: KPIData;
   /** Admin: abre el reporte de rendimiento con IA (pestaña oculta del menú). */
   onNavigateToReport?: () => void;
+  displayCurrency?: DisplayCurrency;
+  currentRate?: number;
+  formatAmount?: (n: number) => string;
+  convertAggregateToDisplay?: (amountUSD: number) => number;
 }
 
 function localISODate(d: Date): string {
@@ -53,7 +65,9 @@ function formatUsd(n: number): string {
 
 type ChartTooltipProps = TooltipProps<number, string>;
 
-const ChartTooltipEs: React.FC<ChartTooltipProps> = ({ active, payload, label }) => {
+const ChartTooltipEs: React.FC<
+  ChartTooltipProps & { formatMoney: (n: number) => string }
+> = ({ active, payload, label, formatMoney }) => {
   if (!active || !payload?.length) {
     return null;
   }
@@ -71,7 +85,7 @@ const ChartTooltipEs: React.FC<ChartTooltipProps> = ({ active, payload, label })
                     .toLowerCase()
                     .includes('viaje')
                   ? p.value
-                  : formatUsd(p.value)
+                  : formatMoney(p.value)
                 : p.value}
             </span>
           </li>
@@ -126,9 +140,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
   enrichedTrips: enrichedTripsProp,
   kpiPrecomputed,
   onNavigateToReport,
+  displayCurrency = 'USD',
+  currentRate = 42,
+  formatAmount: formatAmountProp,
+  convertAggregateToDisplay: convertAggregateToDisplayProp,
 }) => {
   const isAdmin = user.role === 'admin';
   const [chartsReady, setChartsReady] = useState(false);
+
+  const fmtAgg = useMemo(() => {
+    if (formatAmountProp && convertAggregateToDisplayProp) {
+      return (n: number) => formatAmountProp(convertAggregateToDisplayProp(n));
+    }
+    return formatUsd;
+  }, [formatAmountProp, convertAggregateToDisplayProp]);
 
   useEffect(() => {
     setChartsReady(false);
@@ -212,21 +237,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
             <KpiCard
               title="Ingresos MTD"
-              value={formatUsd(kpi.totalRevenueMTD)}
+              value={fmtAgg(kpi.totalRevenueMTD)}
               sub="Solo viajes cobrados"
               icon={<Wallet className="h-6 w-6 text-emerald-100" />}
               bg="bg-emerald-700"
             />
             <KpiCard
               title="Ingresos pendientes"
-              value={formatUsd(kpi.pendingRevenue)}
+              value={fmtAgg(kpi.pendingRevenue)}
               sub="Por cobrar"
               icon={<Banknote className="h-6 w-6 text-amber-100" />}
               bg="bg-amber-700"
             />
             <KpiCard
               title="Costos MTD"
-              value={formatUsd(kpi.totalCostsMTD)}
+              value={fmtAgg(kpi.totalCostsMTD)}
               icon={<DollarSign className="h-6 w-6 text-slate-100" />}
               bg="bg-slate-700"
             />
@@ -242,6 +267,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
               icon={<Truck className="h-6 w-6 text-blue-100" />}
               bg="bg-blue-900"
             />
+          </div>
+
+          <div className="flex flex-col justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-2 text-xs text-[var(--text-muted)] sm:flex-row sm:items-center">
+            <span>
+              Valores en {displayCurrency === 'USD' ? 'dólares estadounidenses' : 'pesos uruguayos'}
+              {displayCurrency === 'UYU' && (
+                <span className="ml-1 font-mono">(TC referencia: {currentRate.toFixed(2)} UYU/USD)</span>
+              )}
+            </span>
+            <span className="italic">
+              Los ingresos y costos históricos usan el TC del momento de cada transacción
+            </span>
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -273,7 +310,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#64748b" />
                         <YAxis tick={{ fontSize: 11 }} stroke="#64748b" tickFormatter={(v) => `$${v}`} />
-                        <Tooltip content={<ChartTooltipEs />} />
+                        <Tooltip content={<ChartTooltipEs formatMoney={fmtAgg} />} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Area
                           type="monotone"
@@ -316,7 +353,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#64748b" />
                         <YAxis allowDecimals={false} tick={{ fontSize: 11 }} stroke="#64748b" />
-                        <Tooltip content={<ChartTooltipEs />} />
+                        <Tooltip content={<ChartTooltipEs formatMoney={fmtAgg} />} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Bar dataKey="Viajes" name="Cantidad de viajes" fill="#1d4ed8" radius={[4, 4, 0, 0]} />
                       </BarChart>
@@ -368,7 +405,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           Estado
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                          Margen (USD)
+                          Margen
                         </th>
                       </tr>
                     </thead>
@@ -390,7 +427,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               className="px-4 py-3 text-right font-medium text-[var(--text-primary)]"
                               title={t.facturaCobrada ? undefined : 'No cobrado aún'}
                             >
-                              {t.facturaCobrada === true && m ? formatUsd(m.netMargin) : '—'}
+                              {t.facturaCobrada === true && m ? fmtAgg(m.netMargin) : '—'}
                             </td>
                           </tr>
                         );

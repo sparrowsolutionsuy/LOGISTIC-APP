@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { ScheduledCost, Cost } from '../types';
+import { DEFAULT_EXCHANGE_RATE } from '../constants';
 
 const STORAGE_KEY = 'gdc_scheduled_costs';
 
@@ -66,18 +67,26 @@ export function useScheduledCosts() {
           }
           return today.getDate() >= sc.diaDelMes;
         })
-        .map((sc) => ({
-          scheduledCostId: sc.id,
-          cost: {
-            fecha: todayStr,
-            tripId: sc.tripId,
-            categoria: sc.categoria,
-            descripcion: `[AUTO] ${sc.descripcion}`,
-            monto: sc.monto,
+        .map((sc) => {
+          const moneda = sc.moneda === 'UYU' ? 'UYU' : 'USD';
+          const tipoCambio = sc.tipoCambioReferencia ?? DEFAULT_EXCHANGE_RATE;
+          const montoUSD = moneda === 'UYU' ? sc.monto / tipoCambio : sc.monto;
+          return {
             scheduledCostId: sc.id,
-            registradoPor: 'sistema',
-          },
-        }));
+            cost: {
+              fecha: todayStr,
+              tripId: sc.tripId,
+              categoria: sc.categoria,
+              descripcion: `[AUTO] ${sc.descripcion}`,
+              monto: sc.monto,
+              moneda,
+              tipoCambio,
+              montoUSD,
+              scheduledCostId: sc.id,
+              registradoPor: 'sistema',
+            },
+          };
+        });
     },
     [scheduledCosts]
   );

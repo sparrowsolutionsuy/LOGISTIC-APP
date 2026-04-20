@@ -44,6 +44,11 @@ export const ROUTE_NAMES: Record<ActiveTab, string> = {
   report: 'Reporte IA',
 };
 
+/** UYU por 1 USD — valor inicial referencial y fallback de normalización. */
+export const DEFAULT_EXCHANGE_RATE = 42;
+
+export const EXCHANGE_RATE_STORAGE_KEY = 'gdc_exchange_rate_context';
+
 export const STATUS_COLORS: Record<
   TripStatus,
   { bg: string; text: string; border: string }
@@ -130,6 +135,8 @@ const MOCK_TRIPS: Trip[] = [
     pesoKg: 28500,
     kmRecorridos: 312,
     tarifa: 44,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
     origen: 'Mercedes',
     destino: 'Montevideo',
     facturaUrl: 'https://drive.google.com/file/d/example-mvd-001/view',
@@ -149,6 +156,8 @@ const MOCK_TRIPS: Trip[] = [
     pesoKg: 30000,
     kmRecorridos: 410,
     tarifa: 46,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
     origen: 'Salto',
     destino: 'Nueva Palmira',
     remitoUrl: 'https://drive.google.com/file/d/remito-sal-002/view',
@@ -162,6 +171,8 @@ const MOCK_TRIPS: Trip[] = [
     pesoKg: 29200,
     kmRecorridos: 180,
     tarifa: 30,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
     origen: 'Rivera',
     destino: 'Montevideo',
     asignadoA: 'operativo',
@@ -175,6 +186,8 @@ const MOCK_TRIPS: Trip[] = [
     pesoKg: 26000,
     kmRecorridos: 0,
     tarifa: 38,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
     origen: 'Treinta y Tres',
     destino: 'Punta del Este',
     asignadoA: 'operativo',
@@ -188,6 +201,8 @@ const MOCK_TRIPS: Trip[] = [
     pesoKg: 27500,
     kmRecorridos: 220,
     tarifa: 36,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
     origen: 'Durazno',
     destino: 'Montevideo',
     facturaGenerada: true,
@@ -201,6 +216,8 @@ const MOCK_TRIPS: Trip[] = [
     pesoKg: 28800,
     kmRecorridos: 395,
     tarifa: 43,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
     origen: 'Paysandú',
     destino: 'Salto',
     facturaUrl: 'https://drive.google.com/file/d/example-sal-006/view',
@@ -217,6 +234,8 @@ const MOCK_TRIPS: Trip[] = [
     pesoKg: 24000,
     kmRecorridos: 0,
     tarifa: 52,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
     origen: 'Montevideo',
     destino: 'Rivera',
     asignadoA: 'operativo',
@@ -230,6 +249,8 @@ const MOCK_TRIPS: Trip[] = [
     pesoKg: 22000,
     kmRecorridos: 95,
     tarifa: 41,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
     origen: 'Maldonado',
     destino: 'Punta del Este',
     asignadoA: 'operativo',
@@ -244,6 +265,9 @@ const MOCK_COSTS: Cost[] = [
     categoria: 'Combustible',
     descripcion: 'Diesel ruta Mercedes–Montevideo',
     monto: 1850,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
+    montoUSD: 1850,
     registradoPor: 'admin',
   },
   {
@@ -253,6 +277,9 @@ const MOCK_COSTS: Cost[] = [
     categoria: 'Peajes',
     descripcion: 'Peajes RN y accesos puerto',
     monto: 420,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
+    montoUSD: 420,
     registradoPor: 'admin',
   },
   {
@@ -262,6 +289,9 @@ const MOCK_COSTS: Cost[] = [
     categoria: 'Viáticos',
     descripcion: 'Pernocte conductor Rivera',
     monto: 2100,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
+    montoUSD: 2100,
     registradoPor: 'operativo',
   },
   {
@@ -271,6 +301,9 @@ const MOCK_COSTS: Cost[] = [
     categoria: 'Mantenimiento',
     descripcion: 'Control pre-viaje y lubricación',
     monto: 780,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
+    montoUSD: 780,
     registradoPor: 'admin',
   },
   {
@@ -280,6 +313,9 @@ const MOCK_COSTS: Cost[] = [
     categoria: 'Neumáticos',
     descripcion: 'Desgaste proporcional neumáticos',
     monto: 950,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
+    montoUSD: 950,
     registradoPor: 'admin',
   },
   {
@@ -289,6 +325,9 @@ const MOCK_COSTS: Cost[] = [
     categoria: 'Seguros',
     descripcion: 'Prima flota proporcional viaje',
     monto: 310,
+    moneda: 'USD',
+    tipoCambio: DEFAULT_EXCHANGE_RATE,
+    montoUSD: 310,
     registradoPor: 'admin',
   },
 ];

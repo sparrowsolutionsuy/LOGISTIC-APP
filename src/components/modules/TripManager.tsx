@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import type { Trip, TripStatus, Client, User, Cost, TripWithMetrics } from '../../types';
-import { enrichTrips } from '../../utils/analytics';
+import type { Trip, TripStatus, Client, User, Cost, TripWithMetrics, DisplayCurrency } from '../../types';
+import { enrichTrips, tripRevenueUsd, costUsd } from '../../utils/analytics';
 import { useSortableTable } from '../../hooks/useSortableTable';
 import Badge from '../ui/Badge';
 import SortableHeader from '../ui/SortableHeader';
@@ -44,6 +44,11 @@ export interface TripManagerProps {
   onUpdateTrip: (trip: Trip) => void | Promise<void>;
   onDeleteTrip: (tripId: string) => void | Promise<void>;
   onInvoiceUploaded: (tripId: string, url: string) => void;
+  currentRate: number;
+  displayCurrency: DisplayCurrency;
+  formatAmount: (n: number) => string;
+  convertToDisplay: (amount: number, originalCurrency: 'USD' | 'UYU', tc: number) => number;
+  convertAggregateToDisplay: (amountUSD: number) => number;
 }
 
 function getClientName(clients: Client[], id: string): string {
@@ -51,11 +56,7 @@ function getClientName(clients: Client[], id: string): string {
 }
 
 function sumCostsForTrip(costs: Cost[], tripId: string): number {
-  return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + c.monto, 0);
-}
-
-function tripRevenue(t: Trip): number {
-  return t.tarifa * (t.pesoKg / 1000);
+  return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + costUsd(c), 0);
 }
 
 function operativoCanSeeTrip(t: Trip, user: User): boolean {
@@ -74,6 +75,11 @@ export const TripManager: React.FC<TripManagerProps> = ({
   onUpdateTrip,
   onDeleteTrip,
   onInvoiceUploaded,
+  currentRate,
+  displayCurrency,
+  formatAmount,
+  convertToDisplay,
+  convertAggregateToDisplay,
 }) => {
   const isAdmin = user.role === 'admin';
   const { showInfo } = useToast();
@@ -191,6 +197,8 @@ export const TripManager: React.FC<TripManagerProps> = ({
       pesoKg: undefined,
       kmRecorridos: 0,
       tarifa: undefined,
+      moneda: 'USD',
+      tipoCambio: currentRate,
     });
     setFormOpen(true);
   };
@@ -206,7 +214,11 @@ export const TripManager: React.FC<TripManagerProps> = ({
     setEditingId(trip.id);
     setPendingRemito(null);
     setShowRemitoUploader(false);
-    setNewTrip({ ...trip });
+    setNewTrip({
+      ...trip,
+      tipoCambio: trip.tipoCambio ?? currentRate,
+      moneda: trip.moneda ?? 'USD',
+    });
     setFormOpen(true);
   };
 
@@ -219,7 +231,11 @@ export const TripManager: React.FC<TripManagerProps> = ({
     setEditingId(trip.id);
     setPendingRemito(null);
     setShowRemitoUploader(false);
-    setNewTrip({ ...trip });
+    setNewTrip({
+      ...trip,
+      tipoCambio: trip.tipoCambio ?? currentRate,
+      moneda: trip.moneda ?? 'USD',
+    });
     setFormOpen(true);
   };
 
@@ -257,6 +273,10 @@ export const TripManager: React.FC<TripManagerProps> = ({
     if (!Number.isFinite(km) || km < 0) {
       return 'KM recorridos inválidos.';
     }
+    const tc = Number(newTrip.tipoCambio ?? currentRate);
+    if (!Number.isFinite(tc) || tc <= 0) {
+      return 'El tipo de cambio debe ser mayor a 0.';
+    }
     return null;
   };
 
@@ -273,13 +293,24 @@ export const TripManager: React.FC<TripManagerProps> = ({
 
     setSaveLoading(true);
     try {
+      const moneda = (newTrip.moneda ?? 'USD') as 'USD' | 'UYU';
+      const tipoCambio = Number(newTrip.tipoCambio ?? currentRate);
+      const pesoN = Number(newTrip.pesoKg);
+      const tarifaN = Number(newTrip.tarifa);
+      const ton = pesoN / 1000;
+      const totalNominal = tarifaN * ton;
+      const tarifaUYU = moneda === 'UYU' ? totalNominal : totalNominal * tipoCambio;
+
       const base = {
         fecha: String(newTrip.fecha),
         clientId: String(newTrip.clientId),
         contenido: String(newTrip.contenido).trim(),
-        pesoKg: Number(newTrip.pesoKg),
+        pesoKg: pesoN,
         kmRecorridos: Number(newTrip.kmRecorridos ?? 0),
-        tarifa: Number(newTrip.tarifa),
+        tarifa: tarifaN,
+        moneda,
+        tipoCambio,
+        tarifaUYU,
         origen: String(newTrip.origen).trim(),
         destino: String(newTrip.destino).trim(),
         estado: (newTrip.estado as TripStatus) ?? 'Pendiente',
@@ -605,7 +636,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Tarifa (USD / ton)</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Tarifa (por tonelada)</label>
             <input
               type="number"
               required
@@ -616,6 +647,84 @@ export const TripManager: React.FC<TripManagerProps> = ({
               onChange={(e) => setNewTrip({ ...newTrip, tarifa: Number(e.target.value) })}
             />
           </div>
+
+          <div className="md:col-span-2">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                Moneda y tipo de cambio
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Moneda de la tarifa</label>
+                  <select
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm outline-none"
+                    value={newTrip.moneda ?? 'USD'}
+                    onChange={(e) =>
+                      setNewTrip({ ...newTrip, moneda: e.target.value as 'USD' | 'UYU' })
+                    }
+                  >
+                    <option value="USD">USD — Dólar estadounidense</option>
+                    <option value="UYU">UYU — Peso uruguayo</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Tipo de cambio (USD → UYU)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 font-mono text-sm outline-none"
+                    value={newTrip.tipoCambio ?? currentRate}
+                    onChange={(e) => setNewTrip({ ...newTrip, tipoCambio: Number(e.target.value) })}
+                  />
+                  <p className="mt-0.5 text-[10px] text-slate-400">
+                    TC actual del sistema: {currentRate.toFixed(2)}{' '}
+                    <button
+                      type="button"
+                      className="text-blue-500 underline"
+                      onClick={() => setNewTrip({ ...newTrip, tipoCambio: currentRate })}
+                    >
+                      usar este
+                    </button>
+                  </p>
+                </div>
+                <div className="flex flex-col justify-end">
+                  {(() => {
+                    const peso = Number(newTrip.pesoKg) || 0;
+                    const tarifa = Number(newTrip.tarifa) || 0;
+                    const tc = Number(newTrip.tipoCambio) || currentRate;
+                    const moneda = newTrip.moneda ?? 'USD';
+                    const totalEnMoneda = tarifa * (peso / 1000);
+                    const totalUSD = moneda === 'USD' ? totalEnMoneda : totalEnMoneda / tc;
+                    const totalUYU = moneda === 'UYU' ? totalEnMoneda : totalEnMoneda * tc;
+
+                    if (peso === 0 || tarifa === 0) {
+                      return (
+                        <p className="text-xs italic text-slate-400">
+                          Completá peso y tarifa para ver el total
+                        </p>
+                      );
+                    }
+
+                    return (
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-xs">
+                        <p className="font-semibold text-[var(--text-primary)]">Total del servicio:</p>
+                        <p className="font-mono text-[var(--accent-emerald)]">
+                          USD {totalUSD.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                        </p>
+                        <p className="font-mono text-[var(--accent-amber)]">
+                          $ {totalUYU.toLocaleString('es-UY', { maximumFractionDigits: 0 })} UYU
+                        </p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="md:col-span-2 flex justify-end gap-2 border-t border-slate-100 pt-4">
             <button
               type="button"
@@ -670,7 +779,10 @@ export const TripManager: React.FC<TripManagerProps> = ({
 
       <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] text-sm">
+          <table
+            className="w-full min-w-[880px] text-sm"
+            aria-label={`Listado de viajes — totales en ${displayCurrency === 'UYU' ? 'pesos uruguayos' : 'dólares'}`}
+          >
             <thead>
               <tr
                 className="border-b border-[var(--border)]"
@@ -705,7 +817,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                   align="center"
                 />
                 <SortableHeader
-                  label="Tarifa"
+                  label="Tarifa / Total"
                   column="tarifa"
                   currentColumn={sort.column}
                   direction={sort.direction}
@@ -737,7 +849,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
             <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
               {pageSlice.map((trip, i) => {
                 const c = sumCostsForTrip(costs, trip.id);
-                const rev = tripRevenue(trip);
+                const rev = tripRevenueUsd(trip);
                 const hasCosts = costs.some((x) => x.tripId === trip.id);
                 const margin = hasCosts ? rev - c : null;
                 const uploadingThis = uploadLoading && uploadTripId === trip.id;
@@ -774,8 +886,21 @@ export const TripManager: React.FC<TripManagerProps> = ({
                     <td className="px-4 py-3 text-center">
                       <Badge status={trip.estado} />
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
-                      ${trip.tarifa}
+                    <td className="px-4 py-3 text-right text-xs">
+                      <div>
+                        <p className="font-medium text-[var(--text-primary)]">
+                          {trip.moneda ?? 'USD'} {trip.tarifa}/ton
+                        </p>
+                        <p className="text-[var(--text-muted)]">
+                          {formatAmount(
+                            convertToDisplay(
+                              trip.tarifa * (trip.pesoKg / 1000),
+                              trip.moneda ?? 'USD',
+                              trip.tipoCambio ?? currentRate
+                            )
+                          )}
+                        </p>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right text-xs">
                       {margin !== null ? (
@@ -784,7 +909,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                             color: margin >= 0 ? 'var(--accent-emerald)' : 'var(--accent-red)',
                           }}
                         >
-                          ${margin.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                          {formatAmount(convertAggregateToDisplay(margin))}
                         </span>
                       ) : (
                         <span className="text-[var(--text-muted)]">—</span>

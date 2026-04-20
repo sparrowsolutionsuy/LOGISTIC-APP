@@ -1,5 +1,7 @@
 import React from 'react';
 import type { Cost, CostCategory } from '../../types';
+import { DEFAULT_EXCHANGE_RATE } from '../../constants';
+import { costUsd } from '../../utils/analytics';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 
@@ -28,6 +30,9 @@ export const CostsPanel: React.FC<CostsPanelProps> = ({
         categoria,
         descripcion: 'Costo de prueba (local)',
         monto: 150,
+        moneda: 'USD',
+        tipoCambio: DEFAULT_EXCHANGE_RATE,
+        montoUSD: 150,
         registradoPor,
       });
     })();
@@ -47,14 +52,25 @@ export const CostsPanel: React.FC<CostsPanelProps> = ({
             <div className="min-w-0">
               <span className="font-medium text-[var(--text-primary)]">{c.descripcion}</span>
               <span className="ml-2 text-xs text-[var(--text-muted)]">
-                {c.categoria} · USD {c.monto.toLocaleString('es-UY')}
+                {c.categoria} · USD {costUsd(c).toLocaleString('es-UY')}
               </span>
             </div>
             <div className="flex gap-1">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => void onUpdateCost({ ...c, monto: c.monto + 10 })}
+                onClick={() => {
+                  const tc = c.tipoCambio ?? DEFAULT_EXCHANGE_RATE;
+                  const mon = c.moneda ?? 'USD';
+                  const nextUsd = (c.montoUSD ?? costUsd(c)) + 10;
+                  void onUpdateCost({
+                    ...c,
+                    moneda: mon,
+                    tipoCambio: tc,
+                    monto: mon === 'UYU' ? nextUsd * tc : nextUsd,
+                    montoUSD: nextUsd,
+                  });
+                }}
               >
                 +10
               </Button>
