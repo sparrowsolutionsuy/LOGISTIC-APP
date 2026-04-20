@@ -41,6 +41,7 @@ export const ROUTE_NAMES: Record<ActiveTab, string> = {
   clients: 'Directorio Clientes',
   newClient: 'Nuevo Cliente',
   billing: 'Facturación',
+  report: 'Reporte IA',
 };
 
 export const STATUS_COLORS: Record<
@@ -132,6 +133,12 @@ const MOCK_TRIPS: Trip[] = [
     origen: 'Mercedes',
     destino: 'Montevideo',
     facturaUrl: 'https://drive.google.com/file/d/example-mvd-001/view',
+    remitoUrl: 'https://drive.google.com/file/d/remito-mvd-001/view',
+    facturaGenerada: true,
+    facturaSolicitada: true,
+    facturaFechaSolicitud: '2026-01-10',
+    facturaCobrada: true,
+    facturaFechaCobro: '2026-01-12',
   },
   {
     id: 'V2026-002',
@@ -144,6 +151,7 @@ const MOCK_TRIPS: Trip[] = [
     tarifa: 46,
     origen: 'Salto',
     destino: 'Nueva Palmira',
+    remitoUrl: 'https://drive.google.com/file/d/remito-sal-002/view',
   },
   {
     id: 'V2026-003',
@@ -182,6 +190,7 @@ const MOCK_TRIPS: Trip[] = [
     tarifa: 36,
     origen: 'Durazno',
     destino: 'Montevideo',
+    facturaGenerada: true,
   },
   {
     id: 'V2026-006',
@@ -194,6 +203,10 @@ const MOCK_TRIPS: Trip[] = [
     tarifa: 43,
     origen: 'Paysandú',
     destino: 'Salto',
+    facturaUrl: 'https://drive.google.com/file/d/example-sal-006/view',
+    facturaGenerada: true,
+    facturaSolicitada: true,
+    facturaFechaSolicitud: '2026-03-07',
   },
   {
     id: 'V2026-007',

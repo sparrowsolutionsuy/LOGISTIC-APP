@@ -15,8 +15,16 @@ import {
   Cell,
 } from 'recharts';
 import type { Client, Cost, Trip } from '../../types';
-import { buildKPIData, buildMonthlyStats, enrichTrips, getCostsByCategory } from '../../utils/analytics';
+import {
+  buildKPIData,
+  buildMonthlyStats,
+  enrichTrips,
+  getCostsByCategory,
+  tripRevenueRealized,
+  tripRevenueUsd,
+} from '../../utils/analytics';
 import type { CostCategory } from '../../types';
+import { getBillingStatus, getBillingStatusLabel } from '../../utils/billing';
 
 const COL = {
   ingreso: '#10b981',
@@ -40,10 +48,6 @@ const CATEGORY_FILL: Record<CostCategory, string> = {
 };
 
 type FinTab = 'resumen' | 'ingresos' | 'costos' | 'rentabilidad';
-
-function tripRevenue(t: Trip): number {
-  return t.tarifa * (t.pesoKg / 1000);
-}
 
 function sumCostsForTrip(costs: Cost[], tripId: string): number {
   return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + c.monto, 0);
@@ -114,19 +118,21 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     [monthly]
   );
 
+  const cobradosTrips = useMemo(() => trips.filter((t) => t.facturaCobrada === true), [trips]);
+
   const totalHistoricRevenue = useMemo(
-    () => trips.reduce((s, t) => s + tripRevenue(t), 0),
-    [trips]
+    () => cobradosTrips.reduce((s, t) => s + tripRevenueRealized(t), 0),
+    [cobradosTrips]
   );
   const avgRevenuePerTrip = useMemo(
-    () => (trips.length > 0 ? totalHistoricRevenue / trips.length : 0),
-    [trips.length, totalHistoricRevenue]
+    () => (cobradosTrips.length > 0 ? totalHistoricRevenue / cobradosTrips.length : 0),
+    [cobradosTrips.length, totalHistoricRevenue]
   );
 
   const revenueByClient = useMemo(() => {
     const m = new Map<string, number>();
-    trips.forEach((t) => {
-      const r = tripRevenue(t);
+    cobradosTrips.forEach((t) => {
+      const r = tripRevenueRealized(t);
       m.set(t.clientId, (m.get(t.clientId) ?? 0) + r);
     });
     return Array.from(m.entries())
@@ -136,7 +142,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       }))
       .filter((x) => x.value > 0)
       .sort((a, b) => b.value - a.value);
-  }, [trips, clients]);
+  }, [cobradosTrips, clients]);
 
   const bestClientHistoric = useMemo(() => {
     const top = revenueByClient[0];
@@ -172,22 +178,32 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
   );
 
   const top5Routes = useMemo(() => {
-    const m = new Map<string, { revenue: number; cost: number }>();
+    const m = new Map<string, { revenue: number; pending: number; cost: number }>();
     trips.forEach((t) => {
       const key = `${t.origen} → ${t.destino}`;
-      const cur = m.get(key) ?? { revenue: 0, cost: 0 };
-      cur.revenue += tripRevenue(t);
+      const cur = m.get(key) ?? { revenue: 0, pending: 0, cost: 0 };
+      if (t.facturaCobrada === true) {
+        cur.revenue += tripRevenueRealized(t);
+      } else if (t.estado === 'Completado' || t.estado === 'Cerrado') {
+        cur.pending += tripRevenueUsd(t);
+      }
       cur.cost += sumCostsForTrip(costs, t.id);
       m.set(key, cur);
     });
     return Array.from(m.entries())
-      .map(([route, v]) => ({
-        route,
-        revenue: v.revenue,
-        cost: v.cost,
-        margin: v.revenue - v.cost,
-        marginPct: v.revenue > 0 ? ((v.revenue - v.cost) / v.revenue) * 100 : 0,
-      }))
+      .map(([route, v]) => {
+        const gross = v.revenue + v.pending;
+        const margin = gross - v.cost;
+        const marginPct = gross > 0 ? (margin / gross) * 100 : 0;
+        return {
+          route,
+          revenue: v.revenue,
+          pending: v.pending,
+          cost: v.cost,
+          margin,
+          marginPct,
+        };
+      })
       .sort((a, b) => b.margin - a.margin)
       .slice(0, 5);
   }, [trips, costs]);
@@ -271,7 +287,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">Rentabilidad por viaje</h3>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-sm">
+              <table className="w-full min-w-[820px] text-sm">
                 <thead>
                   <tr style={{ backgroundColor: 'var(--bg-elevated)' }}>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
@@ -281,7 +297,10 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                       Cliente
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                      Ingreso
+                      Ingreso cobrado
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Estado cobro
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
                       Costos
@@ -296,8 +315,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 </thead>
                 <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                   {enriched.map((row, i) => {
-                    const rev = tripRevenue(row);
+                    const rev = row.revenueRealized;
                     const pct = row.marginPct;
+                    const st = getBillingStatus(row);
                     return (
                       <tr
                         key={row.id}
@@ -309,6 +329,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                         <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{row.id}</td>
                         <td className="px-4 py-3 text-[var(--text-primary)]">{row.clientName}</td>
                         <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(rev)}</td>
+                        <td className="px-4 py-3 text-left text-xs font-medium text-[var(--text-secondary)]">
+                          {getBillingStatusLabel(st)}
+                        </td>
                         <td className="px-4 py-3 text-right text-[var(--text-primary)]">
                           {formatUsd(row.totalCosts)}
                         </td>
@@ -480,7 +503,10 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                       Ruta
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                      Ingresos
+                      Ingresos (cobrado)
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Pendiente
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
                       Costos
@@ -494,7 +520,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-                  {top5Routes.map((r, i) => (
+                  {top5Routes.map((r, i) => {
+                    const gross = r.revenue + r.pending;
+                    return (
                     <tr
                       key={r.route}
                       style={{
@@ -504,15 +532,17 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                     >
                       <td className="px-4 py-3 font-medium text-[var(--text-primary)]">{r.route}</td>
                       <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(r.revenue)}</td>
+                      <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(r.pending)}</td>
                       <td className="px-4 py-3 text-right text-[var(--text-primary)]">{formatUsd(r.cost)}</td>
                       <td className="px-4 py-3 text-right" style={{ color: 'var(--accent-blue)' }}>
                         {formatUsd(r.margin)}
                       </td>
-                      <td className="px-4 py-3 text-right" style={marginRowStyle(r.marginPct, r.revenue)}>
-                        {r.revenue > 0 ? `${r.marginPct.toFixed(1)}%` : '—'}
+                      <td className="px-4 py-3 text-right" style={marginRowStyle(r.marginPct, gross)}>
+                        {gross > 0 ? `${r.marginPct.toFixed(1)}%` : '—'}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

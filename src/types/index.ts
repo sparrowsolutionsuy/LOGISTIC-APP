@@ -44,7 +44,19 @@ export interface Trip {
   remitoUrl?: string;
   /** Usuario operativo asignado (viajes visibles solo para ese usuario). */
   asignadoA?: string;
+  /** Factura PDF creada en app externa. */
+  facturaGenerada?: boolean;
+  /** Mail enviado al cliente solicitando pago. */
+  facturaSolicitada?: boolean;
+  /** ISO date: cuándo se envió el mail de solicitud. */
+  facturaFechaSolicitud?: string;
+  /** Dinero recibido. */
+  facturaCobrada?: boolean;
+  /** ISO date: cuándo se cobró. */
+  facturaFechaCobro?: string;
 }
+
+export type BillingStatus = 'pendiente' | 'generada' | 'solicitada' | 'cobrada';
 
 export type RemitoConfidenceLevel = 'high' | 'medium' | 'low';
 
@@ -85,6 +97,8 @@ export interface Cost {
 export interface TripWithMetrics extends Trip {
   clientName: string;
   totalCosts: number;
+  /** Ingreso contabilizado solo si el viaje está cobrado (mismo criterio que KPIs). */
+  revenueRealized: number;
   netMargin: number;
   marginPct: number;
 }
@@ -92,7 +106,10 @@ export interface TripWithMetrics extends Trip {
 export interface MonthlyStats {
   month: string;
   label: string;
+  /** Ingresos realizados (solo viajes con `facturaCobrada` en ese mes). */
   revenue: number;
+  /** Ingreso bruto pendiente de cobro (Completado/Cerrado sin cobrar, fecha del viaje en el mes). */
+  pendingRevenue: number;
   costs: number;
   margin: number;
   marginPct: number;
@@ -109,6 +126,10 @@ export interface KPIData {
   pendingTrips: number;
   avgRevenuePerTrip: number;
   topClient: { name: string; revenue: number } | null;
+  /** Suma de ingreso bruto (trip tarifa × ton) en viajes terminados aún no cobrados. */
+  pendingRevenue: number;
+  /** Igual a `totalRevenueMTD` (ingresos realizados en el mes MTD). */
+  realizedRevenue: number;
 }
 
 // === UI STATE ===
@@ -120,7 +141,8 @@ export type ActiveTab =
   | 'financial'
   | 'clients'
   | 'newClient'
-  | 'billing';
+  | 'billing'
+  | 'report';
 
 export interface AppState {
   user: User | null;

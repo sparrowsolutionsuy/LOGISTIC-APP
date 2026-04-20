@@ -37,7 +37,25 @@ export function normalizeTrip(row: unknown): Trip {
       r.asignadoA != null && String(r.asignadoA).trim() !== ''
         ? String(r.asignadoA).trim()
         : undefined,
+    ...(normalizeBillingFlags(r) as Partial<Pick<Trip, 'facturaGenerada' | 'facturaSolicitada' | 'facturaCobrada'>>),
+    ...(r.facturaFechaSolicitud ? { facturaFechaSolicitud: String(r.facturaFechaSolicitud) } : {}),
+    ...(r.facturaFechaCobro ? { facturaFechaCobro: String(r.facturaFechaCobro) } : {}),
   };
+}
+
+function normalizeBillingFlags(row: Record<string, unknown>): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  const truthy = (v: unknown) => v === true || String(v).toUpperCase() === 'TRUE';
+  if ('facturaGenerada' in row) {
+    out.facturaGenerada = truthy(row.facturaGenerada);
+  }
+  if ('facturaSolicitada' in row) {
+    out.facturaSolicitada = truthy(row.facturaSolicitada);
+  }
+  if ('facturaCobrada' in row) {
+    out.facturaCobrada = truthy(row.facturaCobrada);
+  }
+  return out;
 }
 
 export function normalizeClient(row: unknown): Client {

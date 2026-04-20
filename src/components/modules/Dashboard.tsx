@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   XAxis,
   YAxis,
@@ -14,7 +14,6 @@ import {
 import type { TooltipProps } from 'recharts';
 import type { Client, Cost, KPIData, Trip, TripWithMetrics, User } from '../../types';
 import { buildKPIData, buildMonthlyStats, enrichTrips } from '../../utils/analytics';
-import { generateLogisticsInsights } from '../../services/geminiService';
 import {
   DollarSign,
   Truck,
@@ -23,8 +22,9 @@ import {
   Sparkles,
   CheckCircle2,
   Clock,
-  Loader2,
+  Banknote,
 } from 'lucide-react';
+import { Button } from '../ui/Button';
 
 export interface DashboardProps {
   trips: Trip[];
@@ -36,6 +36,8 @@ export interface DashboardProps {
   /** Opcional: evita recalcular en el hijo si el padre ya memoizó. */
   enrichedTrips?: TripWithMetrics[];
   kpiPrecomputed?: KPIData;
+  /** Admin: abre el reporte de rendimiento con IA (pestaña oculta del menú). */
+  onNavigateToReport?: () => void;
 }
 
 function localISODate(d: Date): string {
@@ -99,7 +101,8 @@ const KpiCard: React.FC<{
   value: string;
   icon: React.ReactNode;
   bg: string;
-}> = ({ title, value, icon, bg }) => (
+  sub?: string;
+}> = ({ title, value, icon, bg, sub }) => (
   <div
     className={`${bg} rounded-lg p-4 text-white shadow-lg transition-colors duration-150 md:hover:scale-[1.01]`}
   >
@@ -107,6 +110,7 @@ const KpiCard: React.FC<{
       <div className="min-w-0 flex-1">
         <p className="mb-1 text-xs font-medium text-white/80 sm:text-sm">{title}</p>
         <h3 className="truncate text-xl font-bold sm:text-2xl">{value}</h3>
+        {sub ? <p className="mt-1 text-[10px] font-medium leading-snug text-white/75 sm:text-xs">{sub}</p> : null}
       </div>
       <div className="shrink-0 rounded-lg bg-white/10 p-2 backdrop-blur-sm">{icon}</div>
     </div>
@@ -121,11 +125,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onUpdateTrip,
   enrichedTrips: enrichedTripsProp,
   kpiPrecomputed,
+  onNavigateToReport,
 }) => {
   const isAdmin = user.role === 'admin';
   const [chartsReady, setChartsReady] = useState(false);
-  const [iaLoading, setIaLoading] = useState(false);
-  const [iaLines, setIaLines] = useState<string[]>([]);
 
   useEffect(() => {
     setChartsReady(false);
@@ -152,7 +155,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     () =>
       monthly.map((row) => ({
         label: row.label,
-        Ingresos: row.revenue,
+        ingresosRealizados: row.revenue,
+        ingresosPendientes: row.pendingRevenue,
         Costos: row.costs,
       })),
     [monthly]
@@ -194,19 +198,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     [trips, user.username]
   );
 
-  const handleGenerarIA = useCallback(async () => {
-    setIaLoading(true);
-    try {
-      const lines = await generateLogisticsInsights(trips, clients);
-      setIaLines(lines.slice(0, 3));
-    } catch (e) {
-      console.error(e);
-      setIaLines([]);
-    } finally {
-      setIaLoading(false);
-    }
-  }, [trips, clients]);
-
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
@@ -218,17 +209,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       {isAdmin ? (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
             <KpiCard
               title="Ingresos MTD"
               value={formatUsd(kpi.totalRevenueMTD)}
+              sub="Solo viajes cobrados"
               icon={<Wallet className="h-6 w-6 text-emerald-100" />}
               bg="bg-emerald-700"
             />
             <KpiCard
+              title="Ingresos pendientes"
+              value={formatUsd(kpi.pendingRevenue)}
+              sub="Por cobrar"
+              icon={<Banknote className="h-6 w-6 text-amber-100" />}
+              bg="bg-amber-700"
+            />
+            <KpiCard
               title="Costos MTD"
               value={formatUsd(kpi.totalCostsMTD)}
-              icon={<DollarSign className="h-6 w-6 text-amber-100" />}
+              icon={<DollarSign className="h-6 w-6 text-slate-100" />}
               bg="bg-slate-700"
             />
             <KpiCard
@@ -258,9 +257,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={areaData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                         <defs>
-                          <linearGradient id="dashIng" x1="0" y1="0" x2="0" y2="1">
+                          <linearGradient id="dashIngReal" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#059669" stopOpacity={0.35} />
                             <stop offset="95%" stopColor="#059669" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="dashIngPend" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#d97706" stopOpacity={0.28} />
+                            <stop offset="95%" stopColor="#d97706" stopOpacity={0} />
                           </linearGradient>
                           <linearGradient id="dashCost" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#dc2626" stopOpacity={0.3} />
@@ -274,10 +277,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         <Area
                           type="monotone"
-                          dataKey="Ingresos"
-                          name="Ingresos"
+                          dataKey="ingresosRealizados"
+                          name="Ingresos (realizados)"
                           stroke="#059669"
-                          fill="url(#dashIng)"
+                          fill="url(#dashIngReal)"
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="ingresosPendientes"
+                          name="Ingresos (pendientes)"
+                          stroke="#d97706"
+                          strokeDasharray="4 2"
+                          fill="url(#dashIngPend)"
                         />
                         <Area
                           type="monotone"
@@ -319,19 +330,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-base font-semibold text-slate-800">Top 5 viajes recientes</h2>
-              <button
-                type="button"
-                onClick={() => void handleGenerarIA()}
-                disabled={iaLoading || trips.length === 0}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {iaLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Sparkles className="h-4 w-4" />
-                )}
-                Generar insights IA
-              </button>
+              {onNavigateToReport ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Sparkles size={14} aria-hidden />}
+                  disabled={trips.length === 0}
+                  onClick={() => onNavigateToReport()}
+                >
+                  Ver reporte de rendimiento
+                </Button>
+              ) : null}
             </div>
 
             {!chartsReady ? (
@@ -377,8 +386,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{t.id}</td>
                             <td className="px-4 py-3 text-[var(--text-primary)]">{t.fecha}</td>
                             <td className="px-4 py-3 text-[var(--text-primary)]">{t.estado}</td>
-                            <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
-                              {m ? formatUsd(m.netMargin) : '—'}
+                            <td
+                              className="px-4 py-3 text-right font-medium text-[var(--text-primary)]"
+                              title={t.facturaCobrada ? undefined : 'No cobrado aún'}
+                            >
+                              {t.facturaCobrada === true && m ? formatUsd(m.netMargin) : '—'}
                             </td>
                           </tr>
                         );
@@ -389,32 +401,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             )}
 
-            {(iaLoading || iaLines.length > 0) && (
-              <div className="mt-6 border-t border-slate-100 pt-6">
-                <h3 className="mb-3 text-sm font-semibold text-slate-700">Insights generados</h3>
-                {iaLoading ? (
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <div key={i} className="h-24 animate-pulse rounded-lg bg-slate-100" />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {iaLines.map((text, i) => (
-                      <div
-                        key={i}
-                        className="rounded-lg border border-indigo-100 bg-indigo-50/80 p-4 text-sm text-slate-800 shadow-sm"
-                      >
-                        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-indigo-700">
-                          Insight {i + 1}
-                        </p>
-                        <p>{text}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </>
       ) : (

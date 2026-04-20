@@ -1,7 +1,29 @@
 import type { Client, Cost, KPIData, MonthlyStats, Trip, TripWithMetrics } from '../types';
 
-function tripRevenueUsd(trip: Trip): number {
+/** Ingreso bruto del viaje (tarifa × tonelada), sin filtrar por cobro. */
+export function tripRevenueUsd(trip: Trip): number {
   return trip.tarifa * (trip.pesoKg / 1000);
+}
+
+/** Ingreso contabilizado en KPIs: solo si el viaje está marcado como cobrado. */
+export function tripRevenueRealized(trip: Trip): number {
+  return trip.facturaCobrada === true ? tripRevenueUsd(trip) : 0;
+}
+
+function isFinishedTrip(t: Trip): boolean {
+  return t.estado === 'Completado' || t.estado === 'Cerrado';
+}
+
+/** Mes YYYY-MM usado para atribuir ingreso realizado (cobro) al P&L mensual. */
+function realizedMonthKey(trip: Trip): string | null {
+  if (trip.facturaCobrada !== true) {
+    return null;
+  }
+  const raw = trip.facturaFechaCobro?.trim();
+  if (raw && raw.length >= 7) {
+    return raw.slice(0, 7);
+  }
+  return trip.fecha.slice(0, 7);
 }
 
 function sumCostsForTrip(costs: Cost[], tripId: string): number {
@@ -28,6 +50,11 @@ function latestYearMonthKey(trips: Trip[], costs: Cost[]): string | null {
   };
   trips.forEach((t) => consider(t.fecha));
   costs.forEach((c) => consider(c.fecha));
+  trips.forEach((t) => {
+    if (t.facturaFechaCobro) {
+      consider(t.facturaFechaCobro);
+    }
+  });
   return best;
 }
 
@@ -59,19 +86,22 @@ const EMPTY_KPI: KPIData = {
   pendingTrips: 0,
   avgRevenuePerTrip: 0,
   topClient: null,
+  pendingRevenue: 0,
+  realizedRevenue: 0,
 };
 
 export function enrichTrips(trips: Trip[], clients: Client[], costs: Cost[]): TripWithMetrics[] {
   return trips.map((trip) => {
     const client = clients.find((c) => c.id === trip.clientId);
-    const revenue = tripRevenueUsd(trip);
+    const revenueRealized = tripRevenueRealized(trip);
     const totalCosts = sumCostsForTrip(costs, trip.id);
-    const netMargin = revenue - totalCosts;
-    const marginPct = revenue > 0 ? (netMargin / revenue) * 100 : 0;
+    const netMargin = revenueRealized - totalCosts;
+    const marginPct = revenueRealized > 0 ? (netMargin / revenueRealized) * 100 : 0;
     return {
       ...trip,
       clientName: client?.nombreComercial ?? 'Desconocido',
       totalCosts,
+      revenueRealized,
       netMargin,
       marginPct,
     };
@@ -96,7 +126,14 @@ export function buildMonthlyStats(trips: Trip[], costs: Cost[], months = 6): Mon
 
   return keys.map((month) => {
     const monthTrips = trips.filter((t) => t.fecha.startsWith(month));
-    const revenue = monthTrips.reduce((acc, t) => acc + tripRevenueUsd(t), 0);
+    const revenue = trips
+      .filter((t) => realizedMonthKey(t) === month)
+      .reduce((acc, t) => acc + tripRevenueRealized(t), 0);
+
+    const pendingRevenue = monthTrips
+      .filter((t) => isFinishedTrip(t) && t.facturaCobrada !== true)
+      .reduce((acc, t) => acc + tripRevenueUsd(t), 0);
+
     const ids = tripIdsByMonth.get(month) ?? new Set<string>();
     const costSum = costs
       .filter((c) => c.fecha.startsWith(month) && (c.tripId === null || ids.has(c.tripId)))
@@ -109,6 +146,7 @@ export function buildMonthlyStats(trips: Trip[], costs: Cost[], months = 6): Mon
       month,
       label: monthLabel(month),
       revenue,
+      pendingRevenue,
       costs: costSum,
       margin,
       marginPct,
@@ -125,11 +163,18 @@ export function buildKPIData(trips: Trip[], clients: Client[], costs: Cost[]): K
   }
 
   const mtdTrips = trips.filter((t) => t.fecha.startsWith(mtdKey));
-  const totalRevenueMTD = mtdTrips.reduce((acc, t) => acc + tripRevenueUsd(t), 0);
   const tripIds = new Set(mtdTrips.map((t) => t.id));
   const totalCostsMTD = costs
     .filter((c) => c.tripId !== null && tripIds.has(c.tripId))
     .reduce((acc, c) => acc + c.monto, 0);
+
+  const cobradosMtd = trips.filter((t) => realizedMonthKey(t) === mtdKey);
+  const totalRevenueMTD = cobradosMtd.reduce((acc, t) => acc + tripRevenueRealized(t), 0);
+  const realizedRevenue = totalRevenueMTD;
+
+  const pendingRevenue = trips
+    .filter((t) => isFinishedTrip(t) && t.facturaCobrada !== true)
+    .reduce((acc, t) => acc + tripRevenueUsd(t), 0);
 
   const netMarginMTD = totalRevenueMTD - totalCostsMTD;
   const marginPctMTD = totalRevenueMTD > 0 ? (netMarginMTD / totalRevenueMTD) * 100 : 0;
@@ -137,11 +182,12 @@ export function buildKPIData(trips: Trip[], clients: Client[], costs: Cost[]): K
   const activeTrips = trips.filter((t) => t.estado === 'En Tránsito').length;
   const pendingTrips = trips.filter((t) => t.estado === 'Pendiente').length;
 
-  const avgRevenuePerTrip = mtdTrips.length > 0 ? totalRevenueMTD / mtdTrips.length : 0;
+  const avgRevenuePerTrip =
+    cobradosMtd.length > 0 ? totalRevenueMTD / cobradosMtd.length : 0;
 
   const revenueByClient = new Map<string, number>();
-  mtdTrips.forEach((t) => {
-    const rev = tripRevenueUsd(t);
+  cobradosMtd.forEach((t) => {
+    const rev = tripRevenueRealized(t);
     revenueByClient.set(t.clientId, (revenueByClient.get(t.clientId) ?? 0) + rev);
   });
 
@@ -162,6 +208,8 @@ export function buildKPIData(trips: Trip[], clients: Client[], costs: Cost[]): K
     pendingTrips,
     avgRevenuePerTrip,
     topClient,
+    pendingRevenue,
+    realizedRevenue,
   };
 }
 
@@ -172,7 +220,7 @@ export function getTopRoutes(
   const map = new Map<string, { count: number; revenue: number }>();
   trips.forEach((t) => {
     const route = `${t.origen} → ${t.destino}`;
-    const rev = tripRevenueUsd(t);
+    const rev = tripRevenueRealized(t);
     const cur = map.get(route) ?? { count: 0, revenue: 0 };
     map.set(route, { count: cur.count + 1, revenue: cur.revenue + rev });
   });

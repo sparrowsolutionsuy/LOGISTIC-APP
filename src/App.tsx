@@ -8,6 +8,7 @@ import { ClientForm } from './components/modules/ClientForm';
 import { BillingView } from './components/modules/BillingView';
 import { Login } from './components/modules/Login';
 import { FinancialDashboard } from './components/modules/FinancialDashboard';
+import { PerformanceReport } from './components/modules/PerformanceReport';
 import { CostManager } from './components/modules/CostManager';
 import { AppShell } from './components/layout/AppShell';
 import { AdminGuard } from './components/layout/AdminGuard';
@@ -31,7 +32,14 @@ import { useToast } from './hooks/useToast';
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
 
-const ADMIN_ONLY_TABS = new Set<ActiveTab>(['costs', 'financial', 'billing', 'clients', 'newClient']);
+const ADMIN_ONLY_TABS = new Set<ActiveTab>([
+  'costs',
+  'financial',
+  'billing',
+  'clients',
+  'newClient',
+  'report',
+]);
 
 function parseStoredUser(raw: string | null): User | null {
   if (!raw) {
@@ -281,7 +289,19 @@ const App: React.FC = () => {
           costs={costs}
           user={user}
           onUpdateTrip={onUpdateTrip}
+          onNavigateToReport={() => setActiveTab('report')}
         />
+      )}
+      {activeTab === 'report' && (
+        <AdminGuard user={user} onRedirect={adminRedirect}>
+          <PerformanceReport
+            trips={trips}
+            clients={clients}
+            costs={costs}
+            user={user}
+            onClose={() => setActiveTab('dashboard')}
+          />
+        </AdminGuard>
       )}
       {activeTab === 'trips' && (
         <TripManager
@@ -310,7 +330,12 @@ const App: React.FC = () => {
       )}
       {activeTab === 'billing' && (
         <AdminGuard user={user} onRedirect={adminRedirect}>
-          <BillingView trips={trips} clients={clients} onInvoiceUploaded={onUploadInvoice} />
+          <BillingView
+            trips={trips}
+            clients={clients}
+            onInvoiceUploaded={onUploadInvoice}
+            onUpdateTrip={onUpdateTrip}
+          />
         </AdminGuard>
       )}
       {activeTab === 'costs' && (
