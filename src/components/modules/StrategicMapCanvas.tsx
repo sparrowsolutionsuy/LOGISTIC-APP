@@ -24,13 +24,18 @@ function activeTripsTowardClient(clientId: string, trips: Trip[]): number {
   ).length;
 }
 
-function clientMarkerIcon(hasActive: boolean): L.DivIcon {
-  const color = hasActive ? '#16a34a' : '#64748b';
+function clientMarkerIcon(hasActive: boolean, isSelected: boolean): L.DivIcon {
+  const color = isSelected ? '#2563eb' : hasActive ? '#16a34a' : '#64748b';
+  const size = isSelected ? 24 : 18;
+  const ring = isSelected
+    ? 'box-shadow:0 0 0 3px rgba(37,99,235,0.35),0 1px 4px rgba(0,0,0,.35)'
+    : 'box-shadow:0 1px 4px rgba(0,0,0,.35)';
+  const outer = size + 4;
   return L.divIcon({
     className: 'gdc-leaflet-div-icon',
-    html: `<div style="width:18px;height:18px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)"></div>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
+    html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid #fff;${ring};transition:all 0.2s"></div>`,
+    iconSize: [outer, outer],
+    iconAnchor: [outer / 2, outer / 2],
   });
 }
 
@@ -56,6 +61,7 @@ export interface StrategicMapCanvasProps {
   trips: Trip[];
   flyTarget: { lat: number; lng: number } | null;
   flyToken: number;
+  selectedClientId?: string | null;
 }
 
 const StrategicMapCanvas: React.FC<StrategicMapCanvasProps> = ({
@@ -63,6 +69,7 @@ const StrategicMapCanvas: React.FC<StrategicMapCanvasProps> = ({
   trips,
   flyTarget,
   flyToken,
+  selectedClientId = null,
 }) => {
   return (
     <MapContainer
@@ -84,7 +91,7 @@ const StrategicMapCanvas: React.FC<StrategicMapCanvasProps> = ({
           <Marker
             key={client.id}
             position={[client.latitud, client.longitud]}
-            icon={clientMarkerIcon(hasActive)}
+            icon={clientMarkerIcon(hasActive, client.id === selectedClientId)}
           >
             <Popup>
               <div className="min-w-[200px] text-slate-800">
