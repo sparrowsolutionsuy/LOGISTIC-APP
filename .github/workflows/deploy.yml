@@ -37,6 +37,30 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Verify Vite secrets (falla si VITE_SHEET_URL vacío)
+        env:
+          VITE_SHEET_URL: ${{ secrets.VITE_SHEET_URL }}
+        run: |
+          LEN="${#VITE_SHEET_URL}"
+          echo "VITE_SHEET_URL length (chars): $LEN"
+          if [ "$LEN" -lt 20 ]; then
+            echo "::error::El secret VITE_SHEET_URL está vacío o es demasiado corto. Agregalo en Settings → Secrets and variables → Actions (nombre exacto: VITE_SHEET_URL). Si usás Environment github-pages, duplicá el secret ahí también."
+            exit 1
+          fi
+
+      - name: Write .env.production.local for Vite build
+        env:
+          VITE_SHEET_URL: ${{ secrets.VITE_SHEET_URL }}
+          VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
+          VITE_DRIVE_FOLDER_REMITOS: ${{ secrets.VITE_DRIVE_FOLDER_REMITOS }}
+          VITE_DRIVE_FOLDER_FACTURAS: ${{ secrets.VITE_DRIVE_FOLDER_FACTURAS }}
+        run: |
+          : > .env.production.local
+          printf '%s\n' "VITE_SHEET_URL=${VITE_SHEET_URL}" >> .env.production.local
+          printf '%s\n' "VITE_GEMINI_API_KEY=${VITE_GEMINI_API_KEY}" >> .env.production.local
+          printf '%s\n' "VITE_DRIVE_FOLDER_REMITOS=${VITE_DRIVE_FOLDER_REMITOS}" >> .env.production.local
+          printf '%s\n' "VITE_DRIVE_FOLDER_FACTURAS=${VITE_DRIVE_FOLDER_FACTURAS}" >> .env.production.local
+
       - name: Build
         run: npm run build
         env:

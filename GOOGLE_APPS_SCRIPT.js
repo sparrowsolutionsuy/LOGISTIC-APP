@@ -93,7 +93,27 @@ function doGet(e) {
 
   const trips = getSheetData('DB_Viajes');
 
-  return ContentService.createTextOutput(JSON.stringify({ clients, trips }))
+  let costSheet = ss.getSheetByName('DB_Costos');
+  if (!costSheet) {
+    costSheet = ss.insertSheet('DB_Costos');
+    costSheet.appendRow([
+      'id',
+      'fecha',
+      'tripId',
+      'categoria',
+      'descripcion',
+      'monto',
+      'moneda',
+      'tipoCambio',
+      'montoUSD',
+      'scheduledCostId',
+      'comprobante',
+      'registradoPor',
+    ]);
+  }
+  const costs = getSheetData('DB_Costos');
+
+  return ContentService.createTextOutput(JSON.stringify({ clients, trips, costs }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

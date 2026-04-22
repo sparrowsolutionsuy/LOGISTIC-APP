@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .env.local
+.env.production.local
 
 # Editor directories and files
 .cursor/

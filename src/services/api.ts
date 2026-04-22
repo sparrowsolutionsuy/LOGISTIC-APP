@@ -1,10 +1,11 @@
 import type { Client, Cost, Trip, TripStatus, User } from '../types';
 import { DEFAULT_EXCHANGE_RATE, MOCK_DATA } from '../constants';
 
-const SHEET_URL = import.meta.env.VITE_SHEET_URL ?? '';
-const DRIVE_FOLDER_REMITOS = import.meta.env.VITE_DRIVE_FOLDER_REMITOS ?? '';
-const DRIVE_FOLDER_FACTURAS = import.meta.env.VITE_DRIVE_FOLDER_FACTURAS ?? '';
+const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
+const DRIVE_FOLDER_REMITOS = String(import.meta.env.VITE_DRIVE_FOLDER_REMITOS ?? '').trim();
+const DRIVE_FOLDER_FACTURAS = String(import.meta.env.VITE_DRIVE_FOLDER_FACTURAS ?? '').trim();
 
+/** Sin URL de Web App en el build → modo mock local. */
 export const IS_MOCK = !SHEET_URL;
 
 let logisticsFetchUsedMock = false;
@@ -160,9 +161,10 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
   }
 
   try {
-    const response = await fetch(SHEET_URL);
+    const response = await fetch(SHEET_URL, { method: 'GET', mode: 'cors', cache: 'no-store' });
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      const hint = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status} ${response.statusText}${hint ? `: ${hint.slice(0, 200)}` : ''}`);
     }
     const data: unknown = await response.json();
     const record = data as { clients?: unknown; trips?: unknown; costs?: unknown };
@@ -178,9 +180,12 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
       costs: costsRaw.map((row) => normalizeCost(row)),
     };
   } catch (error) {
-    console.error('[GDC API] fetchLogisticsData falló, usando MOCK_DATA.', error);
+    console.error(
+      '[GDC API] fetchLogisticsData falló (no se usa mock para no mezclar datos). Revisá CORS, URL del Web App y despliegue "Cualquier persona".',
+      error
+    );
     logisticsFetchUsedMock = true;
-    return cloneMockData();
+    return { clients: [], trips: [], costs: [] };
   }
 }
 
