@@ -39,6 +39,11 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          VITE_SHEET_URL: ${{ secrets.VITE_SHEET_URL }}
+          VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
+          VITE_DRIVE_FOLDER_REMITOS: ${{ secrets.VITE_DRIVE_FOLDER_REMITOS }}
+          VITE_DRIVE_FOLDER_FACTURAS: ${{ secrets.VITE_DRIVE_FOLDER_FACTURAS }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

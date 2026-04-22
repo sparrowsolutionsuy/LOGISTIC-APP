@@ -2,6 +2,9 @@ import type { Client, Cost, Trip, TripStatus, User } from '../types';
 import { DEFAULT_EXCHANGE_RATE, MOCK_DATA } from '../constants';
 
 const SHEET_URL = import.meta.env.VITE_SHEET_URL ?? '';
+const DRIVE_FOLDER_REMITOS = import.meta.env.VITE_DRIVE_FOLDER_REMITOS ?? '';
+const DRIVE_FOLDER_FACTURAS = import.meta.env.VITE_DRIVE_FOLDER_FACTURAS ?? '';
+
 export const IS_MOCK = !SHEET_URL;
 
 let logisticsFetchUsedMock = false;
@@ -258,7 +261,13 @@ export async function uploadInvoice(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         type: 'uploadInvoice',
-        data: { tripId, fileData, fileName, mimeType },
+        data: {
+          tripId,
+          fileData,
+          fileName,
+          mimeType,
+          folderId: DRIVE_FOLDER_FACTURAS,
+        },
       }),
     });
     const result = (await response.json()) as { status?: string; url?: string };
@@ -290,7 +299,13 @@ export async function uploadRemitoImage(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         type: 'uploadRemito',
-        data: { tripId, fileData, fileName, mimeType },
+        data: {
+          tripId,
+          fileData,
+          fileName,
+          mimeType,
+          folderId: DRIVE_FOLDER_REMITOS,
+        },
       }),
     });
     const result = (await response.json()) as { status?: string; url?: string };

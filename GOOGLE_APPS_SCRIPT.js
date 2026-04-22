@@ -1,11 +1,53 @@
 // -------------------------------------------------------------------------
 // INSTRUCTIONS:
 // 1. Paste this into Extensions > Apps Script in your Google Sheet.
-// 2. IMPORTANT: If you want files to go to a specific Drive Folder, 
-//    replace DriveApp.createFile(blob) with DriveApp.getFolderById('YOUR_ID').createFile(blob)
-// 3. DEPLOY as Web App -> Execute as: Me -> Access: Anyone.
-// 4. Update the URL in services/api.ts
+// 2. Uploads: la app envía folderId (VITE_DRIVE_FOLDER_*); si falla, se usa carpeta por nombre.
+// 3. DEPLOY as Web App -> Execute as: Me -> Access: Anyone (Cualquier persona).
+// 4. URL del Web App en VITE_SHEET_URL (.env.local / GitHub Secrets).
 // -------------------------------------------------------------------------
+
+function getFolderByName(ss, folderName) {
+  const parentFolder = DriveApp.getFileById(ss.getId()).getParents().next();
+  const folders = parentFolder.getFoldersByName(folderName);
+  return folders.hasNext() ? folders.next() : parentFolder.createFolder(folderName);
+}
+
+function uploadFile(data, folderNameFallback, updateSheetFn, sheetName) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const contentType = data.mimeType || 'application/pdf';
+  const decoded = Utilities.base64Decode(data.fileData);
+  const blob = Utilities.newBlob(decoded, contentType, data.fileName);
+
+  var folder;
+  if (data.folderId && data.folderId !== '') {
+    try {
+      folder = DriveApp.getFolderById(data.folderId);
+    } catch (e) {
+      folder = getFolderByName(ss, folderNameFallback);
+    }
+  } else {
+    folder = getFolderByName(ss, folderNameFallback);
+  }
+
+  const file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  const fileUrl = file.getUrl();
+
+  const sheet = ss.getSheetByName(sheetName);
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const idIdx = headers.indexOf('id');
+
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][idIdx]) === String(data.tripId)) {
+      updateSheetFn(sheet, i + 1, headers, fileUrl);
+      break;
+    }
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({ status: 'success', url: fileUrl }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
 
 function doGet(e) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -169,62 +211,29 @@ function doPost(e) {
         }
       }
     } else if (type === 'uploadInvoice') {
-      const contentType = data.mimeType || 'application/pdf';
-      const decoded = Utilities.base64Decode(data.fileData);
-      const blob = Utilities.newBlob(decoded, contentType, data.fileName);
-      
-      const file = DriveApp.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      const fileUrl = file.getUrl();
-      
-      const sheet = ss.getSheetByName('DB_Viajes');
-      const dataRange = sheet.getDataRange();
-      const values = dataRange.getValues();
-      const headers = values[0];
-      
-      const idIndex = headers.indexOf('id');
-      const statusIndex = headers.indexOf('estado');
-      const urlIndex = headers.indexOf('facturaUrl');
-      
-      for (let i = 1; i < values.length; i++) {
-        if (String(values[i][idIndex]) === String(data.tripId)) {
-          sheet.getRange(i + 1, statusIndex + 1).setValue('Cerrado'); 
-          if (urlIndex > -1) {
-            sheet.getRange(i + 1, urlIndex + 1).setValue(fileUrl);
-          }
-          break;
+      return uploadFile(data, 'Facturas', function (sheet, rowNum, headers, fileUrl) {
+        const statusIndex = headers.indexOf('estado');
+        const urlIndex = headers.indexOf('facturaUrl');
+        sheet.getRange(rowNum, statusIndex + 1).setValue('Cerrado');
+        if (urlIndex > -1) {
+          sheet.getRange(rowNum, urlIndex + 1).setValue(fileUrl);
         }
-      }
-      return ContentService.createTextOutput(JSON.stringify({ status: 'success', url: fileUrl }))
-        .setMimeType(ContentService.MimeType.JSON);
+      }, 'DB_Viajes');
 
     } else if (type === 'uploadRemito') {
-      const contentType = data.mimeType || 'image/jpeg';
-      const decoded = Utilities.base64Decode(data.fileData);
-      const blob = Utilities.newBlob(decoded, contentType, data.fileName);
-      const file = DriveApp.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      const fileUrl = file.getUrl();
-
-      const sheet = ss.getSheetByName('DB_Viajes');
-      let values = sheet.getDataRange().getValues();
-      let headers = values[0];
-      let remitoUrlIdx = headers.indexOf('remitoUrl');
-      if (remitoUrlIdx === -1) {
-        sheet.getRange(1, headers.length + 1).setValue('remitoUrl');
-        values = sheet.getDataRange().getValues();
-        headers = values[0];
-        remitoUrlIdx = headers.indexOf('remitoUrl');
+      if (!data.mimeType) {
+        data.mimeType = 'image/jpeg';
       }
-      const idIdx = headers.indexOf('id');
-      for (let i = 1; i < values.length; i++) {
-        if (String(values[i][idIdx]) === String(data.tripId)) {
-          sheet.getRange(i + 1, remitoUrlIdx + 1).setValue(fileUrl);
-          break;
+      return uploadFile(data, 'Remitos', function (sheet, rowNum, headers, fileUrl) {
+        var h = headers;
+        var remitoUrlIdx = h.indexOf('remitoUrl');
+        if (remitoUrlIdx === -1) {
+          sheet.getRange(1, h.length + 1).setValue('remitoUrl');
+          var newHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+          remitoUrlIdx = newHeaders.indexOf('remitoUrl');
         }
-      }
-      return ContentService.createTextOutput(JSON.stringify({ status: 'success', url: fileUrl }))
-        .setMimeType(ContentService.MimeType.JSON);
+        sheet.getRange(rowNum, remitoUrlIdx + 1).setValue(fileUrl);
+      }, 'DB_Viajes');
     }
 
     return ContentService.createTextOutput(JSON.stringify({ status: 'success' }))
