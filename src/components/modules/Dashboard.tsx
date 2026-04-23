@@ -21,7 +21,7 @@ import type {
   TripWithMetrics,
   User,
 } from '../../types';
-import { buildKPIData, buildMonthlyStats, enrichTrips } from '../../utils/analytics';
+import { buildKPIData, buildMonthlyStats, enrichTrips, tripRevenueUsd } from '../../utils/analytics';
 import {
   DollarSign,
   Truck,
@@ -202,6 +202,26 @@ export const Dashboard: React.FC<DashboardProps> = ({
       .slice(0, 5);
   }, [trips]);
 
+  const totalTripsDone = useMemo(
+    () => trips.filter((t) => t.estado === 'Completado' || t.estado === 'Cerrado').length,
+    [trips]
+  );
+
+  const revenueByProduct = useMemo(() => {
+    const byProduct = new Map<string, number>();
+    trips
+      .filter((t) => t.estado === 'Completado' || t.estado === 'Cerrado')
+      .forEach((t) => {
+        const product = t.contenido?.trim() || 'Sin especificar';
+        const revenue = tripRevenueUsd(t);
+        byProduct.set(product, (byProduct.get(product) ?? 0) + revenue);
+      });
+    return Array.from(byProduct.entries())
+      .map(([product, total]) => ({ product, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+  }, [trips]);
+
   const todayStr = useMemo(() => localISODate(new Date()), []);
   const operativoKpis = useMemo(() => {
     const mine = (t: Trip) => !t.asignadoA || t.asignadoA === user.username;
@@ -262,8 +282,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
               bg="bg-cyan-800"
             />
             <KpiCard
-              title="Viajes activos"
-              value={`${kpi.activeTrips}`}
+              title="Viajes realizados"
+              value={`${totalTripsDone}`}
               icon={<Truck className="h-6 w-6 text-blue-100" />}
               bg="bg-blue-900"
             />
@@ -366,7 +386,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="text-base font-semibold text-slate-800">Top 5 viajes recientes</h2>
+              <h2 className="text-base font-semibold text-slate-800">Resumen operativo reciente</h2>
               {onNavigateToReport ? (
                 <Button
                   variant="primary"
@@ -387,57 +407,107 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 ))}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[520px] text-sm">
-                    <thead>
-                      <tr
-                        className="border-b border-[var(--border)]"
-                        style={{ backgroundColor: 'var(--bg-elevated)' }}
-                      >
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                          Viaje
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                          Fecha
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                          Estado
-                        </th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                          Margen
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-                      {topRecent.map((t, i) => {
-                        const m = enrichedById.get(t.id);
-                        return (
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+                  <div className="border-b border-[var(--border)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
+                    Top 5 viajes recientes
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[520px] text-sm">
+                      <thead>
+                        <tr
+                          className="border-b border-[var(--border)]"
+                          style={{ backgroundColor: 'var(--bg-elevated)' }}
+                        >
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                            Viaje
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                            Fecha
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                            Estado
+                          </th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                            Margen
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                        {topRecent.map((t, i) => {
+                          const m = enrichedById.get(t.id);
+                          return (
+                            <tr
+                              key={t.id}
+                              style={{
+                                backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                              }}
+                              className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                            >
+                              <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{t.id}</td>
+                              <td className="px-4 py-3 text-[var(--text-primary)]">{t.fecha}</td>
+                              <td className="px-4 py-3 text-[var(--text-primary)]">{t.estado}</td>
+                              <td
+                                className="px-4 py-3 text-right font-medium text-[var(--text-primary)]"
+                                title={t.facturaCobrada ? undefined : 'No cobrado aún'}
+                              >
+                                {t.facturaCobrada === true && m ? fmtAgg(m.netMargin) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+                  <div className="border-b border-[var(--border)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
+                    Ingresos por producto (top 5)
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[420px] text-sm">
+                      <thead>
+                        <tr
+                          className="border-b border-[var(--border)]"
+                          style={{ backgroundColor: 'var(--bg-elevated)' }}
+                        >
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                            Producto
+                          </th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                            Ingresos
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                        {revenueByProduct.map((row, i) => (
                           <tr
-                            key={t.id}
+                            key={row.product}
                             style={{
                               backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
                             }}
                             className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
                           >
-                            <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{t.id}</td>
-                            <td className="px-4 py-3 text-[var(--text-primary)]">{t.fecha}</td>
-                            <td className="px-4 py-3 text-[var(--text-primary)]">{t.estado}</td>
-                            <td
-                              className="px-4 py-3 text-right font-medium text-[var(--text-primary)]"
-                              title={t.facturaCobrada ? undefined : 'No cobrado aún'}
-                            >
-                              {t.facturaCobrada === true && m ? fmtAgg(m.netMargin) : '—'}
+                            <td className="px-4 py-3 text-[var(--text-primary)]">{row.product}</td>
+                            <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
+                              {fmtAgg(row.total)}
                             </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                        ))}
+                        {revenueByProduct.length === 0 ? (
+                          <tr>
+                            <td colSpan={2} className="px-4 py-6 text-center text-[var(--text-muted)]">
+                              Sin viajes realizados para calcular ingresos por producto.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
-
           </div>
         </>
       ) : (

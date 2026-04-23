@@ -156,6 +156,19 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       .sort((a, b) => b.value - a.value);
   }, [cobradosTrips, clients]);
 
+  const revenueByProduct = useMemo(() => {
+    const m = new Map<string, number>();
+    cobradosTrips.forEach((t) => {
+      const key = t.contenido?.trim() || 'Sin especificar';
+      const revenue = tripRevenueRealized(t);
+      m.set(key, (m.get(key) ?? 0) + revenue);
+    });
+    return Array.from(m.entries())
+      .map(([name, value]) => ({ name, value }))
+      .filter((x) => x.value > 0)
+      .sort((a, b) => b.value - a.value);
+  }, [cobradosTrips]);
+
   const bestClientHistoric = useMemo(() => {
     const top = revenueByClient[0];
     return top ? { name: top.name, revenue: top.value } : null;
@@ -385,30 +398,109 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
               </BarChart>
             </ResponsiveContainer>
           </ChartBox>
-          <ChartBox title="Distribución de ingresos por cliente">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={revenueByClient}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={100}
-                  label={(props) => {
-                    const name = String(props.name ?? '');
-                    const pct = typeof props.percent === 'number' ? props.percent * 100 : 0;
-                    return `${name} (${pct.toFixed(0)}%)`;
-                  }}
-                >
-                  {revenueByClient.map((_, i) => (
-                    <Cell key={i} fill={PIE_EXTRA[i % PIE_EXTRA.length]} />
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <ChartBox title="Distribución de ingresos por cliente">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={revenueByClient}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={100}
+                    label={(props) => {
+                      const name = String(props.name ?? '');
+                      const pct = typeof props.percent === 'number' ? props.percent * 100 : 0;
+                      return `${name} (${pct.toFixed(0)}%)`;
+                    }}
+                  >
+                    {revenueByClient.map((_, i) => (
+                      <Cell key={i} fill={PIE_EXTRA[i % PIE_EXTRA.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(v: number) => fmtMoney(v)} />
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartBox>
+            <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+              <div className="border-b border-[var(--border)] px-4 py-3">
+                <h3 className="text-sm font-semibold text-[var(--text-primary)]">Ingresos por cliente</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] text-sm">
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Cliente
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Total
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                    {revenueByClient.map((row, i) => (
+                      <tr
+                        key={row.name}
+                        style={{
+                          backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                        }}
+                        className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                      >
+                        <td className="px-4 py-3 text-[var(--text-primary)]">{row.name}</td>
+                        <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
+                          {fmtMoney(row.value)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+            <div className="border-b border-[var(--border)] px-4 py-3">
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Ingresos por producto</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[420px] text-sm">
+                <thead>
+                  <tr style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Producto
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Total
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                  {revenueByProduct.map((row, i) => (
+                    <tr
+                      key={row.name}
+                      style={{
+                        backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                      }}
+                      className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                    >
+                      <td className="px-4 py-3 text-[var(--text-primary)]">{row.name}</td>
+                      <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
+                        {fmtMoney(row.value)}
+                      </td>
+                    </tr>
                   ))}
-                </Pie>
-                <Tooltip formatter={(v: number) => fmtMoney(v)} />
-              </PieChart>
-            </ResponsiveContainer>
-          </ChartBox>
+                  {revenueByProduct.length === 0 ? (
+                    <tr>
+                      <td colSpan={2} className="px-4 py-6 text-center text-[var(--text-muted)]">
+                        Sin datos de ingresos cobrados por producto.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -434,33 +526,83 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
               </BarChart>
             </ResponsiveContainer>
           </ChartBox>
-          <ChartBox title="Distribución por categoría">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={catBreakdown}
-                  dataKey="total"
-                  nameKey="category"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={100}
-                  label={(props) => {
-                    const name = String(props.name ?? '');
-                    const pct = typeof props.percent === 'number' ? props.percent * 100 : 0;
-                    return `${name} (${pct.toFixed(0)}%)`;
-                  }}
-                >
-                  {catBreakdown.map((entry) => (
-                    <Cell
-                      key={entry.category}
-                      fill={CATEGORY_FILL[entry.category as CostCategory] ?? COL.v}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v: number) => fmtMoney(v)} />
-              </PieChart>
-            </ResponsiveContainer>
-          </ChartBox>
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <ChartBox title="Distribución por categoría">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={catBreakdown}
+                    dataKey="total"
+                    nameKey="category"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={100}
+                    label={(props) => {
+                      const name = String(props.name ?? '');
+                      const pct = typeof props.percent === 'number' ? props.percent * 100 : 0;
+                      return `${name} (${pct.toFixed(0)}%)`;
+                    }}
+                  >
+                    {catBreakdown.map((entry) => (
+                      <Cell
+                        key={entry.category}
+                        fill={CATEGORY_FILL[entry.category as CostCategory] ?? COL.v}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(v: number) => fmtMoney(v)} />
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartBox>
+            <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+              <div className="border-b border-[var(--border)] px-4 py-3">
+                <h3 className="text-sm font-semibold text-[var(--text-primary)]">Costos por categoría</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] text-sm">
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Categoría
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Total
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        %
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                    {catBreakdown.map((row, i) => (
+                      <tr
+                        key={row.category}
+                        style={{
+                          backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                        }}
+                        className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                      >
+                        <td className="px-4 py-3 text-[var(--text-primary)]">{row.category}</td>
+                        <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
+                          {fmtMoney(row.total)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-[var(--text-secondary)]">
+                          {row.pct.toFixed(1)}%
+                        </td>
+                      </tr>
+                    ))}
+                    {catBreakdown.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-6 text-center text-[var(--text-muted)]">
+                          Sin costos registrados.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
