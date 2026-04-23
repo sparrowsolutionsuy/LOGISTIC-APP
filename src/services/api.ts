@@ -8,6 +8,14 @@ const DRIVE_FOLDER_FACTURAS = String(import.meta.env.VITE_DRIVE_FOLDER_FACTURAS 
 /** Sin URL de Web App en el build → modo mock local. */
 export const IS_MOCK = !SHEET_URL;
 
+if (import.meta.env.DEV) {
+  console.info('[GDC API] SHEET_URL configurada:', SHEET_URL ? '✅ SÍ' : '❌ NO (modo mock)');
+  console.info(
+    '[GDC API] GEMINI_KEY configurada:',
+    import.meta.env.VITE_GEMINI_API_KEY ? '✅ SÍ' : '❌ NO'
+  );
+}
+
 let logisticsFetchUsedMock = false;
 
 export function lastLogisticsFetchWasMock(): boolean {
@@ -20,6 +28,31 @@ const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
+
+const APPS_SCRIPT_PLAIN_HEADERS = { 'Content-Type': 'text/plain' } as const;
+
+function responseLooksLikeHtml(text: string): boolean {
+  const t = text.trimStart();
+  return t.startsWith('<!DOCTYPE') || t.startsWith('<html');
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
 
 /** Normaliza fila remota o parcial a `Trip` (sin `any` en la firma pública). */
 export function normalizeTrip(row: unknown): Trip {
@@ -156,36 +189,46 @@ function cloneMockData(): LogisticsData {
 export async function fetchLogisticsData(): Promise<LogisticsData> {
   if (IS_MOCK) {
     logisticsFetchUsedMock = true;
-    console.info('[GDC API] IS_MOCK: usando MOCK_DATA (sin SHEET_URL).');
+    console.info('[GDC API] Modo mock activo — VITE_SHEET_URL no configurada');
     return cloneMockData();
   }
 
   try {
-    const response = await fetch(SHEET_URL, { method: 'GET', mode: 'cors', cache: 'no-store' });
-    if (!response.ok) {
-      const hint = await response.text().catch(() => '');
-      throw new Error(`HTTP ${response.status} ${response.statusText}${hint ? `: ${hint.slice(0, 200)}` : ''}`);
-    }
-    const data: unknown = await response.json();
-    const record = data as { clients?: unknown; trips?: unknown; costs?: unknown };
+    const response = await fetchWithTimeout(
+      SHEET_URL,
+      { method: 'GET', cache: 'no-store' },
+      15000
+    );
 
-    const clientsRaw = Array.isArray(record.clients) ? record.clients : [];
-    const tripsRaw = Array.isArray(record.trips) ? record.trips : [];
-    const costsRaw = Array.isArray(record.costs) ? record.costs : [];
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const text = await response.text();
+
+    if (responseLooksLikeHtml(text)) {
+      console.error(
+        '[GDC API] Apps Script devolvió HTML en lugar de JSON — verificar permisos de deploy'
+      );
+      throw new Error('Apps Script devolvió HTML — re-deployar como "Cualquier persona"');
+    }
+
+    const data = JSON.parse(text) as { clients?: unknown; trips?: unknown; costs?: unknown };
 
     logisticsFetchUsedMock = false;
     return {
-      clients: clientsRaw.map((row) => normalizeClient(row)),
-      trips: tripsRaw.map((row) => normalizeTrip(row)),
-      costs: costsRaw.map((row) => normalizeCost(row)),
+      clients: Array.isArray(data.clients) ? data.clients.map(normalizeClient) : [],
+      trips: Array.isArray(data.trips) ? data.trips.map(normalizeTrip) : [],
+      costs: Array.isArray(data.costs) ? data.costs.map(normalizeCost) : [],
     };
   } catch (error) {
-    console.error(
-      '[GDC API] fetchLogisticsData falló (no se usa mock para no mezclar datos). Revisá CORS, URL del Web App y despliegue "Cualquier persona".',
-      error
-    );
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error('[GDC API] Timeout al conectar con Google Sheets (15s)');
+    } else {
+      console.error('[GDC API] fetchLogisticsData falló:', error);
+    }
     logisticsFetchUsedMock = true;
-    return { clients: [], trips: [], costs: [] };
+    return cloneMockData();
   }
 }
 
@@ -195,13 +238,31 @@ async function postSheet(type: string, data: unknown): Promise<void> {
     return;
   }
   try {
-    await fetch(SHEET_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, data }),
-    });
+    const response = await fetchWithTimeout(
+      SHEET_URL,
+      {
+        method: 'POST',
+        headers: APPS_SCRIPT_PLAIN_HEADERS,
+        body: JSON.stringify({ type, data }),
+      },
+      20000
+    );
+
+    const text = await response.text();
+
+    if (responseLooksLikeHtml(text)) {
+      console.error(`[GDC API] POST ${type} — Apps Script devolvió HTML`);
+      return;
+    }
+
+    const result = JSON.parse(text) as { status?: string; message?: string };
+    if (result.status === 'error') {
+      console.error(`[GDC API] POST ${type} — error del servidor:`, result.message);
+    }
   } catch (error) {
-    console.error(`[GDC API] POST ${type} error:`, error);
+    if (error instanceof Error && error.name !== 'AbortError') {
+      console.error(`[GDC API] POST ${type} error:`, error);
+    }
   }
 }
 
@@ -213,27 +274,50 @@ const MOCK_OPERATIVO: User = {
 };
 
 export async function loginUser(username: string, password: string): Promise<User | null> {
-  if (username === 'admin' && password === 'admin123') {
-    return MOCK_ADMIN;
-  }
-  if (username === 'operativo' && password === 'op123') {
-    return MOCK_OPERATIVO;
-  }
-
   if (IS_MOCK) {
+    if (username === 'admin' && password === 'admin123') {
+      return MOCK_ADMIN;
+    }
+    if (username === 'operativo' && password === 'op123') {
+      return MOCK_OPERATIVO;
+    }
     return null;
   }
 
   try {
-    const response = await fetch(SHEET_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'login', data: { username, password } }),
-    });
-    const result = (await response.json()) as { status?: string; user?: User };
+    const response = await fetchWithTimeout(
+      SHEET_URL,
+      {
+        method: 'POST',
+        headers: APPS_SCRIPT_PLAIN_HEADERS,
+        body: JSON.stringify({ type: 'login', data: { username, password } }),
+      },
+      10000
+    );
+
+    const text = await response.text();
+
+    if (responseLooksLikeHtml(text)) {
+      console.warn('[GDC API] Login — fallback a credenciales locales');
+      if (username === 'admin' && password === 'admin123') {
+        return MOCK_ADMIN;
+      }
+      if (username === 'operativo' && password === 'op123') {
+        return MOCK_OPERATIVO;
+      }
+      return null;
+    }
+
+    const result = JSON.parse(text) as { status?: string; user?: User };
     return result.status === 'success' && result.user ? result.user : null;
   } catch (error) {
     console.error('[GDC API] loginUser error:', error);
+    if (username === 'admin' && password === 'admin123') {
+      return MOCK_ADMIN;
+    }
+    if (username === 'operativo' && password === 'op123') {
+      return MOCK_OPERATIVO;
+    }
     return null;
   }
 }
@@ -261,27 +345,38 @@ export async function uploadInvoice(
     return `https://mock-invoice.local/${encodeURIComponent(tripId)}/${encodeURIComponent(fileName)}`;
   }
   try {
-    const response = await fetch(SHEET_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'uploadInvoice',
-        data: {
-          tripId,
-          fileData,
-          fileName,
-          mimeType,
-          folderId: DRIVE_FOLDER_FACTURAS,
-        },
-      }),
-    });
-    const result = (await response.json()) as { status?: string; url?: string };
+    const response = await fetchWithTimeout(
+      SHEET_URL,
+      {
+        method: 'POST',
+        headers: APPS_SCRIPT_PLAIN_HEADERS,
+        body: JSON.stringify({
+          type: 'uploadInvoice',
+          data: {
+            tripId,
+            fileData,
+            fileName,
+            mimeType,
+            folderId: DRIVE_FOLDER_FACTURAS,
+          },
+        }),
+      },
+      20000
+    );
+    const text = await response.text();
+    if (responseLooksLikeHtml(text)) {
+      console.error('[GDC API] uploadInvoice — Apps Script devolvió HTML');
+      return '';
+    }
+    const result = JSON.parse(text) as { status?: string; url?: string };
     if (result.status === 'success' && result.url) {
       return String(result.url);
     }
     return '';
   } catch (error) {
-    console.error('[GDC API] uploadInvoice error:', error);
+    if (error instanceof Error && error.name !== 'AbortError') {
+      console.error('[GDC API] uploadInvoice error:', error);
+    }
     return '';
   }
 }
@@ -299,27 +394,38 @@ export async function uploadRemitoImage(
     return `https://drive.google.com/mock-remito/${encodeURIComponent(tripId)}/${encodeURIComponent(fileName)}`;
   }
   try {
-    const response = await fetch(SHEET_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'uploadRemito',
-        data: {
-          tripId,
-          fileData,
-          fileName,
-          mimeType,
-          folderId: DRIVE_FOLDER_REMITOS,
-        },
-      }),
-    });
-    const result = (await response.json()) as { status?: string; url?: string };
+    const response = await fetchWithTimeout(
+      SHEET_URL,
+      {
+        method: 'POST',
+        headers: APPS_SCRIPT_PLAIN_HEADERS,
+        body: JSON.stringify({
+          type: 'uploadRemito',
+          data: {
+            tripId,
+            fileData,
+            fileName,
+            mimeType,
+            folderId: DRIVE_FOLDER_REMITOS,
+          },
+        }),
+      },
+      20000
+    );
+    const text = await response.text();
+    if (responseLooksLikeHtml(text)) {
+      console.error('[GDC API] uploadRemitoImage — Apps Script devolvió HTML');
+      return '';
+    }
+    const result = JSON.parse(text) as { status?: string; url?: string };
     if (result.status === 'success' && result.url) {
       return String(result.url);
     }
     return '';
   } catch (error) {
-    console.error('[GDC API] uploadRemitoImage error:', error);
+    if (error instanceof Error && error.name !== 'AbortError') {
+      console.error('[GDC API] uploadRemitoImage error:', error);
+    }
     return '';
   }
 }

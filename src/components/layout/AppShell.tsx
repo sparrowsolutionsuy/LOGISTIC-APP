@@ -10,6 +10,7 @@ export interface AppShellProps {
   user: User;
   currentView: ActiveTab;
   onNavigate: (view: ActiveTab) => void;
+  /** true cuando los datos vienen de mock o falló la conexión al Sheet. */
   offline: boolean;
   pendingTripsCount: number;
   onLogout: () => void;
@@ -95,6 +96,7 @@ export const AppShell: React.FC<AppShellProps> = ({
                 user={user}
                 currentView={currentView}
                 onNavigate={onNavigate}
+                offline={offline}
                 pendingTripsCount={pendingTripsCount}
                 onRequestClose={() => setDrawerOpen(false)}
                 onLogout={() => {
@@ -113,6 +115,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             user={user}
             currentView={currentView}
             onNavigate={onNavigate}
+            offline={offline}
             pendingTripsCount={pendingTripsCount}
             onLogout={onLogout}
           />

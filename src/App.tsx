@@ -113,29 +113,52 @@ const App: React.FC = () => {
   }, []);
 
   const loadData = useCallback(async () => {
-    const data = await fetchLogisticsData();
-    setClients(data.clients);
-    setTrips(data.trips);
-    setCosts(data.costs);
-    setOffline(lastLogisticsFetchWasMock());
-
     try {
-      if (data.trips.length > 0) {
-        const lines = await generateLogisticsInsights(data.trips, data.clients);
-        setInsights(
-          lines.map((description, i) => ({
-            title: `Recomendación ${i + 1}`,
-            description,
-            type: 'info' as const,
-          }))
-        );
-      } else {
-        setInsights([]);
-      }
-    } catch {
-      setInsights([]);
+      const data = await fetchLogisticsData();
+      setClients(data.clients);
+      setTrips(data.trips);
+      setCosts(data.costs);
+      setOffline(lastLogisticsFetchWasMock());
+    } catch (error) {
+      console.error('[App] loadData error:', error);
+      setOffline(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (!user || loading) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (trips.length === 0) {
+          if (!cancelled) {
+            setInsights([]);
+          }
+          return;
+        }
+        const lines = await generateLogisticsInsights(trips, clients);
+        if (!cancelled) {
+          setInsights(
+            lines.map((description, i) => ({
+              title: `Recomendación ${i + 1}`,
+              description,
+              type: 'info' as const,
+            }))
+          );
+        }
+      } catch (err) {
+        console.error('[App] generateLogisticsInsights:', err);
+        if (!cancelled) {
+          setInsights([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, loading, trips, clients]);
 
   useEffect(() => {
     if (!hydrated) {

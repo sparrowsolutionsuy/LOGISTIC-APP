@@ -1,7 +1,73 @@
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import type { Client } from '../../types';
 import { DEPARTAMENTOS } from '../../constants';
 import { Save, User, MapPin, Hash, Mail, Phone, Info } from 'lucide-react';
+
+/** Iframe OSM montado en el siguiente tick para no competir con el hilo principal en el mismo frame. */
+const OsmEmbedFrame = lazy(
+  () =>
+    new Promise<{ default: React.FC<{ src: string; onLoaded: () => void }> }>((resolve) => {
+      window.setTimeout(() => {
+        resolve({
+          default: function OsmEmbedFrameInner({ src, onLoaded }) {
+            return (
+              <iframe
+                title="Mapa ubicación cliente"
+                className="absolute inset-0 h-full w-full border-0"
+                src={src}
+                loading="lazy"
+                sandbox="allow-scripts allow-same-origin"
+                referrerPolicy="no-referrer"
+                onLoad={onLoaded}
+                onError={() => {
+                  /* silenciar error de red del iframe */
+                }}
+              />
+            );
+          },
+        });
+      }, 0);
+    })
+);
+
+const MAP_LOAD_TIMEOUT_MS = 12000;
+
+function LocationPreviewMap({ la, lo }: { la: number; lo: number }) {
+  const pad = 0.06;
+  const bbox = `${lo - pad},${la - pad},${lo + pad},${la + pad}`;
+  const src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${la},${lo}`;
+  const [mapReady, setMapReady] = useState(false);
+
+  useEffect(() => {
+    setMapReady(false);
+    const t = window.setTimeout(() => setMapReady(true), MAP_LOAD_TIMEOUT_MS);
+    return () => window.clearTimeout(t);
+  }, [src]);
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+      <p className="border-b border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">
+        Vista previa de ubicación
+      </p>
+      <div className="relative h-48 w-full">
+        {!mapReady ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-100">
+            <p className="text-xs text-slate-400">Cargando mapa...</p>
+          </div>
+        ) : null}
+        <Suspense
+          fallback={
+            <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
+              <p className="text-xs text-slate-400">Cargando mapa...</p>
+            </div>
+          }
+        >
+          <OsmEmbedFrame src={src} onLoaded={() => setMapReady(true)} />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
 
 interface ClientFormProps {
   onAddClient: (client: Client) => void | Promise<void>;
@@ -63,6 +129,11 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
       alert('Cliente registrado exitosamente');
     }
   };
+
+  const la = Number(formData.latitud);
+  const lo = Number(formData.longitud);
+  const showMap =
+    Number.isFinite(la) && Number.isFinite(lo) && !(la === 0 && lo === 0);
 
   return (
     <div className="max-w-3xl mx-auto bg-white p-8 rounded-xl shadow-md border border-slate-200">
@@ -192,24 +263,7 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
               />
             </div>
           </div>
-          {(() => {
-            const la = Number(formData.latitud);
-            const lo = Number(formData.longitud);
-            if (!Number.isFinite(la) || !Number.isFinite(lo)) {
-              return null;
-            }
-            const pad = 0.06;
-            const bbox = `${lo - pad},${la - pad},${lo + pad},${la + pad}`;
-            const src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${la},${lo}`;
-            return (
-              <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                <p className="border-b border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">
-                  Vista previa de ubicación
-                </p>
-                <iframe title="Mapa ubicación cliente" className="h-48 w-full" src={src} loading="lazy" />
-              </div>
-            );
-          })()}
+          {showMap ? <LocationPreviewMap la={la} lo={lo} /> : null}
         </div>
 
         <div className="pt-6">

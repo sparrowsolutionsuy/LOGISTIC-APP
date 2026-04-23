@@ -17,6 +17,7 @@ export interface SidebarProps {
   user: User;
   currentView: ActiveTab;
   onNavigate: (view: ActiveTab) => void;
+  offline: boolean;
   pendingTripsCount: number;
   onRequestClose?: () => void;
   onLogout: () => void;
@@ -74,6 +75,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   user,
   currentView,
   onNavigate,
+  offline,
   pendingTripsCount,
   onRequestClose,
   onLogout,
@@ -219,6 +221,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             draggable={false}
           />
         </div>
+
+        {user.role === 'admin' ? (
+          <div className="mb-2 flex items-center justify-center gap-1.5 text-[10px] text-[var(--text-muted)]">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                offline ? 'bg-[var(--accent-amber)]' : 'bg-[var(--accent-emerald)]'
+              }`}
+            />
+            {offline ? 'Modo demo' : 'Conectado a Sheets'}
+          </div>
+        ) : null}
 
         <button
           type="button"
