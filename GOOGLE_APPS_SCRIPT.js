@@ -172,7 +172,8 @@ function doPost(e) {
     } else if (type === 'trip') {
       const sheet = ss.getSheetByName('DB_Viajes');
       ensureTripSheetHeaders(sheet);
-      sheet.appendRow(tripRowFromPayload(data));
+      const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      sheet.appendRow(tripRowFromPayload(data, headers));
     } else if (type === 'client') {
       const sheet = ss.getSheetByName('DB_Clientes');
       sheet.appendRow([
@@ -202,7 +203,7 @@ function doPost(e) {
             prevData[h] = prev[idx];
           });
           const merged = Object.assign({}, prevData, data);
-          const newRow = tripRowFromPayload(merged);
+          const newRow = tripRowFromPayload(merged, headers);
           sheet.getRange(rowNum, 1, 1, newRow.length).setValues([newRow]);
           break;
         }
@@ -370,30 +371,32 @@ function boolOrBlank(v) {
 }
 
 /** Fila alineada al orden de columnas esperado en DB_Viajes. */
-function tripRowFromPayload(data) {
-  return [
-    data.id || '',
-    data.fecha || '',
-    data.clientId || '',
-    data.estado || 'Pendiente',
-    data.contenido || '',
-    data.pesoKg != null ? data.pesoKg : 0,
-    data.kmRecorridos != null ? data.kmRecorridos : 0,
-    data.tarifa != null ? data.tarifa : 0,
-    data.origen || '',
-    data.destino || '',
-    data.facturaUrl || '',
-    data.remitoUrl || '',
-    data.moneda || 'USD',
-    data.tipoCambio != null ? data.tipoCambio : '',
-    data.tarifaUYU != null ? data.tarifaUYU : '',
-    data.asignadoA || '',
-    boolOrBlank(data.facturaGenerada),
-    boolOrBlank(data.facturaSolicitada),
-    data.facturaFechaSolicitud || '',
-    boolOrBlank(data.facturaCobrada),
-    data.facturaFechaCobro || '',
-  ];
+function tripRowFromPayload(data, headers) {
+  return headers.map(function (h) {
+    if (h === 'id') return data.id || '';
+    if (h === 'fecha') return data.fecha || '';
+    if (h === 'clientId') return data.clientId || '';
+    if (h === 'estado') return data.estado || 'Pendiente';
+    if (h === 'contenido') return data.contenido || '';
+    if (h === 'pesoKg') return data.pesoKg != null ? data.pesoKg : 0;
+    if (h === 'kmRecorridos') return data.kmRecorridos != null ? data.kmRecorridos : 0;
+    if (h === 'tarifa') return data.tarifa != null ? data.tarifa : 0;
+    if (h === 'origen') return data.origen || '';
+    if (h === 'destino') return data.destino || '';
+    if (h === 'facturaUrl') return data.facturaUrl || '';
+    if (h === 'remitoUrl') return data.remitoUrl || '';
+    if (h === 'moneda') return data.moneda || 'USD';
+    if (h === 'tipoCambio') return data.tipoCambio != null ? data.tipoCambio : '';
+    if (h === 'tarifaUYU') return data.tarifaUYU != null ? data.tarifaUYU : '';
+    if (h === 'asignadoA') return data.asignadoA || '';
+    if (h === 'facturaGenerada') return boolOrBlank(data.facturaGenerada);
+    if (h === 'facturaSolicitada') return boolOrBlank(data.facturaSolicitada);
+    if (h === 'facturaFechaSolicitud') return data.facturaFechaSolicitud || '';
+    if (h === 'facturaCobrada') return boolOrBlank(data.facturaCobrada);
+    if (h === 'facturaFechaCobro') return data.facturaFechaCobro || '';
+    // Preserva columnas extra/legadas sin romper el orden actual de la hoja.
+    return data[h] != null ? data[h] : '';
+  });
 }
 
 /** Asegura columnas esperadas por la app en DB_Costos (hojas antiguas). */
