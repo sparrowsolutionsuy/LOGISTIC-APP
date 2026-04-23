@@ -86,6 +86,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
   const { showInfo } = useToast();
 
   const [searchText, setSearchText] = useState('');
+  const [clientFilter, setClientFilter] = useState('');
   const [estadoFilter, setEstadoFilter] = useState<TripStatus | ''>('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -161,6 +162,9 @@ export const TripManager: React.FC<TripManagerProps> = ({
   const filteredTrips = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     return roleTrips.filter((t) => {
+      if (clientFilter && t.clientId !== clientFilter) {
+        return false;
+      }
       if (estadoFilter && t.estado !== estadoFilter) {
         return false;
       }
@@ -182,7 +186,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
         t.contenido.toLowerCase().includes(q)
       );
     });
-  }, [roleTrips, searchText, estadoFilter, startDate, endDate, clients]);
+  }, [roleTrips, searchText, clientFilter, estadoFilter, startDate, endDate, clients]);
 
   const enrichedFiltered = useMemo(
     () => enrichTrips(filteredTrips, clients, costs),
@@ -198,7 +202,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
 
   useEffect(() => {
     setPage(1);
-  }, [searchText, estadoFilter, startDate, endDate, roleTrips.length]);
+  }, [searchText, clientFilter, estadoFilter, startDate, endDate, roleTrips.length]);
 
   const totalPages = Math.max(1, Math.ceil(sortedTrips.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -462,7 +466,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
           <Filter className="mr-2 h-4 w-4" />
           Filtros y búsqueda
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-7">
           <div className="relative lg:col-span-2">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <input
@@ -473,6 +477,18 @@ export const TripManager: React.FC<TripManagerProps> = ({
               onChange={(e) => setSearchText(e.target.value)}
             />
           </div>
+          <select
+            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm outline-none"
+            value={clientFilter}
+            onChange={(e) => setClientFilter(e.target.value)}
+          >
+            <option value="">Todos los clientes</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nombreComercial}
+              </option>
+            ))}
+          </select>
           <select
             className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm outline-none"
             value={estadoFilter}
@@ -829,6 +845,12 @@ export const TripManager: React.FC<TripManagerProps> = ({
                   onClick={(col) => handleSort(col as TripSortKey)}
                   align="right"
                 />
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                >
+                  Ton
+                </th>
                 <SortableHeader
                   label="Margen"
                   column="netMargin"
@@ -906,6 +928,12 @@ export const TripManager: React.FC<TripManagerProps> = ({
                           )}
                         </p>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs font-medium tabular-nums text-[var(--text-primary)]">
+                      {(trip.pesoKg / 1000).toLocaleString('es-UY', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
                     </td>
                     <td className="px-4 py-3 text-right text-xs">
                       {margin !== null ? (
@@ -1012,7 +1040,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
               })}
               {pageSlice.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-[var(--text-muted)]">
+                  <td colSpan={9} className="px-4 py-8 text-center text-[var(--text-muted)]">
                     No hay viajes que coincidan con los filtros.
                   </td>
                 </tr>

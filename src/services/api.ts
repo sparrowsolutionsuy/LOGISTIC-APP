@@ -343,12 +343,12 @@ export async function saveTripToSheet(trip: Trip): Promise<boolean> {
   return postSheet('trip', trip);
 }
 
-export async function updateTripInSheet(trip: Trip): Promise<void> {
-  await postSheet('updateTrip', trip);
+export async function updateTripInSheet(trip: Trip): Promise<boolean> {
+  return postSheet('updateTrip', trip);
 }
 
-export async function deleteTripFromSheet(id: string): Promise<void> {
-  await postSheet('deleteTrip', { id });
+export async function deleteTripFromSheet(id: string): Promise<boolean> {
+  return postSheet('deleteTrip', { id });
 }
 
 export async function uploadInvoice(

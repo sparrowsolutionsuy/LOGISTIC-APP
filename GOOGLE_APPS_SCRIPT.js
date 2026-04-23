@@ -79,17 +79,31 @@ function doGet(e) {
   let tripSheet = ss.getSheetByName('DB_Viajes');
   if (!tripSheet) {
     tripSheet = ss.insertSheet('DB_Viajes');
-    tripSheet.appendRow(['id', 'fecha', 'clientId', 'estado', 'contenido', 'pesoKg', 'kmRecorridos', 'tarifa', 'origen', 'destino', 'facturaUrl', 'remitoUrl']);
+    tripSheet.appendRow([
+      'id',
+      'fecha',
+      'clientId',
+      'estado',
+      'contenido',
+      'pesoKg',
+      'kmRecorridos',
+      'tarifa',
+      'origen',
+      'destino',
+      'facturaUrl',
+      'remitoUrl',
+      'moneda',
+      'tipoCambio',
+      'tarifaUYU',
+      'asignadoA',
+      'facturaGenerada',
+      'facturaSolicitada',
+      'facturaFechaSolicitud',
+      'facturaCobrada',
+      'facturaFechaCobro'
+    ]);
   }
-  
-  const tripHeaders = tripSheet.getRange(1, 1, 1, tripSheet.getLastColumn()).getValues()[0];
-  if (!tripHeaders.includes('facturaUrl')) {
-    tripSheet.getRange(1, tripHeaders.length + 1).setValue('facturaUrl');
-  }
-  const tripHeaders2 = tripSheet.getRange(1, 1, 1, tripSheet.getLastColumn()).getValues()[0];
-  if (!tripHeaders2.includes('remitoUrl')) {
-    tripSheet.getRange(1, tripHeaders2.length + 1).setValue('remitoUrl');
-  }
+  ensureTripSheetHeaders(tripSheet);
 
   const trips = getSheetData('DB_Viajes');
 
@@ -157,20 +171,8 @@ function doPost(e) {
 
     } else if (type === 'trip') {
       const sheet = ss.getSheetByName('DB_Viajes');
-      sheet.appendRow([
-        data.id, 
-        data.fecha, 
-        data.clientId, 
-        data.estado, 
-        data.contenido, 
-        data.pesoKg, 
-        data.kmRecorridos, 
-        data.tarifa, 
-        data.origen, 
-        data.destino,
-        data.facturaUrl || '',
-        data.remitoUrl || ''
-      ]);
+      ensureTripSheetHeaders(sheet);
+      sheet.appendRow(tripRowFromPayload(data));
     } else if (type === 'client') {
       const sheet = ss.getSheetByName('DB_Clientes');
       sheet.appendRow([
@@ -186,35 +188,21 @@ function doPost(e) {
       ]);
     } else if (type === 'updateTrip') {
       const sheet = ss.getSheetByName('DB_Viajes');
+      ensureTripSheetHeaders(sheet);
       let values = sheet.getDataRange().getValues();
       let headers = values[0];
-      if (headers.indexOf('remitoUrl') === -1) {
-        sheet.getRange(1, headers.length + 1).setValue('remitoUrl');
-        values = sheet.getDataRange().getValues();
-        headers = values[0];
-      }
-      const facturaIdx = headers.indexOf('facturaUrl');
-      const remitoIdx = headers.indexOf('remitoUrl');
+      const idCol = headers.indexOf('id');
       
       for (let i = 1; i < values.length; i++) {
-        if (String(values[i][0]) === String(data.id)) {
+        if (String(values[i][idCol]) === String(data.id)) {
           const rowNum = i + 1;
-          const prevFactura = facturaIdx > -1 && values[i][facturaIdx] != null ? String(values[i][facturaIdx]) : '';
-          const prevRemito = remitoIdx > -1 && values[i][remitoIdx] != null ? String(values[i][remitoIdx]) : '';
-          const newRow = [
-            data.id, 
-            data.fecha, 
-            data.clientId, 
-            data.estado, 
-            data.contenido, 
-            data.pesoKg, 
-            data.kmRecorridos, 
-            data.tarifa, 
-            data.origen, 
-            data.destino,
-            data.facturaUrl != null && data.facturaUrl !== '' ? data.facturaUrl : prevFactura,
-            data.remitoUrl != null && data.remitoUrl !== '' ? data.remitoUrl : prevRemito
-          ];
+          const prev = values[i];
+          const prevData = {};
+          headers.forEach(function (h, idx) {
+            prevData[h] = prev[idx];
+          });
+          const merged = Object.assign({}, prevData, data);
+          const newRow = tripRowFromPayload(merged);
           sheet.getRange(rowNum, 1, 1, newRow.length).setValues([newRow]);
           break;
         }
@@ -333,6 +321,79 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function ensureTripSheetHeaders(sheet) {
+  var expected = [
+    'id',
+    'fecha',
+    'clientId',
+    'estado',
+    'contenido',
+    'pesoKg',
+    'kmRecorridos',
+    'tarifa',
+    'origen',
+    'destino',
+    'facturaUrl',
+    'remitoUrl',
+    'moneda',
+    'tipoCambio',
+    'tarifaUYU',
+    'asignadoA',
+    'facturaGenerada',
+    'facturaSolicitada',
+    'facturaFechaSolicitud',
+    'facturaCobrada',
+    'facturaFechaCobro',
+  ];
+  var lastCol = Math.max(1, sheet.getLastColumn());
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  for (var i = 0; i < expected.length; i++) {
+    var name = expected[i];
+    if (headers.indexOf(name) === -1) {
+      var lc = sheet.getLastColumn();
+      sheet.getRange(1, lc + 1).setValue(name);
+      headers.push(name);
+    }
+  }
+}
+
+function boolOrBlank(v) {
+  if (v === true || String(v).toUpperCase() === 'TRUE') {
+    return true;
+  }
+  if (v === false || String(v).toUpperCase() === 'FALSE') {
+    return false;
+  }
+  return '';
+}
+
+/** Fila alineada al orden de columnas esperado en DB_Viajes. */
+function tripRowFromPayload(data) {
+  return [
+    data.id || '',
+    data.fecha || '',
+    data.clientId || '',
+    data.estado || 'Pendiente',
+    data.contenido || '',
+    data.pesoKg != null ? data.pesoKg : 0,
+    data.kmRecorridos != null ? data.kmRecorridos : 0,
+    data.tarifa != null ? data.tarifa : 0,
+    data.origen || '',
+    data.destino || '',
+    data.facturaUrl || '',
+    data.remitoUrl || '',
+    data.moneda || 'USD',
+    data.tipoCambio != null ? data.tipoCambio : '',
+    data.tarifaUYU != null ? data.tarifaUYU : '',
+    data.asignadoA || '',
+    boolOrBlank(data.facturaGenerada),
+    boolOrBlank(data.facturaSolicitada),
+    data.facturaFechaSolicitud || '',
+    boolOrBlank(data.facturaCobrada),
+    data.facturaFechaCobro || '',
+  ];
 }
 
 /** Asegura columnas esperadas por la app en DB_Costos (hojas antiguas). */

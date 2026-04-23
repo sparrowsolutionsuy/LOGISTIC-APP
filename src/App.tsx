@@ -247,15 +247,23 @@ const App: React.FC = () => {
   );
 
   const onUpdateTrip = useCallback(async (trip: Trip) => {
-    await updateTripInSheet(trip);
+    const ok = await updateTripInSheet(trip);
+    if (!ok) {
+      showToast('No se pudo actualizar el viaje en Google Sheets.', 'error');
+      return;
+    }
     setTrips((prev) => prev.map((t) => (t.id === trip.id ? trip : t)));
-  }, []);
+  }, [showToast]);
 
   const onDeleteTrip = useCallback(async (tripId: string) => {
-    await deleteTripFromSheet(tripId);
+    const ok = await deleteTripFromSheet(tripId);
+    if (!ok) {
+      showToast('No se pudo eliminar el viaje en Google Sheets.', 'error');
+      return;
+    }
     setTrips((prev) => prev.filter((t) => t.id !== tripId));
     setCosts((prev) => prev.filter((c) => c.tripId !== tripId));
-  }, []);
+  }, [showToast]);
 
   const onUploadInvoice = useCallback((tripId: string, url: string) => {
     setTrips((prev) => {
