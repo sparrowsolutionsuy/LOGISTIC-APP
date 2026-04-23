@@ -21,6 +21,9 @@ const SIZE_WIDTH: Record<ModalSize, string> = {
 
 export const Modal: React.FC<ModalProps> = ({ open, onClose, title, size = 'md', children }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
+  /** Evita re-ejecutar el efecto en cada render cuando `onClose` es una función inline (robaba el foco de los inputs). */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) {
@@ -60,7 +63,7 @@ export const Modal: React.FC<ModalProps> = ({ open, onClose, title, size = 'md',
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab' || !root) {
@@ -89,7 +92,7 @@ export const Modal: React.FC<ModalProps> = ({ open, onClose, title, size = 'md',
       window.clearTimeout(id);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) {
     return null;

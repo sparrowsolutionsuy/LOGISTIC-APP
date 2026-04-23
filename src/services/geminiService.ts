@@ -55,8 +55,10 @@ export async function generateLogisticsInsights(
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey.trim());
+    const modelId =
+      (import.meta.env.VITE_GEMINI_TEXT_MODEL as string | undefined)?.trim() || 'gemini-2.0-flash';
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: modelId,
       generationConfig: { responseMimeType: 'application/json' },
     });
 

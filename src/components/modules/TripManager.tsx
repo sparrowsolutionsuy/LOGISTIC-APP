@@ -1,11 +1,10 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import type { Trip, TripStatus, Client, User, Cost, TripWithMetrics, DisplayCurrency } from '../../types';
 import { enrichTrips, tripRevenueUsd, costUsd } from '../../utils/analytics';
 import { useSortableTable } from '../../hooks/useSortableTable';
 import Badge from '../ui/Badge';
 import SortableHeader from '../ui/SortableHeader';
 import { Modal } from '../ui/Modal';
-import RemitoUploader from './RemitoUploader';
 import { useToast } from '../../hooks/useToast';
 import { uploadInvoice } from '../../services/api';
 import {
@@ -31,6 +30,8 @@ import {
 const PAGE_SIZE = 15;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const ACCEPT_INVOICE = 'application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png';
+const ACCEPT_REMITO_IMAGE = 'image/jpeg,image/png,image/webp';
+const REMITO_MAX_BYTES = 5 * 1024 * 1024;
 
 export interface TripManagerProps {
   trips: Trip[];
@@ -40,7 +41,7 @@ export interface TripManagerProps {
   onAddTrip: (
     trip: Trip,
     remitoImage?: { base64: string; name: string; mime: string }
-  ) => void | Promise<void>;
+  ) => boolean | Promise<boolean>;
   onUpdateTrip: (trip: Trip) => void | Promise<void>;
   onDeleteTrip: (tripId: string) => void | Promise<void>;
   onInvoiceUploaded: (tripId: string, url: string) => void;
@@ -106,19 +107,46 @@ export const TripManager: React.FC<TripManagerProps> = ({
     fecha: new Date().toISOString().split('T')[0],
   });
 
-  const [showRemitoUploader, setShowRemitoUploader] = useState(false);
   const [pendingRemito, setPendingRemito] = useState<{
     base64: string;
     name: string;
     mime: string;
   } | null>(null);
+  const remitoFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleRemitoData = useCallback(
-    (fields: Partial<Trip>, imageBase64: string, imageName: string, imageMime: string) => {
-      setNewTrip((prev) => ({ ...prev, ...fields }));
-      setPendingRemito({ base64: imageBase64, name: imageName, mime: imageMime });
-      const n = Object.keys(fields).length;
-      showInfo(`Se pre-completaron ${n} campo${n !== 1 ? 's' : ''} desde el remito`);
+  const onRemitoFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) {
+        return;
+      }
+      const okTypes = ['image/jpeg', 'image/png', 'image/webp'];
+      if (!okTypes.includes(file.type)) {
+        alert('Formato no soportado. Usá JPG, PNG o WEBP.');
+        return;
+      }
+      if (file.size > REMITO_MAX_BYTES) {
+        alert('La imagen supera el máximo de 5 MB.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const base64 = dataUrl.split(',')[1];
+        if (!base64) {
+          alert('No se pudo leer la imagen.');
+          return;
+        }
+        setPendingRemito({
+          base64,
+          name: file.name,
+          mime: file.type || 'image/jpeg',
+        });
+        showInfo('Remito adjunto: al guardar el viaje se subirá a Drive.');
+      };
+      reader.onerror = () => alert('No se pudo leer el archivo.');
+      reader.readAsDataURL(file);
     },
     [showInfo]
   );
@@ -186,7 +214,6 @@ export const TripManager: React.FC<TripManagerProps> = ({
   const openNewForm = () => {
     setEditingId(null);
     setPendingRemito(null);
-    setShowRemitoUploader(false);
     setNewTrip({
       estado: 'Pendiente',
       fecha: new Date().toISOString().split('T')[0],
@@ -213,7 +240,6 @@ export const TripManager: React.FC<TripManagerProps> = ({
     }
     setEditingId(trip.id);
     setPendingRemito(null);
-    setShowRemitoUploader(false);
     setNewTrip({
       ...trip,
       tipoCambio: trip.tipoCambio ?? currentRate,
@@ -230,7 +256,6 @@ export const TripManager: React.FC<TripManagerProps> = ({
     setClosedWarnTrip(null);
     setEditingId(trip.id);
     setPendingRemito(null);
-    setShowRemitoUploader(false);
     setNewTrip({
       ...trip,
       tipoCambio: trip.tipoCambio ?? currentRate,
@@ -244,7 +269,6 @@ export const TripManager: React.FC<TripManagerProps> = ({
     setEditingId(null);
     setSaveLoading(false);
     setPendingRemito(null);
-    setShowRemitoUploader(false);
     setNewTrip({ estado: 'Pendiente', fecha: new Date().toISOString().split('T')[0] });
   };
 
@@ -331,7 +355,10 @@ export const TripManager: React.FC<TripManagerProps> = ({
           id: `V${Date.now()}`,
         };
         const remito = pendingRemito ?? undefined;
-        await onAddTrip(trip, remito);
+        const added = await onAddTrip(trip, remito);
+        if (!added) {
+          return;
+        }
       }
       closeForm();
     } finally {
@@ -508,19 +535,29 @@ export const TripManager: React.FC<TripManagerProps> = ({
       >
         <form onSubmit={(e) => void handleSave(e)} className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {!editingId && (
-            <div className="mb-2 flex items-center justify-between border-b border-[var(--border)] pb-4 md:col-span-2">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-4 md:col-span-2">
               <h4 className="text-sm font-semibold text-[var(--text-primary)]">Datos del viaje</h4>
-              <button
-                type="button"
-                onClick={() => setShowRemitoUploader(true)}
-                className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent-blue)] hover:text-[var(--accent-blue)]"
-              >
-                <FileImage size={14} aria-hidden />
-                Cargar remito
-                {pendingRemito ? (
-                  <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--accent-emerald)]" aria-hidden />
-                ) : null}
-              </button>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={remitoFileInputRef}
+                  type="file"
+                  accept={ACCEPT_REMITO_IMAGE}
+                  className="sr-only"
+                  aria-label="Seleccionar imagen del remito para subir a Drive"
+                  onChange={onRemitoFileChange}
+                />
+                <button
+                  type="button"
+                  onClick={() => remitoFileInputRef.current?.click()}
+                  className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent-blue)] hover:text-[var(--accent-blue)]"
+                >
+                  <FileImage size={14} aria-hidden />
+                  Adjuntar remito (Drive)
+                  {pendingRemito ? (
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--accent-emerald)]" aria-hidden />
+                  ) : null}
+                </button>
+              </div>
             </div>
           )}
 
@@ -528,7 +565,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--accent-emerald)_35%,transparent)] bg-[color-mix(in_srgb,var(--accent-emerald)_10%,var(--bg-surface))] px-3 py-2 md:col-span-2">
               <CheckCircle size={14} className="shrink-0 text-[var(--accent-emerald)]" aria-hidden />
               <span className="flex-1 text-xs text-[var(--text-secondary)]">
-                Remito adjunto: {pendingRemito.name}
+                Se subirá a Drive al crear el viaje: {pendingRemito.name}
               </span>
               <button
                 type="button"
@@ -744,38 +781,6 @@ export const TripManager: React.FC<TripManagerProps> = ({
           </div>
         </form>
       </Modal>
-
-      {showRemitoUploader ? (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div
-            className="w-full max-w-lg rounded-2xl border border-[var(--border)] shadow-[var(--shadow-lg)]"
-            style={{ backgroundColor: 'var(--bg-surface)' }}
-          >
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
-              <div>
-                <h3 className="text-base font-semibold text-[var(--text-primary)]">Cargar remito</h3>
-                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                  La IA extraerá los datos automáticamente
-                </p>
-              </div>
-              <button
-                type="button"
-                aria-label="Cerrar"
-                onClick={() => setShowRemitoUploader(false)}
-                className="text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
-              >
-                <X size={18} aria-hidden />
-              </button>
-            </div>
-            <div className="p-5">
-              <RemitoUploader
-                onDataExtracted={handleRemitoData}
-                onClose={() => setShowRemitoUploader(false)}
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
         <div className="overflow-x-auto">

@@ -212,7 +212,11 @@ const App: React.FC = () => {
 
   const onAddTrip = useCallback(
     async (trip: Trip, remitoImage?: { base64: string; name: string; mime: string }) => {
-      await saveTripToSheet(trip);
+      const saved = await saveTripToSheet(trip);
+      if (!saved) {
+        showToast('No se pudo guardar el viaje en Google Sheets. Reintentá.', 'error');
+        return false;
+      }
       setTrips((prev) => [trip, ...prev]);
       if (remitoImage) {
         try {
@@ -227,13 +231,17 @@ const App: React.FC = () => {
             setTrips((prev) => prev.map((t) => (t.id === trip.id ? updated : t)));
             await updateTripInSheet(updated);
           } else {
-            showToast('Viaje guardado. No se obtuvo URL del remito.', 'warning');
+            showToast(
+              'El viaje quedó guardado, pero no se obtuvo URL del remito (revisá carpeta Drive y permisos del script).',
+              'warning'
+            );
           }
         } catch (err) {
           console.error('Error subiendo remito:', err);
-          showToast('Viaje guardado, pero hubo un error al subir el remito', 'warning');
+          showToast('Viaje guardado, pero hubo un error al subir el remito.', 'warning');
         }
       }
+      return true;
     },
     [showToast]
   );

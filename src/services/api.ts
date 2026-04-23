@@ -36,6 +36,9 @@ function responseLooksLikeHtml(text: string): boolean {
   return t.startsWith('<!DOCTYPE') || t.startsWith('<html');
 }
 
+/** Subidas base64 a Apps Script pueden superar 20s en redes lentas o imágenes grandes. */
+const UPLOAD_FETCH_TIMEOUT_MS = 180_000;
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
@@ -232,10 +235,10 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
   }
 }
 
-async function postSheet(type: string, data: unknown): Promise<void> {
+async function postSheet(type: string, data: unknown): Promise<boolean> {
   if (IS_MOCK) {
     await delay(MOCK_DELAY_MS);
-    return;
+    return true;
   }
   try {
     const response = await fetchWithTimeout(
@@ -248,21 +251,35 @@ async function postSheet(type: string, data: unknown): Promise<void> {
       20000
     );
 
+    if (!response.ok) {
+      console.error(`[GDC API] POST ${type} — HTTP ${response.status} ${response.statusText}`);
+      return false;
+    }
+
     const text = await response.text();
 
     if (responseLooksLikeHtml(text)) {
       console.error(`[GDC API] POST ${type} — Apps Script devolvió HTML`);
-      return;
+      return false;
     }
 
-    const result = JSON.parse(text) as { status?: string; message?: string };
+    let result: { status?: string; message?: string };
+    try {
+      result = JSON.parse(text) as { status?: string; message?: string };
+    } catch {
+      console.error(`[GDC API] POST ${type} — respuesta no es JSON válido`);
+      return false;
+    }
     if (result.status === 'error') {
       console.error(`[GDC API] POST ${type} — error del servidor:`, result.message);
+      return false;
     }
+    return true;
   } catch (error) {
     if (error instanceof Error && error.name !== 'AbortError') {
       console.error(`[GDC API] POST ${type} error:`, error);
     }
+    return false;
   }
 }
 
@@ -322,8 +339,8 @@ export async function loginUser(username: string, password: string): Promise<Use
   }
 }
 
-export async function saveTripToSheet(trip: Trip): Promise<void> {
-  await postSheet('trip', trip);
+export async function saveTripToSheet(trip: Trip): Promise<boolean> {
+  return postSheet('trip', trip);
 }
 
 export async function updateTripInSheet(trip: Trip): Promise<void> {
@@ -361,14 +378,28 @@ export async function uploadInvoice(
           },
         }),
       },
-      20000
+      UPLOAD_FETCH_TIMEOUT_MS
     );
+    if (!response.ok) {
+      console.error('[GDC API] uploadInvoice — HTTP', response.status, response.statusText);
+      return '';
+    }
     const text = await response.text();
     if (responseLooksLikeHtml(text)) {
       console.error('[GDC API] uploadInvoice — Apps Script devolvió HTML');
       return '';
     }
-    const result = JSON.parse(text) as { status?: string; url?: string };
+    let result: { status?: string; url?: string; message?: string };
+    try {
+      result = JSON.parse(text) as { status?: string; url?: string; message?: string };
+    } catch {
+      console.error('[GDC API] uploadInvoice — respuesta no es JSON');
+      return '';
+    }
+    if (result.status === 'error') {
+      console.error('[GDC API] uploadInvoice — servidor:', result.message);
+      return '';
+    }
     if (result.status === 'success' && result.url) {
       return String(result.url);
     }
@@ -410,14 +441,28 @@ export async function uploadRemitoImage(
           },
         }),
       },
-      20000
+      UPLOAD_FETCH_TIMEOUT_MS
     );
+    if (!response.ok) {
+      console.error('[GDC API] uploadRemitoImage — HTTP', response.status, response.statusText);
+      return '';
+    }
     const text = await response.text();
     if (responseLooksLikeHtml(text)) {
       console.error('[GDC API] uploadRemitoImage — Apps Script devolvió HTML');
       return '';
     }
-    const result = JSON.parse(text) as { status?: string; url?: string };
+    let result: { status?: string; url?: string; message?: string };
+    try {
+      result = JSON.parse(text) as { status?: string; url?: string; message?: string };
+    } catch {
+      console.error('[GDC API] uploadRemitoImage — respuesta no es JSON');
+      return '';
+    }
+    if (result.status === 'error') {
+      console.error('[GDC API] uploadRemitoImage — servidor:', result.message);
+      return '';
+    }
     if (result.status === 'success' && result.url) {
       return String(result.url);
     }

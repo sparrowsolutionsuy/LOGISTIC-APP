@@ -64,30 +64,6 @@ export interface Trip {
 
 export type BillingStatus = 'pendiente' | 'generada' | 'solicitada' | 'cobrada';
 
-export type RemitoConfidenceLevel = 'high' | 'medium' | 'low';
-
-export interface RemitoScalarField<T> {
-  value: T;
-  confidence: RemitoConfidenceLevel;
-}
-
-/** Datos extraídos de un remito por IA (Gemini Vision). */
-export interface RemitoExtracted {
-  fecha: RemitoScalarField<string | null>;
-  origen: RemitoScalarField<string | null>;
-  destino: RemitoScalarField<string | null>;
-  contenido: RemitoScalarField<string | null>;
-  pesoKg: RemitoScalarField<number | null>;
-  proveedor: RemitoScalarField<string | null>;
-  numeroRemito: RemitoScalarField<string | null>;
-  /** Texto completo reconocido (útil para depuración). */
-  rawText: string;
-}
-
-export type RemitoExtractionResult =
-  | { success: true; data: RemitoExtracted }
-  | { success: false; error: string };
-
 export interface Cost {
   id: string;
   fecha: string;
