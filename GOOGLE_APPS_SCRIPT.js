@@ -230,6 +230,75 @@ function doPost(e) {
           break;
         }
       }
+    } else if (type === 'cost') {
+      let sheet = ss.getSheetByName('DB_Costos');
+      if (!sheet) {
+        sheet = ss.insertSheet('DB_Costos');
+        sheet.appendRow([
+          'id',
+          'fecha',
+          'tripId',
+          'categoria',
+          'descripcion',
+          'monto',
+          'moneda',
+          'tipoCambio',
+          'montoUSD',
+          'scheduledCostId',
+          'comprobante',
+          'registradoPor',
+        ]);
+      }
+      ensureCostSheetHeaders(sheet);
+      sheet.appendRow(costRowFromPayload(data));
+    } else if (type === 'updateCost') {
+      const sheet = ss.getSheetByName('DB_Costos');
+      if (!sheet) {
+        return createErrorResponse('DB_Costos no existe');
+      }
+      ensureCostSheetHeaders(sheet);
+      const values = sheet.getDataRange().getValues();
+      const headers = values[0];
+      const idCol = headers.indexOf('id');
+      if (idCol === -1) {
+        return createErrorResponse('DB_Costos sin columna id');
+      }
+      var found = false;
+      for (var r = 1; r < values.length; r++) {
+        if (String(values[r][idCol]) === String(data.id)) {
+          var row = costRowFromPayload(data);
+          for (var c = 0; c < row.length; c++) {
+            sheet.getRange(r + 1, c + 1).setValue(row[c]);
+          }
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        return createErrorResponse('Costo no encontrado: ' + data.id);
+      }
+    } else if (type === 'deleteCost') {
+      const sheet = ss.getSheetByName('DB_Costos');
+      if (!sheet) {
+        return createErrorResponse('DB_Costos no existe');
+      }
+      const values = sheet.getDataRange().getValues();
+      const headers = values[0];
+      const idCol = headers.indexOf('id');
+      if (idCol === -1) {
+        return createErrorResponse('DB_Costos sin columna id');
+      }
+      var deleted = false;
+      for (var d = 1; d < values.length; d++) {
+        if (String(values[d][idCol]) === String(data.id)) {
+          sheet.deleteRow(d + 1);
+          deleted = true;
+          break;
+        }
+      }
+      if (!deleted) {
+        return createErrorResponse('Costo no encontrado: ' + data.id);
+      }
     } else if (type === 'uploadInvoice') {
       return uploadFile(data, 'Facturas', function (sheet, rowNum, headers, fileUrl) {
         const statusIndex = headers.indexOf('estado');
@@ -264,6 +333,52 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/** Asegura columnas esperadas por la app en DB_Costos (hojas antiguas). */
+function ensureCostSheetHeaders(sheet) {
+  var expected = [
+    'id',
+    'fecha',
+    'tripId',
+    'categoria',
+    'descripcion',
+    'monto',
+    'moneda',
+    'tipoCambio',
+    'montoUSD',
+    'scheduledCostId',
+    'comprobante',
+    'registradoPor',
+  ];
+  var lastCol = Math.max(1, sheet.getLastColumn());
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  for (var i = 0; i < expected.length; i++) {
+    var name = expected[i];
+    if (headers.indexOf(name) === -1) {
+      var lc = sheet.getLastColumn();
+      sheet.getRange(1, lc + 1).setValue(name);
+      headers.push(name);
+    }
+  }
+}
+
+/** Una fila en el mismo orden que doGet / appendRow inicial de DB_Costos. */
+function costRowFromPayload(data) {
+  return [
+    data.id,
+    data.fecha,
+    data.tripId != null && String(data.tripId) !== '' ? data.tripId : '',
+    data.categoria || 'Otros',
+    data.descripcion || '',
+    data.monto != null ? data.monto : 0,
+    data.moneda || 'USD',
+    data.tipoCambio != null ? data.tipoCambio : '',
+    data.montoUSD != null ? data.montoUSD : '',
+    data.scheduledCostId || '',
+    data.comprobante != null && data.comprobante !== undefined ? data.comprobante : '',
+    data.registradoPor || '',
+  ];
 }
 
 function createErrorResponse(msg) {

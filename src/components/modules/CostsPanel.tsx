@@ -8,9 +8,9 @@ import { Button } from '../ui/Button';
 export interface CostsPanelProps {
   costs: Cost[];
   registradoPor: string;
-  onAddCost: (cost: Cost) => void | Promise<void>;
-  onUpdateCost: (cost: Cost) => void | Promise<void>;
-  onDeleteCost: (costId: string) => void | Promise<void>;
+  onAddCost: (cost: Cost) => boolean | Promise<boolean>;
+  onUpdateCost: (cost: Cost) => boolean | Promise<boolean>;
+  onDeleteCost: (costId: string) => boolean | Promise<boolean>;
 }
 
 export const CostsPanel: React.FC<CostsPanelProps> = ({

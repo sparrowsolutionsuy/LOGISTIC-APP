@@ -64,9 +64,9 @@ export interface CostManagerProps {
   trips: Trip[];
   clients: Client[];
   registradoPor: string;
-  onAddCost: (cost: Cost) => void | Promise<void>;
-  onUpdateCost: (cost: Cost) => void | Promise<void>;
-  onDeleteCost: (costId: string) => void | Promise<void>;
+  onAddCost: (cost: Cost) => boolean | Promise<boolean>;
+  onUpdateCost: (cost: Cost) => boolean | Promise<boolean>;
+  onDeleteCost: (costId: string) => boolean | Promise<boolean>;
   scheduledCosts: ScheduledCost[];
   onAddScheduledCost: (sc: Omit<ScheduledCost, 'id' | 'creadoEn' | 'ultimaEjecucion'>) => void;
   onUpdateScheduledCost: (id: string, updates: Partial<ScheduledCost>) => void;
@@ -273,18 +273,24 @@ export const CostManager: React.FC<CostManagerProps> = ({
       };
       if (editingId) {
         const prev = costs.find((c) => c.id === editingId);
-        await onUpdateCost({
+        const updated = await onUpdateCost({
           ...base,
           id: editingId,
           comprobante: prev?.comprobante,
           scheduledCostId: prev?.scheduledCostId ?? base.scheduledCostId,
           registradoPor: prev?.registradoPor ?? registradoPor,
         });
+        if (!updated) {
+          return;
+        }
       } else {
-        await onAddCost({
+        const added = await onAddCost({
           ...base,
           id: `K${Date.now()}`,
         });
+        if (!added) {
+          return;
+        }
       }
       closeModal();
     } finally {
@@ -297,7 +303,10 @@ export const CostManager: React.FC<CostManagerProps> = ({
       if (!window.confirm('¿Eliminar este costo?')) {
         return;
       }
-      await onDeleteCost(id);
+      const removed = await onDeleteCost(id);
+      if (!removed) {
+        return;
+      }
     },
     [onDeleteCost]
   );

@@ -479,14 +479,14 @@ export async function saveClientToSheet(client: Client): Promise<void> {
   await postSheet('client', client);
 }
 
-export async function saveCostToSheet(cost: Cost): Promise<void> {
-  await postSheet('cost', cost);
+export async function saveCostToSheet(cost: Cost): Promise<boolean> {
+  return postSheet('cost', cost);
 }
 
-export async function updateCostInSheet(cost: Cost): Promise<void> {
-  await postSheet('updateCost', cost);
+export async function updateCostInSheet(cost: Cost): Promise<boolean> {
+  return postSheet('updateCost', cost);
 }
 
-export async function deleteCostFromSheet(id: string): Promise<void> {
-  await postSheet('deleteCost', { id });
+export async function deleteCostFromSheet(id: string): Promise<boolean> {
+  return postSheet('deleteCost', { id });
 }

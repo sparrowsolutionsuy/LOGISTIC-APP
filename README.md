@@ -71,6 +71,10 @@ Copiá el contenido de **`GOOGLE_APPS_SCRIPT.js`** en el proyecto de Apps Script
 
 El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, data }`) para evitar preflight innecesario; el script debe seguir usando `JSON.parse(e.postData.contents)`.
 
+**Operaciones soportadas por el script (POST `type`):** `login`, `trip`, `client`, `updateTrip`, `deleteTrip`, `cost`, `updateCost`, `deleteCost`, `uploadInvoice`, `uploadRemito`. Si actualizás el script desde este repo, volvé a **desplegar** la versión nueva de la Web App para que los costos se persistan en `DB_Costos`.
+
+**Costos programados (recurrentes):** hoy se guardan solo en el **navegador** (`localStorage`). Los costos que generan automáticamente cada mes sí se intentan grabar en `DB_Costos` como filas normales cuando corresponde; la **definición** del programado no está en el Sheet hasta que exista una extensión dedicada.
+
 ---
 
 ## Estructura útil del repo

@@ -281,20 +281,44 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const onAddCost = useCallback(async (cost: Cost) => {
-    await saveCostToSheet(cost);
-    setCosts((prev) => [...prev, cost]);
-  }, []);
+  const onAddCost = useCallback(
+    async (cost: Cost) => {
+      const ok = await saveCostToSheet(cost);
+      if (!ok) {
+        showToast('No se pudo guardar el costo en Google Sheets.', 'error');
+        return false;
+      }
+      setCosts((prev) => [...prev, cost]);
+      return true;
+    },
+    [showToast]
+  );
 
-  const onUpdateCost = useCallback(async (cost: Cost) => {
-    await updateCostInSheet(cost);
-    setCosts((prev) => prev.map((c) => (c.id === cost.id ? cost : c)));
-  }, []);
+  const onUpdateCost = useCallback(
+    async (cost: Cost) => {
+      const ok = await updateCostInSheet(cost);
+      if (!ok) {
+        showToast('No se pudo actualizar el costo en Google Sheets.', 'error');
+        return false;
+      }
+      setCosts((prev) => prev.map((c) => (c.id === cost.id ? cost : c)));
+      return true;
+    },
+    [showToast]
+  );
 
-  const onDeleteCost = useCallback(async (costId: string) => {
-    await deleteCostFromSheet(costId);
-    setCosts((prev) => prev.filter((c) => c.id !== costId));
-  }, []);
+  const onDeleteCost = useCallback(
+    async (costId: string) => {
+      const ok = await deleteCostFromSheet(costId);
+      if (!ok) {
+        showToast('No se pudo eliminar el costo en Google Sheets.', 'error');
+        return false;
+      }
+      setCosts((prev) => prev.filter((c) => c.id !== costId));
+      return true;
+    },
+    [showToast]
+  );
 
   useEffect(() => {
     if (loading || !user || user.role !== 'admin') {
@@ -305,21 +329,28 @@ const App: React.FC = () => {
       return;
     }
 
-    pending.forEach(async ({ cost, scheduledCostId }) => {
-      const newCost: Cost = {
-        ...cost,
-        id: `K${Date.now()}_${scheduledCostId}`,
-      };
-      await onAddCost(newCost);
-      updateScheduledCostLocal(scheduledCostId, {
-        ultimaEjecucion: new Date().toISOString().split('T')[0],
-      });
-    });
-
-    showToast(
-      `Se generaron ${pending.length} costo${pending.length > 1 ? 's' : ''} programado${pending.length > 1 ? 's' : ''} automáticamente`,
-      'info'
-    );
+    void (async () => {
+      let savedCount = 0;
+      for (const { cost, scheduledCostId } of pending) {
+        const newCost: Cost = {
+          ...cost,
+          id: `K${Date.now()}_${scheduledCostId}`,
+        };
+        const saved = await onAddCost(newCost);
+        if (saved) {
+          savedCount += 1;
+          updateScheduledCostLocal(scheduledCostId, {
+            ultimaEjecucion: new Date().toISOString().split('T')[0],
+          });
+        }
+      }
+      if (savedCount > 0) {
+        showToast(
+          `Se guardaron ${savedCount} costo${savedCount > 1 ? 's' : ''} programado${savedCount > 1 ? 's' : ''} en Sheets.`,
+          'info'
+        );
+      }
+    })();
   }, [loading]);
 
   const pendingTripsCount = useMemo(
