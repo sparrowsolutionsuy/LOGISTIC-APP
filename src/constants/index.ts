@@ -44,8 +44,8 @@ export const ROUTE_NAMES: Record<ActiveTab, string> = {
   report: 'Reporte IA',
 };
 
-/** UYU por 1 USD — valor inicial referencial y fallback de normalización. */
-export const DEFAULT_EXCHANGE_RATE = 42;
+/** UYU por 1 USD — sin valor sugerido por defecto. */
+export const DEFAULT_EXCHANGE_RATE = 0;
 
 export const EXCHANGE_RATE_STORAGE_KEY = 'gdc_exchange_rate_context';
 

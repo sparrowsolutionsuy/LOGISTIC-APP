@@ -1,4 +1,4 @@
-import type { Client, Cost, Trip, TripStatus, User } from '../types';
+import type { BillingInfo, Client, Cost, Trip, TripStatus, User } from '../types';
 import { DEFAULT_EXCHANGE_RATE, MOCK_DATA } from '../constants';
 
 const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
@@ -78,7 +78,8 @@ export function normalizeTrip(row: unknown): Trip {
         ? String(r.asignadoA).trim()
         : undefined,
     moneda: (r.moneda === 'UYU' ? 'UYU' : 'USD') as 'USD' | 'UYU',
-    tipoCambio: Number(r.tipoCambio) || DEFAULT_EXCHANGE_RATE,
+    tipoCambio:
+      r.tipoCambio && Number(r.tipoCambio) > 0 ? Number(r.tipoCambio) : undefined,
     ...(Number(r.tarifaUYU) > 0 ? { tarifaUYU: Number(r.tarifaUYU) } : {}),
     ...(normalizeBillingFlags(r) as Partial<Pick<Trip, 'facturaGenerada' | 'facturaSolicitada' | 'facturaCobrada'>>),
     ...(r.facturaFechaSolicitud ? { facturaFechaSolicitud: String(r.facturaFechaSolicitud) } : {}),
@@ -103,6 +104,21 @@ function normalizeBillingFlags(row: Record<string, unknown>): Record<string, boo
 
 export function normalizeClient(row: unknown): Client {
   const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+  let facturacion: BillingInfo | undefined;
+  let tieneFacturacionDiferente = false;
+  if (r.tieneFacturacionDiferente === true || r.tieneFacturacionDiferente === 'TRUE') {
+    tieneFacturacionDiferente = true;
+  }
+  if (r.facturacion) {
+    try {
+      const parsed = typeof r.facturacion === 'string' ? JSON.parse(r.facturacion) : r.facturacion;
+      if (parsed && typeof parsed === 'object') {
+        facturacion = parsed as BillingInfo;
+      }
+    } catch {
+      facturacion = undefined;
+    }
+  }
   const base: Client = {
     id: String(r.id ?? ''),
     nombreComercial: String(r.nombreComercial ?? ''),
@@ -119,6 +135,8 @@ export function normalizeClient(row: unknown): Client {
     ...(rut ? { rut } : {}),
     ...(email ? { email } : {}),
     ...(telefono ? { telefono } : {}),
+    ...(tieneFacturacionDiferente ? { tieneFacturacionDiferente } : {}),
+    ...(facturacion ? { facturacion } : {}),
   };
 }
 

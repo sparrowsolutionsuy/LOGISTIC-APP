@@ -66,12 +66,26 @@ function doGet(e) {
   let clientSheet = ss.getSheetByName('DB_Clientes');
   if (!clientSheet) {
     clientSheet = ss.insertSheet('DB_Clientes');
-    clientSheet.appendRow(['id', 'nombreComercial', 'departamento', 'localidad', 'latitud', 'longitud', 'rut', 'email', 'telefono']);
+    clientSheet.appendRow([
+      'id',
+      'nombreComercial',
+      'departamento',
+      'localidad',
+      'latitud',
+      'longitud',
+      'rut',
+      'email',
+      'telefono',
+      'tieneFacturacionDiferente',
+      'facturacion',
+    ]);
   } else {
       const headers = clientSheet.getRange(1, 1, 1, clientSheet.getLastColumn()).getValues()[0];
       if (!headers.includes('rut')) clientSheet.getRange(1, headers.length + 1).setValue('rut');
       if (!headers.includes('email')) clientSheet.getRange(1, headers.length + 2).setValue('email');
       if (!headers.includes('telefono')) clientSheet.getRange(1, headers.length + 3).setValue('telefono');
+      if (!headers.includes('tieneFacturacionDiferente')) clientSheet.getRange(1, clientSheet.getLastColumn() + 1).setValue('tieneFacturacionDiferente');
+      if (!headers.includes('facturacion')) clientSheet.getRange(1, clientSheet.getLastColumn() + 1).setValue('facturacion');
   }
   const clients = getSheetData('DB_Clientes');
 
@@ -176,17 +190,8 @@ function doPost(e) {
       sheet.appendRow(tripRowFromPayload(data, headers));
     } else if (type === 'client') {
       const sheet = ss.getSheetByName('DB_Clientes');
-      sheet.appendRow([
-        data.id,
-        data.nombreComercial,
-        data.departamento,
-        data.localidad,
-        data.latitud,
-        data.longitud,
-        data.rut || '',
-        data.email || '',
-        data.telefono || ''
-      ]);
+      const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      sheet.appendRow(buildRow(headers, data));
     } else if (type === 'updateTrip') {
       const sheet = ss.getSheetByName('DB_Viajes');
       ensureTripSheetHeaders(sheet);
@@ -443,6 +448,17 @@ function costRowFromPayload(data) {
     data.comprobante != null && data.comprobante !== undefined ? data.comprobante : '',
     data.registradoPor || '',
   ];
+}
+
+function buildRow(headers, data) {
+  return headers.map(function (h) {
+    var v = data[h];
+    if (v === undefined || v === null) return '';
+    if (v === true) return 'TRUE';
+    if (v === false) return 'FALSE';
+    if (typeof v === 'object') return JSON.stringify(v);
+    return v;
+  });
 }
 
 function createErrorResponse(msg) {

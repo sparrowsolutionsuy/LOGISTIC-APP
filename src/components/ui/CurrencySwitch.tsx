@@ -18,11 +18,11 @@ export const CurrencySwitch: React.FC<CurrencySwitchProps> = ({
   onRateChange,
 }) => {
   const [editing, setEditing] = useState(false);
-  const [rateInput, setRateInput] = useState(String(currentRate));
+  const [rateInput, setRateInput] = useState(currentRate > 0 ? String(currentRate) : '');
 
   useEffect(() => {
     if (!editing) {
-      setRateInput(String(currentRate));
+      setRateInput(currentRate > 0 ? String(currentRate) : '');
     }
   }, [currentRate, editing]);
 
@@ -31,7 +31,7 @@ export const CurrencySwitch: React.FC<CurrencySwitchProps> = ({
     if (Number.isFinite(parsed) && parsed > 0) {
       onRateChange(parsed);
     } else {
-      setRateInput(String(currentRate));
+      setRateInput(currentRate > 0 ? String(currentRate) : '');
     }
     setEditing(false);
   };
@@ -74,7 +74,8 @@ export const CurrencySwitch: React.FC<CurrencySwitchProps> = ({
           <input
             type="number"
             step="0.01"
-            min="1"
+            min="0"
+            placeholder="Ej: 43.50"
             value={rateInput}
             autoFocus
             onChange={(e) => setRateInput(e.target.value)}
@@ -84,24 +85,25 @@ export const CurrencySwitch: React.FC<CurrencySwitchProps> = ({
                 handleRateSubmit();
               }
               if (e.key === 'Escape') {
-                setRateInput(String(currentRate));
+                setRateInput('');
                 setEditing(false);
               }
             }}
-            className="w-16 rounded border border-[var(--accent-blue)] bg-[var(--bg-base)] px-1.5 py-0.5 text-xs text-[var(--text-primary)] outline-none"
+            className="w-20 rounded border border-[var(--accent-blue)] bg-[var(--bg-base)] px-1.5 py-0.5 text-xs text-[var(--text-primary)] outline-none"
           />
         ) : (
           <button
             type="button"
             onClick={() => {
-              setRateInput(String(currentRate));
+              setRateInput(currentRate > 0 ? String(currentRate) : '');
               setEditing(true);
             }}
-            title={lastUpdated ? `Actualizado: ${lastUpdated}` : 'Click para editar TC'}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-mono text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+            title={lastUpdated ? `Actualizado: ${lastUpdated}` : 'Click para ingresar TC'}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-mono hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+            style={{ color: currentRate > 0 ? 'var(--text-secondary)' : 'var(--accent-amber)' }}
           >
             <RefreshCw size={10} aria-hidden />
-            {currentRate.toFixed(1)}
+            {currentRate > 0 ? currentRate.toFixed(2) : 'Ingresar TC'}
           </button>
         )}
       </div>

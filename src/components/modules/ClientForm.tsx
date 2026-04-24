@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
-import type { Client } from '../../types';
+import type { BillingInfo, Client } from '../../types';
 import { DEPARTAMENTOS } from '../../constants';
-import { Save, User, MapPin, Hash, Mail, Phone, Info } from 'lucide-react';
+import { Save, User, MapPin, Hash, Mail, Phone, Info, Receipt } from 'lucide-react';
 
 /** Iframe OSM montado en el siguiente tick para no competir con el hilo principal en el mismo frame. */
 const OsmEmbedFrame = lazy(
@@ -84,6 +84,8 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
     email: '',
     telefono: '',
   });
+  const [tieneFacturacionDiferente, setTieneFacturacionDiferente] = useState(false);
+  const [facturacion, setFacturacion] = useState<Partial<BillingInfo>>({});
 
   const handleRutChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.replace(/\D/g, '').slice(0, 12);
@@ -114,6 +116,17 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
         rut: formData.rut,
         email: formData.email || '',
         telefono: formData.telefono || '',
+        tieneFacturacionDiferente,
+        facturacion: tieneFacturacionDiferente
+          ? {
+              razonSocial: facturacion.razonSocial ?? '',
+              rut: facturacion.rut ?? '',
+              email: facturacion.email ?? '',
+              telefono: facturacion.telefono,
+              direccion: facturacion.direccion,
+              condicionIVA: facturacion.condicionIVA,
+            }
+          : undefined,
       };
       await onAddClient(newClient);
       setFormData({
@@ -126,6 +139,8 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
         email: '',
         telefono: '',
       });
+      setTieneFacturacionDiferente(false);
+      setFacturacion({});
       alert('Cliente registrado exitosamente');
     }
   };
@@ -265,6 +280,127 @@ export const ClientForm: React.FC<ClientFormProps> = ({ onAddClient }) => {
           </div>
           {showMap ? <LocationPreviewMap la={la} lo={lo} /> : null}
         </div>
+
+        <div className="border-t border-slate-100 pt-4">
+          <label className="flex cursor-pointer items-center gap-3">
+            <div className="relative">
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={tieneFacturacionDiferente}
+                onChange={(e) => {
+                  setTieneFacturacionDiferente(e.target.checked);
+                  if (!e.target.checked) setFacturacion({});
+                }}
+              />
+              <div
+                className={`h-5 w-10 rounded-full transition-colors ${
+                  tieneFacturacionDiferente ? 'bg-blue-900' : 'bg-slate-300'
+                }`}
+              />
+              <div
+                className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  tieneFacturacionDiferente ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-slate-700">
+                La información de facturación es diferente al cliente
+              </p>
+              <p className="text-xs text-slate-500">
+                Activar si las facturas se emiten a nombre de otra razón social
+              </p>
+            </div>
+          </label>
+        </div>
+        {tieneFacturacionDiferente && (
+          <div className="space-y-4 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <Receipt className="h-4 w-4 text-blue-700" />
+              Datos de facturación
+            </h3>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Razón social *</label>
+              <input
+                type="text"
+                required={tieneFacturacionDiferente}
+                placeholder="Nombre legal de la empresa para facturas"
+                className="w-full rounded-lg border border-slate-300 bg-white p-2.5 outline-none focus:ring-2 focus:ring-blue-500"
+                value={facturacion.razonSocial ?? ''}
+                onChange={(e) => setFacturacion({ ...facturacion, razonSocial: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  RUT (12 dígitos) *
+                </label>
+                <input
+                  type="text"
+                  required={tieneFacturacionDiferente}
+                  placeholder="219999990012"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2.5 font-mono outline-none"
+                  value={facturacion.rut ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 12);
+                    setFacturacion({ ...facturacion, rut: val });
+                  }}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Email de facturación *
+                </label>
+                <input
+                  type="email"
+                  required={tieneFacturacionDiferente}
+                  placeholder="facturacion@empresa.com"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2.5 outline-none"
+                  value={facturacion.email ?? ''}
+                  onChange={(e) => setFacturacion({ ...facturacion, email: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Teléfono (opcional)
+                </label>
+                <input
+                  type="tel"
+                  placeholder="099 123 456"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2.5 outline-none"
+                  value={facturacion.telefono ?? ''}
+                  onChange={(e) => setFacturacion({ ...facturacion, telefono: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Dirección fiscal (opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Av. 18 de Julio 1234, Montevideo"
+                  className="w-full rounded-lg border border-slate-300 bg-white p-2.5 outline-none"
+                  value={facturacion.direccion ?? ''}
+                  onChange={(e) => setFacturacion({ ...facturacion, direccion: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Condición IVA</label>
+              <select
+                className="w-full rounded-lg border border-slate-300 bg-white p-2.5 outline-none"
+                value={facturacion.condicionIVA ?? ''}
+                onChange={(e) => setFacturacion({ ...facturacion, condicionIVA: e.target.value })}
+              >
+                <option value="">Sin especificar</option>
+                <option value="IVA incluido">IVA incluido (22%)</option>
+                <option value="IVA exento">IVA exento</option>
+                <option value="IVA mínimo">IVA mínimo (10%)</option>
+              </select>
+            </div>
+          </div>
+        )}
 
         <div className="pt-6">
           <button

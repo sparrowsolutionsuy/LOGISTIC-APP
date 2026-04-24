@@ -16,6 +16,15 @@ export interface User {
   role: UserRole;
 }
 
+export interface BillingInfo {
+  razonSocial: string;
+  rut: string;
+  email: string;
+  telefono?: string;
+  direccion?: string;
+  condicionIVA?: string;
+}
+
 export interface Client {
   id: string;
   nombreComercial: string;
@@ -26,6 +35,8 @@ export interface Client {
   rut?: string;
   email?: string;
   telefono?: string;
+  tieneFacturacionDiferente?: boolean;
+  facturacion?: BillingInfo;
 }
 
 export interface Trip {

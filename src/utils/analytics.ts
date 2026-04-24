@@ -14,7 +14,11 @@ export function costUsd(c: Cost): number {
 /** Ingreso bruto del viaje en USD (tarifa × tonelada, con TC histórico si la tarifa está en UYU). */
 export function tripRevenueUsd(trip: Trip): number {
   if (trip.moneda === 'UYU') {
-    const tc = trip.tipoCambio ?? DEFAULT_EXCHANGE_RATE;
+    const tc = trip.tipoCambio && trip.tipoCambio > 0 ? trip.tipoCambio : null;
+    if (!tc) {
+      console.warn(`[Analytics] Viaje ${trip.id} tiene moneda UYU pero sin tipoCambio`);
+      return 0;
+    }
     return (trip.tarifa * (trip.pesoKg / 1000)) / tc;
   }
   return trip.tarifa * (trip.pesoKg / 1000);

@@ -32,6 +32,7 @@ import { useToast } from './hooks/useToast';
 import { useScheduledCosts } from './hooks/useScheduledCosts';
 import { useExchangeRate } from './hooks/useExchangeRate';
 import { EXCHANGE_RATE_STORAGE_KEY } from './constants';
+import { sanitizeFileName } from './utils/formatters';
 
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
@@ -220,10 +221,14 @@ const App: React.FC = () => {
       setTrips((prev) => [trip, ...prev]);
       if (remitoImage) {
         try {
+          const client = clients.find((c) => c.id === trip.clientId);
+          const clientName = sanitizeFileName(client?.nombreComercial ?? 'Cliente');
+          const ext = remitoImage.name.includes('.') ? remitoImage.name.split('.').pop() : 'jpg';
+          const fileName = `REMITO_${clientName}_${trip.fecha}.${ext ?? 'jpg'}`;
           const remitoUrl = await uploadRemitoImage(
             trip.id,
             remitoImage.base64,
-            remitoImage.name,
+            fileName,
             remitoImage.mime
           );
           if (remitoUrl) {
@@ -243,7 +248,7 @@ const App: React.FC = () => {
       }
       return true;
     },
-    [showToast]
+    [showToast, clients]
   );
 
   const onUpdateTrip = useCallback(async (trip: Trip) => {

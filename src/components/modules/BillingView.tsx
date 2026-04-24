@@ -18,7 +18,7 @@ import {
   tripIvaUsd,
   tripSubtotalUsd,
 } from '../../utils/billing';
-import { Check, FileText, Loader2, UploadCloud } from 'lucide-react';
+import { Check, FileText, Loader2, Receipt, UploadCloud } from 'lucide-react';
 
 export interface BillingViewProps {
   trips: Trip[];
@@ -42,6 +42,34 @@ function isFinished(t: Trip): boolean {
 
 function getClientName(clients: Client[], id: string): string {
   return clients.find((c) => c.id === id)?.nombreComercial ?? 'Desconocido';
+}
+
+function getBillingClientInfo(
+  trip: Trip,
+  clients: Client[]
+): {
+  razonSocial: string;
+  rut: string;
+  email: string;
+  telefono?: string;
+  direccion?: string;
+  condicionIVA?: string;
+  esDiferente: boolean;
+} {
+  const client = clients.find((c) => c.id === trip.clientId);
+  if (!client) {
+    return { razonSocial: 'Desconocido', rut: '—', email: '—', esDiferente: false };
+  }
+  if (client.tieneFacturacionDiferente && client.facturacion) {
+    return { ...client.facturacion, esDiferente: true };
+  }
+  return {
+    razonSocial: client.nombreComercial,
+    rut: client.rut ?? '—',
+    email: client.email ?? '—',
+    telefono: client.telefono,
+    esDiferente: false,
+  };
 }
 
 function daysTone(days: number): { color: string; label: string } {
@@ -406,17 +434,21 @@ export const BillingView: React.FC<BillingViewProps> = ({
     }
   };
 
-  const buildInvoiceBlock = (trip: Trip, c: Client | null): string => {
+  const buildInvoiceBlock = (trip: Trip): string => {
+    const billingInfo = getBillingClientInfo(trip, clients);
+    const client = clients.find((c) => c.id === trip.clientId) ?? null;
     const sub = tripSubtotalUsd(trip);
     const iva = tripIvaUsd(trip);
     const tot = tripGrandTotalUsd(trip);
     const lines = [
       '── CLIENTE ──────────────────────────',
-      `Razón Social:     ${c?.nombreComercial ?? ''}`,
-      `RUT:              ${c?.rut ?? ''}`,
-      `Email:            ${c?.email ?? ''}`,
-      `Teléfono:         ${c?.telefono ?? ''}`,
-      `Departamento:     ${c?.departamento ?? ''} / ${c?.localidad ?? ''}`,
+      `Razón Social:     ${billingInfo.razonSocial}`,
+      `RUT:              ${billingInfo.rut}`,
+      `Email:            ${billingInfo.email}`,
+      `Teléfono:         ${billingInfo.telefono ?? ''}`,
+      `Departamento:     ${client?.departamento ?? ''} / ${client?.localidad ?? ''}`,
+      `Condición IVA:    ${billingInfo.condicionIVA ?? ''}`,
+      `Dirección fiscal: ${billingInfo.direccion ?? ''}`,
       '',
       '── SERVICIO ─────────────────────────',
       `N° Referencia:    ${trip.id}`,
@@ -1157,11 +1189,14 @@ export const BillingView: React.FC<BillingViewProps> = ({
       >
         {invoiceModalTrip && (
           <div className="space-y-4 text-sm text-[var(--text-secondary)]">
+            {getBillingClientInfo(invoiceModalTrip, clients).esDiferente && (
+              <div className="flex items-center gap-2 rounded-lg border border-[color-mix(in_srgb,var(--accent-amber)_35%,transparent)] bg-[color-mix(in_srgb,var(--accent-amber)_10%,transparent)] px-3 py-1.5 text-xs text-[var(--accent-amber)]">
+                <Receipt size={12} />
+                Usando datos de facturación específicos (distintos al cliente operativo)
+              </div>
+            )}
             <pre className="whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4 font-mono text-xs text-[var(--text-primary)]">
-              {buildInvoiceBlock(
-                invoiceModalTrip,
-                clients.find((c) => c.id === invoiceModalTrip.clientId) ?? null
-              )}
+              {buildInvoiceBlock(invoiceModalTrip)}
             </pre>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -1170,10 +1205,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                 size="sm"
                 onClick={() =>
                   void copyText(
-                    buildInvoiceBlock(
-                      invoiceModalTrip,
-                      clients.find((c) => c.id === invoiceModalTrip.clientId) ?? null
-                    ),
+                    buildInvoiceBlock(invoiceModalTrip),
                     'Copiado.'
                   )
                 }

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { Client, Trip } from '../../types';
 import { Modal } from '../ui/Modal';
-import { Search, MapPin, Phone, Mail, Hash, Truck, ArrowRight } from 'lucide-react';
+import { Search, MapPin, Phone, Mail, Hash, Truck, ArrowRight, Receipt } from 'lucide-react';
 
 interface ClientDirectoryProps {
   clients: Client[];
@@ -87,6 +87,12 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
               className="rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md"
             >
               <h3 className="font-semibold text-slate-900">{client.nombreComercial}</h3>
+              {client.tieneFacturacionDiferente && (
+                <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-[var(--accent-amber)]">
+                  <Receipt size={9} />
+                  Facturación diferente: {client.facturacion?.razonSocial ?? 'Configurada'}
+                </span>
+              )}
               <p className="mt-2 flex items-center text-xs text-slate-500">
                 <MapPin className="mr-1 h-3 w-3 shrink-0" />
                 {client.localidad}, {client.departamento}
@@ -116,6 +122,12 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
               >
                 <div>
                   <p className="font-semibold text-slate-900">{client.nombreComercial}</p>
+                  {client.tieneFacturacionDiferente && (
+                    <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-[var(--accent-amber)]">
+                      <Receipt size={9} />
+                      Facturación diferente
+                    </span>
+                  )}
                   <p className="mt-1 text-xs text-slate-500">
                     {client.localidad}, {client.departamento}
                   </p>

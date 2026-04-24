@@ -6,7 +6,8 @@ import Badge from '../ui/Badge';
 import SortableHeader from '../ui/SortableHeader';
 import { Modal } from '../ui/Modal';
 import { useToast } from '../../hooks/useToast';
-import { uploadInvoice } from '../../services/api';
+import { uploadInvoice, uploadRemitoImage } from '../../services/api';
+import { sanitizeFileName } from '../../utils/formatters';
 import {
   Plus,
   Calendar,
@@ -113,6 +114,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
     name: string;
     mime: string;
   } | null>(null);
+  const [showRemitoUploader, setShowRemitoUploader] = useState(false);
   const remitoFileInputRef = useRef<HTMLInputElement>(null);
 
   const onRemitoFileChange = useCallback(
@@ -144,6 +146,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
           name: file.name,
           mime: file.type || 'image/jpeg',
         });
+        setShowRemitoUploader(false);
         showInfo('Remito adjunto: al guardar el viaje se subirá a Drive.');
       };
       reader.onerror = () => alert('No se pudo leer el archivo.');
@@ -218,6 +221,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
   const openNewForm = () => {
     setEditingId(null);
     setPendingRemito(null);
+    setShowRemitoUploader(false);
     setNewTrip({
       estado: 'Pendiente',
       fecha: new Date().toISOString().split('T')[0],
@@ -229,7 +233,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
       kmRecorridos: 0,
       tarifa: undefined,
       moneda: 'USD',
-      tipoCambio: currentRate,
+      tipoCambio: undefined,
     });
     setFormOpen(true);
   };
@@ -244,9 +248,10 @@ export const TripManager: React.FC<TripManagerProps> = ({
     }
     setEditingId(trip.id);
     setPendingRemito(null);
+    setShowRemitoUploader(false);
     setNewTrip({
       ...trip,
-      tipoCambio: trip.tipoCambio ?? currentRate,
+      tipoCambio: trip.tipoCambio && trip.tipoCambio > 0 ? trip.tipoCambio : undefined,
       moneda: trip.moneda ?? 'USD',
     });
     setFormOpen(true);
@@ -260,9 +265,10 @@ export const TripManager: React.FC<TripManagerProps> = ({
     setClosedWarnTrip(null);
     setEditingId(trip.id);
     setPendingRemito(null);
+    setShowRemitoUploader(false);
     setNewTrip({
       ...trip,
-      tipoCambio: trip.tipoCambio ?? currentRate,
+      tipoCambio: trip.tipoCambio && trip.tipoCambio > 0 ? trip.tipoCambio : undefined,
       moneda: trip.moneda ?? 'USD',
     });
     setFormOpen(true);
@@ -273,6 +279,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
     setEditingId(null);
     setSaveLoading(false);
     setPendingRemito(null);
+    setShowRemitoUploader(false);
     setNewTrip({ estado: 'Pendiente', fecha: new Date().toISOString().split('T')[0] });
   };
 
@@ -301,9 +308,9 @@ export const TripManager: React.FC<TripManagerProps> = ({
     if (!Number.isFinite(km) || km < 0) {
       return 'KM recorridos inválidos.';
     }
-    const tc = Number(newTrip.tipoCambio ?? currentRate);
-    if (!Number.isFinite(tc) || tc <= 0) {
-      return 'El tipo de cambio debe ser mayor a 0.';
+    const tc = Number(newTrip.tipoCambio);
+    if ((newTrip.moneda ?? 'USD') === 'UYU' && (!Number.isFinite(tc) || tc <= 0)) {
+      return 'Para moneda UYU, el tipo de cambio debe ser mayor a 0.';
     }
     return null;
   };
@@ -322,12 +329,14 @@ export const TripManager: React.FC<TripManagerProps> = ({
     setSaveLoading(true);
     try {
       const moneda = (newTrip.moneda ?? 'USD') as 'USD' | 'UYU';
-      const tipoCambio = Number(newTrip.tipoCambio ?? currentRate);
+      const tipoCambioRaw = Number(newTrip.tipoCambio);
+      const tipoCambio = Number.isFinite(tipoCambioRaw) && tipoCambioRaw > 0 ? tipoCambioRaw : undefined;
       const pesoN = Number(newTrip.pesoKg);
       const tarifaN = Number(newTrip.tarifa);
       const ton = pesoN / 1000;
       const totalNominal = tarifaN * ton;
-      const tarifaUYU = moneda === 'UYU' ? totalNominal : totalNominal * tipoCambio;
+      const tarifaUYU =
+        moneda === 'UYU' ? totalNominal : tipoCambio ? totalNominal * tipoCambio : undefined;
 
       const base = {
         fecha: String(newTrip.fecha),
@@ -338,7 +347,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
         tarifa: tarifaN,
         moneda,
         tipoCambio,
-        tarifaUYU,
+        ...(tarifaUYU ? { tarifaUYU } : {}),
         origen: String(newTrip.origen).trim(),
         destino: String(newTrip.destino).trim(),
         estado: (newTrip.estado as TripStatus) ?? 'Pendiente',
@@ -348,9 +357,32 @@ export const TripManager: React.FC<TripManagerProps> = ({
       };
 
       if (editingId) {
+        let remitoUrl = newTrip.remitoUrl;
+        if (pendingRemito) {
+          const client = clients.find((c) => c.id === newTrip.clientId);
+          const clientName = sanitizeFileName(client?.nombreComercial ?? 'Cliente');
+          const fecha = String(newTrip.fecha);
+          const ext = pendingRemito.name.includes('.') ? pendingRemito.name.split('.').pop() : 'jpg';
+          const fileName = `REMITO_${clientName}_${fecha}.${ext ?? 'jpg'}`;
+          try {
+            const uploadedUrl = await uploadRemitoImage(
+              editingId,
+              pendingRemito.base64,
+              fileName,
+              pendingRemito.mime
+            );
+            if (uploadedUrl) {
+              remitoUrl = uploadedUrl;
+            }
+          } catch (uploadErr) {
+            console.error('Error subiendo remito:', uploadErr);
+            showInfo('El remito no se pudo subir, pero el viaje se guardará.');
+          }
+        }
         const updated: Trip = {
           ...base,
           id: editingId,
+          remitoUrl,
         };
         await onUpdateTrip(updated);
       } else {
@@ -550,7 +582,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
         size="lg"
       >
         <form onSubmit={(e) => void handleSave(e)} className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {!editingId && (
+          {!showRemitoUploader && (
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-4 md:col-span-2">
               <h4 className="text-sm font-semibold text-[var(--text-primary)]">Datos del viaje</h4>
               <div className="flex items-center gap-2">
@@ -564,14 +596,40 @@ export const TripManager: React.FC<TripManagerProps> = ({
                 />
                 <button
                   type="button"
+                  onClick={() => setShowRemitoUploader(true)}
+                  className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent-blue)] hover:text-[var(--accent-blue)]"
+                >
+                  <FileImage size={14} aria-hidden />
+                  {editingId ? (newTrip.remitoUrl ? 'Reemplazar remito' : 'Adjuntar remito') : 'Adjuntar remito (Drive)'}
+                  {pendingRemito ? (
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--accent-emerald)]" aria-hidden />
+                  ) : null}
+                </button>
+              </div>
+            </div>
+          )}
+          {showRemitoUploader && (
+            <div className="mb-2 rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-3 md:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Seleccioná una imagen de remito (JPG, PNG o WEBP, máx. 5MB)
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowRemitoUploader(false)}
+                  className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                >
+                  Cerrar
+                </button>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
                   onClick={() => remitoFileInputRef.current?.click()}
                   className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--accent-blue)] hover:text-[var(--accent-blue)]"
                 >
                   <FileImage size={14} aria-hidden />
-                  Adjuntar remito (Drive)
-                  {pendingRemito ? (
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--accent-emerald)]" aria-hidden />
-                  ) : null}
+                  Seleccionar archivo
                 </button>
               </div>
             </div>
@@ -665,6 +723,44 @@ export const TripManager: React.FC<TripManagerProps> = ({
               onChange={(e) => setNewTrip({ ...newTrip, destino: e.target.value })}
             />
           </div>
+          {editingId && (
+            <div className="md:col-span-2">
+              <div className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                  Remito del viaje
+                </p>
+                {newTrip.remitoUrl ? (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-[color-mix(in_srgb,var(--accent-emerald)_35%,transparent)] bg-[color-mix(in_srgb,var(--accent-emerald)_8%,transparent)] px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <FileImage size={14} className="shrink-0 text-[var(--accent-emerald)]" />
+                      <span className="truncate text-xs text-[var(--text-secondary)]">Remito adjunto</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <a
+                        href={newTrip.remitoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-xs font-medium text-[var(--accent-blue)] hover:underline"
+                      >
+                        <ExternalLink size={11} />
+                        Ver
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setNewTrip({ ...newTrip, remitoUrl: undefined })}
+                        className="text-[var(--accent-red)] hover:opacity-80 transition-opacity"
+                        title="Quitar remito"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs italic text-[var(--text-muted)]">Sin remito adjunto</p>
+                )}
+              </div>
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Peso (kg)</label>
             <input
@@ -727,31 +823,34 @@ export const TripManager: React.FC<TripManagerProps> = ({
                   <input
                     type="number"
                     step="0.01"
-                    min="1"
+                    min="0"
+                    placeholder="Ej: 43.50"
                     className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 font-mono text-sm outline-none"
-                    value={newTrip.tipoCambio ?? currentRate}
-                    onChange={(e) => setNewTrip({ ...newTrip, tipoCambio: Number(e.target.value) })}
+                    value={newTrip.tipoCambio ?? ''}
+                    onChange={(e) =>
+                      setNewTrip({
+                        ...newTrip,
+                        tipoCambio: e.target.value === '' ? undefined : Number(e.target.value),
+                      })
+                    }
                   />
                   <p className="mt-0.5 text-[10px] text-slate-400">
-                    TC actual del sistema: {currentRate.toFixed(2)}{' '}
-                    <button
-                      type="button"
-                      className="text-blue-500 underline"
-                      onClick={() => setNewTrip({ ...newTrip, tipoCambio: currentRate })}
-                    >
-                      usar este
-                    </button>
+                    {newTrip.moneda === 'UYU'
+                      ? 'Requerido para conversión a USD'
+                      : 'Opcional - para referencia'}
                   </p>
                 </div>
                 <div className="flex flex-col justify-end">
                   {(() => {
                     const peso = Number(newTrip.pesoKg) || 0;
                     const tarifa = Number(newTrip.tarifa) || 0;
-                    const tc = Number(newTrip.tipoCambio) || currentRate;
+                    const tc = Number(newTrip.tipoCambio);
                     const moneda = newTrip.moneda ?? 'USD';
                     const totalEnMoneda = tarifa * (peso / 1000);
-                    const totalUSD = moneda === 'USD' ? totalEnMoneda : totalEnMoneda / tc;
-                    const totalUYU = moneda === 'UYU' ? totalEnMoneda : totalEnMoneda * tc;
+                    const totalUSD =
+                      moneda === 'USD' ? totalEnMoneda : tc > 0 ? totalEnMoneda / tc : 0;
+                    const totalUYU =
+                      moneda === 'UYU' ? totalEnMoneda : tc > 0 ? totalEnMoneda * tc : 0;
 
                     if (peso === 0 || tarifa === 0) {
                       return (

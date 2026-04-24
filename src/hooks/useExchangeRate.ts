@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { DisplayCurrency, ExchangeRateContext } from '../types';
-import { DEFAULT_EXCHANGE_RATE, EXCHANGE_RATE_STORAGE_KEY } from '../constants';
+import { EXCHANGE_RATE_STORAGE_KEY } from '../constants';
 
 function loadContext(): ExchangeRateContext {
   try {
@@ -13,7 +13,7 @@ function loadContext(): ExchangeRateContext {
   }
   return {
     displayCurrency: 'USD',
-    currentRate: DEFAULT_EXCHANGE_RATE,
+    currentRate: 0,
     lastUpdated: null,
   };
 }
