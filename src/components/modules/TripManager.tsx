@@ -330,7 +330,10 @@ export const TripManager: React.FC<TripManagerProps> = ({
     try {
       const moneda = (newTrip.moneda ?? 'USD') as 'USD' | 'UYU';
       const tipoCambioRaw = Number(newTrip.tipoCambio);
-      const tipoCambio = Number.isFinite(tipoCambioRaw) && tipoCambioRaw > 0 ? tipoCambioRaw : undefined;
+      const tipoCambioParsed =
+        Number.isFinite(tipoCambioRaw) && tipoCambioRaw > 0 ? tipoCambioRaw : undefined;
+      const existingTrip = editingId ? trips.find((t) => t.id === editingId) : null;
+      const tipoCambio = editingId ? tipoCambioParsed ?? existingTrip?.tipoCambio : tipoCambioParsed;
       const pesoN = Number(newTrip.pesoKg);
       const tarifaN = Number(newTrip.tarifa);
       const ton = pesoN / 1000;
@@ -582,18 +585,18 @@ export const TripManager: React.FC<TripManagerProps> = ({
         size="lg"
       >
         <form onSubmit={(e) => void handleSave(e)} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <input
+            ref={remitoFileInputRef}
+            type="file"
+            accept={ACCEPT_REMITO_IMAGE}
+            className="sr-only"
+            aria-label="Seleccionar imagen del remito para subir a Drive"
+            onChange={onRemitoFileChange}
+          />
           {!showRemitoUploader && (
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-4 md:col-span-2">
               <h4 className="text-sm font-semibold text-[var(--text-primary)]">Datos del viaje</h4>
               <div className="flex items-center gap-2">
-                <input
-                  ref={remitoFileInputRef}
-                  type="file"
-                  accept={ACCEPT_REMITO_IMAGE}
-                  className="sr-only"
-                  aria-label="Seleccionar imagen del remito para subir a Drive"
-                  onChange={onRemitoFileChange}
-                />
                 <button
                   type="button"
                   onClick={() => setShowRemitoUploader(true)}
