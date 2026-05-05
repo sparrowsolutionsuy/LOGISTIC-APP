@@ -241,10 +241,14 @@ export function normalizeCost(row: unknown): Cost {
   const explicitNotScheduled =
     r.isScheduled === false || String(r.isScheduled).toUpperCase() === 'FALSE';
   const migratedAuto =
-    !explicitNotScheduled && !explicitIsScheduled && legacyScheduledId !== undefined && desc.startsWith('[AUTO]');
-  const isScheduled = explicitIsScheduled || migratedAuto ? true : undefined;
+    !explicitNotScheduled &&
+    !explicitIsScheduled &&
+    legacyScheduledId !== undefined &&
+    desc.startsWith('[AUTO]');
+  const isScheduled = explicitNotScheduled ? false : explicitIsScheduled || migratedAuto;
 
-  const scheduleId = scheduleIdCol ?? (isScheduled === true ? legacyScheduledId : undefined);
+  const scheduleId =
+    scheduleIdCol ?? (isScheduled ? legacyScheduledId : undefined);
 
   const scheduledDayRaw = Number(r.scheduledDay);
   const scheduledDay =
@@ -264,7 +268,7 @@ export function normalizeCost(row: unknown): Cost {
     moneda,
     tipoCambio,
     montoUSD,
-    ...(isScheduled === true ? { isScheduled: true as const } : {}),
+    isScheduled,
     ...(scheduleId ? { scheduleId } : {}),
     ...(legacyScheduledId ? { scheduledCostId: legacyScheduledId } : {}),
     ...(scheduledDay !== undefined ? { scheduledDay } : {}),
