@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ActiveTab, AIInsight, Client, Cost, Trip, User } from './types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ActiveTab, AIInsight, Client, Cost, ScheduledCostDefinition, Trip, User } from './types';
 import { Dashboard } from './components/modules/Dashboard';
 import { StrategicMap } from './components/modules/StrategicMap';
 import { TripManager } from './components/modules/TripManager';
@@ -16,30 +16,31 @@ import { LoadingSpinner } from './components/ui/LoadingSpinner';
 import { CurrencySwitch } from './components/ui/CurrencySwitch';
 import {
   deleteCostFromSheet,
+  deleteScheduledCostDefinition,
   deleteTripFromSheet,
   fetchLogisticsData,
   lastLogisticsFetchWasMock,
   saveClientToSheet,
   saveCostToSheet,
+  saveScheduledCostDefinition,
   saveTripToSheet,
   updateCostInSheet,
+  updateScheduledCostDefinition,
   updateTripInSheet,
   uploadRemitoImage,
 } from './services/api';
 import { generateLogisticsInsights } from './services/geminiService';
 import { useTheme } from './hooks/useTheme';
 import { useToast } from './hooks/useToast';
-import { useScheduledCosts } from './hooks/useScheduledCosts';
 import { useExchangeRate } from './hooks/useExchangeRate';
+import { checkAndExecuteScheduledCosts } from './utils/scheduledCosts';
 import { EXCHANGE_RATE_STORAGE_KEY } from './constants';
 import { sanitizeFileName } from './utils/formatters';
 
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
-const SCHEDULED_COSTS_KEY = 'gdc_scheduled_costs';
 
 const ADMIN_ONLY_TABS = new Set<ActiveTab>([
-  'costs',
   'financial',
   'billing',
   'clients',
@@ -81,18 +82,13 @@ const App: React.FC = () => {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [costs, setCosts] = useState<Cost[]>([]);
+  const [scheduledCostDefinitions, setScheduledCostDefinitions] = useState<ScheduledCostDefinition[]>(
+    []
+  );
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [insights, setInsights] = useState<AIInsight[]>([]);
-  const {
-    scheduledCosts,
-    addScheduledCost,
-    updateScheduledCost: updateScheduledCostLocal,
-    deleteScheduledCost,
-    toggleActive,
-    getPendingScheduledCosts,
-    nextDueDate,
-  } = useScheduledCosts();
+  const scheduledExecutionKeysRef = useRef(new Set<string>());
 
   const {
     displayCurrency,
@@ -113,18 +109,37 @@ const App: React.FC = () => {
     setHydrated(true);
   }, []);
 
-  const loadData = useCallback(async () => {
-    try {
-      const data = await fetchLogisticsData();
-      setClients(data.clients);
-      setTrips(data.trips);
-      setCosts(data.costs);
-      setOffline(lastLogisticsFetchWasMock());
-    } catch (error) {
-      console.error('[App] loadData error:', error);
-      setOffline(true);
-    }
-  }, []);
+  const loadData = useCallback(
+    async (currentUser: User | null) => {
+      try {
+        const data = await fetchLogisticsData();
+        let nextCosts = [...data.costs];
+        if (currentUser?.role === 'admin') {
+          const generated = await checkAndExecuteScheduledCosts(
+            data.scheduledCostDefinitions,
+            [...data.costs],
+            scheduledExecutionKeysRef.current
+          );
+          if (generated.length > 0) {
+            showToast(
+              `Se registraron ${generated.length} costo${generated.length > 1 ? 's' : ''} programado${generated.length > 1 ? 's' : ''} del mes.`,
+              'info'
+            );
+          }
+          nextCosts = [...generated, ...nextCosts];
+        }
+        setClients(data.clients);
+        setTrips(data.trips);
+        setCosts(nextCosts);
+        setScheduledCostDefinitions(data.scheduledCostDefinitions);
+        setOffline(lastLogisticsFetchWasMock());
+      } catch (error) {
+        console.error('[App] loadData error:', error);
+        setOffline(true);
+      }
+    },
+    [showToast]
+  );
 
   useEffect(() => {
     if (!user || loading) {
@@ -170,7 +185,7 @@ const App: React.FC = () => {
       return;
     }
     setLoading(true);
-    void loadData().finally(() => setLoading(false));
+    void loadData(user).finally(() => setLoading(false));
   }, [hydrated, user, loadData]);
 
   useEffect(() => {
@@ -190,23 +205,21 @@ const App: React.FC = () => {
 
   const onLogout = useCallback(() => {
     const savedTheme = localStorage.getItem(THEME_KEY);
-    const savedScheduled = localStorage.getItem(SCHEDULED_COSTS_KEY);
     const savedExchange = localStorage.getItem(EXCHANGE_RATE_STORAGE_KEY);
     localStorage.clear();
     if (savedTheme) {
       localStorage.setItem(THEME_KEY, savedTheme);
     }
-    if (savedScheduled) {
-      localStorage.setItem(SCHEDULED_COSTS_KEY, savedScheduled);
-    }
     if (savedExchange) {
       localStorage.setItem(EXCHANGE_RATE_STORAGE_KEY, savedExchange);
     }
+    scheduledExecutionKeysRef.current.clear();
     setUser(null);
     setActiveTab('dashboard');
     setTrips([]);
     setClients([]);
     setCosts([]);
+    setScheduledCostDefinitions([]);
     setInsights([]);
     setOffline(false);
   }, []);
@@ -333,38 +346,57 @@ const App: React.FC = () => {
     [showToast]
   );
 
-  useEffect(() => {
-    if (loading || !user || user.role !== 'admin') {
-      return;
-    }
-    const pending = getPendingScheduledCosts(costs);
-    if (pending.length === 0) {
-      return;
-    }
+  const onCreateScheduledDefinition = useCallback(
+    async (def: ScheduledCostDefinition) => {
+      try {
+        await saveScheduledCostDefinition(def);
+        setScheduledCostDefinitions((prev) => [...prev, def]);
+        showToast('Costo programado guardado en Sheets.', 'info');
+      } catch (err) {
+        console.error('[App] onCreateScheduledDefinition:', err);
+        showToast('No se pudo guardar la definición en Sheets.', 'error');
+      }
+    },
+    [showToast]
+  );
 
-    void (async () => {
-      let savedCount = 0;
-      for (const { cost, scheduledCostId } of pending) {
-        const newCost: Cost = {
-          ...cost,
-          id: `K${Date.now()}_${scheduledCostId}`,
-        };
-        const saved = await onAddCost(newCost);
-        if (saved) {
-          savedCount += 1;
-          updateScheduledCostLocal(scheduledCostId, {
-            ultimaEjecucion: new Date().toISOString().split('T')[0],
-          });
-        }
+  const onUpdateScheduledDefinition = useCallback(
+    async (def: ScheduledCostDefinition) => {
+      try {
+        await updateScheduledCostDefinition(def);
+        setScheduledCostDefinitions((prev) => prev.map((d) => (d.id === def.id ? def : d)));
+      } catch (err) {
+        console.error('[App] onUpdateScheduledDefinition:', err);
+        showToast('No se pudo actualizar la definición.', 'error');
       }
-      if (savedCount > 0) {
-        showToast(
-          `Se guardaron ${savedCount} costo${savedCount > 1 ? 's' : ''} programado${savedCount > 1 ? 's' : ''} en Sheets.`,
-          'info'
-        );
+    },
+    [showToast]
+  );
+
+  const onDeleteScheduledDefinitionHandler = useCallback(
+    async (id: string) => {
+      try {
+        await deleteScheduledCostDefinition(id);
+        setScheduledCostDefinitions((prev) => prev.filter((d) => d.id !== id));
+        showToast('Definición eliminada.', 'info');
+      } catch (err) {
+        console.error('[App] onDeleteScheduledDefinitionHandler:', err);
+        showToast('No se pudo eliminar la definición.', 'error');
       }
-    })();
-  }, [loading]);
+    },
+    [showToast]
+  );
+
+  const onToggleScheduledDefinitionActive = useCallback(
+    async (id: string) => {
+      const def = scheduledCostDefinitions.find((d) => d.id === id);
+      if (!def) {
+        return;
+      }
+      await onUpdateScheduledDefinition({ ...def, active: !def.active });
+    },
+    [scheduledCostDefinitions, onUpdateScheduledDefinition]
+  );
 
   const pendingTripsCount = useMemo(
     () => trips.filter((t) => t.estado === 'Pendiente').length,
@@ -493,27 +525,24 @@ const App: React.FC = () => {
         </AdminGuard>
       )}
       {activeTab === 'costs' && (
-        <AdminGuard user={user} onRedirect={adminRedirect}>
-          <CostManager
-            costs={costs}
-            trips={trips}
-            clients={clients}
-            registradoPor={user.username}
-            onAddCost={onAddCost}
-            onUpdateCost={onUpdateCost}
-            onDeleteCost={onDeleteCost}
-            scheduledCosts={scheduledCosts}
-            onAddScheduledCost={addScheduledCost}
-            onUpdateScheduledCost={updateScheduledCostLocal}
-            onDeleteScheduledCost={deleteScheduledCost}
-            onToggleScheduledCost={toggleActive}
-            nextDueDate={nextDueDate()}
-            currentRate={currentRate}
-            displayCurrency={displayCurrency}
-            formatAmount={formatAmount}
-            convertAggregateToDisplay={convertAggregateToDisplay}
-          />
-        </AdminGuard>
+        <CostManager
+          user={user}
+          costs={costs}
+          trips={trips}
+          clients={clients}
+          registradoPor={user.username}
+          onAddCost={onAddCost}
+          onUpdateCost={onUpdateCost}
+          onDeleteCost={onDeleteCost}
+          scheduledCostDefinitions={scheduledCostDefinitions}
+          onCreateScheduledDefinition={onCreateScheduledDefinition}
+          onDeleteScheduledDefinition={onDeleteScheduledDefinitionHandler}
+          onToggleScheduledDefinitionActive={onToggleScheduledDefinitionActive}
+          currentRate={currentRate}
+          displayCurrency={displayCurrency}
+          formatAmount={formatAmount}
+          convertAggregateToDisplay={convertAggregateToDisplay}
+        />
       )}
       {activeTab === 'financial' && (
         <AdminGuard user={user} onRedirect={adminRedirect}>

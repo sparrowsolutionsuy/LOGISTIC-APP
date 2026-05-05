@@ -1,4 +1,4 @@
-import type { BillingInfo, Client, Cost, Trip, TripStatus, User } from '../types';
+import type { BillingInfo, Client, Cost, ScheduledCostDefinition, Trip, TripStatus, User } from '../types';
 import { DEFAULT_EXCHANGE_RATE, MOCK_DATA } from '../constants';
 
 const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
@@ -23,6 +23,9 @@ export function lastLogisticsFetchWasMock(): boolean {
 }
 
 const MOCK_DELAY_MS = 300;
+
+/** En modo mock, definiciones de costos programados persisten en memoria del módulo. */
+let mockScheduledCostDefinitionsCache: ScheduledCostDefinition[] | null = null;
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -155,6 +158,59 @@ function normalizeCostCategory(value: unknown): Cost['categoria'] {
   return COST_CATEGORIES.includes(s as Cost['categoria']) ? (s as Cost['categoria']) : 'Otros';
 }
 
+function parseScheduledMonths(raw: unknown): string[] | undefined {
+  if (raw == null || String(raw).trim() === '') {
+    return undefined;
+  }
+  if (Array.isArray(raw)) {
+    const arr = raw.filter((x): x is string => typeof x === 'string' && /^\d{4}-\d{2}$/.test(x));
+    return arr.length > 0 ? arr : undefined;
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        const arr = parsed.filter((x): x is string => typeof x === 'string' && /^\d{4}-\d{2}$/.test(x));
+        return arr.length > 0 ? arr : undefined;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export function normalizeScheduledCostDefinition(row: unknown): ScheduledCostDefinition {
+  const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+  const tripRaw = r.tripId;
+  const tripId =
+    tripRaw === null || tripRaw === undefined || String(tripRaw).trim() === ''
+      ? undefined
+      : String(tripRaw).trim();
+  const dm = Number(r.dayOfMonth);
+  const dayOfMonth = Number.isFinite(dm) ? Math.min(28, Math.max(1, Math.floor(dm))) : 1;
+  return {
+    id: String(r.id ?? ''),
+    categoria: normalizeCostCategory(r.categoria),
+    descripcion: String(r.descripcion ?? ''),
+    monto: Number(r.monto) || 0,
+    dayOfMonth,
+    active: r.active === true || String(r.active).toUpperCase() === 'TRUE',
+    creadoPor: String(r.creadoPor ?? ''),
+    creadoEn: String(r.creadoEn ?? ''),
+    ...(tripId !== undefined ? { tripId } : {}),
+  };
+}
+
+function getMockScheduledDefinitions(): ScheduledCostDefinition[] {
+  if (mockScheduledCostDefinitionsCache === null) {
+    mockScheduledCostDefinitionsCache = MOCK_DATA.scheduledCostDefinitions.map(
+      normalizeScheduledCostDefinition
+    );
+  }
+  return mockScheduledCostDefinitionsCache;
+}
+
 export function normalizeCost(row: unknown): Cost {
   const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
   const tripIdRaw = r.tripId;
@@ -170,23 +226,49 @@ export function normalizeCost(row: unknown): Cost {
     r.montoUSD != null && String(r.montoUSD).trim() !== ''
       ? Number(r.montoUSD)
       : moneda === 'UYU'
-        ? montoRaw / tipoCambio
+        ? montoRaw / (tipoCambio > 0 ? tipoCambio : 1)
         : montoRaw;
+
+  const scheduleIdCol =
+    r.scheduleId != null && String(r.scheduleId).trim() !== '' ? String(r.scheduleId).trim() : undefined;
+  const legacyScheduledId =
+    r.scheduledCostId != null && String(r.scheduledCostId).trim() !== ''
+      ? String(r.scheduledCostId).trim()
+      : undefined;
+  const desc = String(r.descripcion ?? '');
+  const explicitIsScheduled =
+    r.isScheduled === true || String(r.isScheduled).toUpperCase() === 'TRUE';
+  const explicitNotScheduled =
+    r.isScheduled === false || String(r.isScheduled).toUpperCase() === 'FALSE';
+  const migratedAuto =
+    !explicitNotScheduled && !explicitIsScheduled && legacyScheduledId !== undefined && desc.startsWith('[AUTO]');
+  const isScheduled = explicitIsScheduled || migratedAuto ? true : undefined;
+
+  const scheduleId = scheduleIdCol ?? (isScheduled === true ? legacyScheduledId : undefined);
+
+  const scheduledDayRaw = Number(r.scheduledDay);
+  const scheduledDay =
+    Number.isFinite(scheduledDayRaw) && scheduledDayRaw >= 1 && scheduledDayRaw <= 28
+      ? Math.floor(scheduledDayRaw)
+      : undefined;
+
+  const scheduledMonths = parseScheduledMonths(r.scheduledMonths);
 
   return {
     id: String(r.id ?? ''),
     fecha: String(r.fecha ?? ''),
     tripId,
     categoria: normalizeCostCategory(r.categoria),
-    descripcion: String(r.descripcion ?? ''),
+    descripcion: desc,
     monto: montoRaw,
     moneda,
     tipoCambio,
     montoUSD,
-    scheduledCostId:
-      r.scheduledCostId != null && String(r.scheduledCostId).trim() !== ''
-        ? String(r.scheduledCostId).trim()
-        : undefined,
+    ...(isScheduled === true ? { isScheduled: true as const } : {}),
+    ...(scheduleId ? { scheduleId } : {}),
+    ...(legacyScheduledId ? { scheduledCostId: legacyScheduledId } : {}),
+    ...(scheduledDay !== undefined ? { scheduledDay } : {}),
+    ...(scheduledMonths !== undefined ? { scheduledMonths } : {}),
     comprobante:
       r.comprobante !== undefined && r.comprobante !== null ? String(r.comprobante) : undefined,
     registradoPor: String(r.registradoPor ?? ''),
@@ -197,6 +279,7 @@ export interface LogisticsData {
   clients: Client[];
   trips: Trip[];
   costs: Cost[];
+  scheduledCostDefinitions: ScheduledCostDefinition[];
 }
 
 function cloneMockData(): LogisticsData {
@@ -204,6 +287,7 @@ function cloneMockData(): LogisticsData {
     clients: MOCK_DATA.clients.map((c) => normalizeClient(c)),
     trips: MOCK_DATA.trips.map((t) => normalizeTrip(t)),
     costs: MOCK_DATA.costs.map((c) => normalizeCost(c)),
+    scheduledCostDefinitions: getMockScheduledDefinitions().map((d) => ({ ...d })),
   };
 }
 
@@ -234,13 +318,21 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
       throw new Error('Apps Script devolvió HTML — re-deployar como "Cualquier persona"');
     }
 
-    const data = JSON.parse(text) as { clients?: unknown; trips?: unknown; costs?: unknown };
+    const data = JSON.parse(text) as {
+      clients?: unknown;
+      trips?: unknown;
+      costs?: unknown;
+      scheduledCostDefinitions?: unknown;
+    };
 
     logisticsFetchUsedMock = false;
     return {
       clients: Array.isArray(data.clients) ? data.clients.map(normalizeClient) : [],
       trips: Array.isArray(data.trips) ? data.trips.map(normalizeTrip) : [],
       costs: Array.isArray(data.costs) ? data.costs.map(normalizeCost) : [],
+      scheduledCostDefinitions: Array.isArray(data.scheduledCostDefinitions)
+        ? data.scheduledCostDefinitions.map(normalizeScheduledCostDefinition)
+        : [],
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
@@ -256,6 +348,26 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
 async function postSheet(type: string, data: unknown): Promise<boolean> {
   if (IS_MOCK) {
     await delay(MOCK_DELAY_MS);
+    if (type === 'saveScheduledCost') {
+      getMockScheduledDefinitions().push(normalizeScheduledCostDefinition(data));
+      return true;
+    }
+    if (type === 'updateScheduledCost') {
+      const def = normalizeScheduledCostDefinition(data);
+      const arr = getMockScheduledDefinitions();
+      const idx = arr.findIndex((d) => d.id === def.id);
+      if (idx >= 0) {
+        arr[idx] = def;
+      }
+      return true;
+    }
+    if (type === 'deleteScheduledCost') {
+      const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+      const id = String(rec.id ?? '');
+      const filtered = getMockScheduledDefinitions().filter((d) => d.id !== id);
+      mockScheduledCostDefinitionsCache = filtered;
+      return true;
+    }
     return true;
   }
   try {
@@ -507,4 +619,30 @@ export async function updateCostInSheet(cost: Cost): Promise<boolean> {
 
 export async function deleteCostFromSheet(id: string): Promise<boolean> {
   return postSheet('deleteCost', { id });
+}
+
+export async function fetchScheduledCostDefinitions(): Promise<ScheduledCostDefinition[]> {
+  const d = await fetchLogisticsData();
+  return d.scheduledCostDefinitions;
+}
+
+export async function saveScheduledCostDefinition(def: ScheduledCostDefinition): Promise<void> {
+  const ok = await postSheet('saveScheduledCost', def);
+  if (!ok) {
+    throw new Error('No se pudo guardar la definición de costo programado');
+  }
+}
+
+export async function updateScheduledCostDefinition(def: ScheduledCostDefinition): Promise<void> {
+  const ok = await postSheet('updateScheduledCost', def);
+  if (!ok) {
+    throw new Error('No se pudo actualizar la definición de costo programado');
+  }
+}
+
+export async function deleteScheduledCostDefinition(id: string): Promise<void> {
+  const ok = await postSheet('deleteScheduledCost', { id });
+  if (!ok) {
+    throw new Error('No se pudo eliminar la definición de costo programado');
+  }
 }

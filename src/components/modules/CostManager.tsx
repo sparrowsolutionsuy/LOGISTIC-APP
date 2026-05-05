@@ -1,5 +1,13 @@
 import React, { useMemo, useState, useCallback } from 'react';
-import type { Cost, CostCategory, Trip, Client, ScheduledCost, DisplayCurrency } from '../../types';
+import type {
+  Cost,
+  CostCategory,
+  Trip,
+  Client,
+  ScheduledCostDefinition,
+  DisplayCurrency,
+  User,
+} from '../../types';
 import { costUsd } from '../../utils/analytics';
 import { useSortableTable } from '../../hooks/useSortableTable';
 import { Modal } from '../ui/Modal';
@@ -59,7 +67,29 @@ function tripOptionLabel(trip: Trip, clients: Client[]): string {
   return `${trip.fecha} · ${trip.origen} → ${trip.destino} · ${getClientName(clients, trip.clientId)}`;
 }
 
+function nextDueFromDefinitions(defs: ScheduledCostDefinition[]): string | null {
+  const active = defs.filter((d) => d.active);
+  if (active.length === 0) {
+    return null;
+  }
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  let nearest: Date | null = null;
+  for (const sc of active) {
+    let dueDate = new Date(y, m, sc.dayOfMonth);
+    if (dueDate < today) {
+      dueDate = new Date(y, m + 1, sc.dayOfMonth);
+    }
+    if (!nearest || dueDate < nearest) {
+      nearest = dueDate;
+    }
+  }
+  return nearest ? nearest.toISOString().split('T')[0] : null;
+}
+
 export interface CostManagerProps {
+  user: User;
   costs: Cost[];
   trips: Trip[];
   clients: Client[];
@@ -67,12 +97,10 @@ export interface CostManagerProps {
   onAddCost: (cost: Cost) => boolean | Promise<boolean>;
   onUpdateCost: (cost: Cost) => boolean | Promise<boolean>;
   onDeleteCost: (costId: string) => boolean | Promise<boolean>;
-  scheduledCosts: ScheduledCost[];
-  onAddScheduledCost: (sc: Omit<ScheduledCost, 'id' | 'creadoEn' | 'ultimaEjecucion'>) => void;
-  onUpdateScheduledCost: (id: string, updates: Partial<ScheduledCost>) => void;
-  onDeleteScheduledCost: (id: string) => void;
-  onToggleScheduledCost: (id: string) => void;
-  nextDueDate: string | null;
+  scheduledCostDefinitions: ScheduledCostDefinition[];
+  onCreateScheduledDefinition: (def: ScheduledCostDefinition) => void | Promise<void>;
+  onDeleteScheduledDefinition: (id: string) => void | Promise<void>;
+  onToggleScheduledDefinitionActive: (id: string) => void | Promise<void>;
   currentRate: number;
   displayCurrency: DisplayCurrency;
   formatAmount: (n: number) => string;
@@ -80,6 +108,7 @@ export interface CostManagerProps {
 }
 
 export const CostManager: React.FC<CostManagerProps> = ({
+  user,
   costs,
   trips,
   clients,
@@ -87,26 +116,25 @@ export const CostManager: React.FC<CostManagerProps> = ({
   onAddCost,
   onUpdateCost,
   onDeleteCost,
-  scheduledCosts,
-  onAddScheduledCost,
-  onUpdateScheduledCost: _onUpdateScheduledCost,
-  onDeleteScheduledCost,
-  onToggleScheduledCost,
-  nextDueDate,
+  scheduledCostDefinitions,
+  onCreateScheduledDefinition,
+  onDeleteScheduledDefinition,
+  onToggleScheduledDefinitionActive,
   currentRate,
   displayCurrency,
   formatAmount,
   convertAggregateToDisplay,
 }) => {
+  const canManageDefinitions = user.role === 'admin';
+  const [costSectionTab, setCostSectionTab] = useState<'list' | 'scheduled'>('list');
   const [catFilter, setCatFilter] = useState<CostCategory | ''>('');
-  const [tripFilter, setTripFilter] = useState<string>(''); // '' | 'general' | tripId
+  const [tripFilter, setTripFilter] = useState<string>('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
-  const [scheduledModalOpen, setScheduledModalOpen] = useState(false);
 
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [categoria, setCategoria] = useState<CostCategory>('Otros');
@@ -114,8 +142,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
   const [monto, setMonto] = useState('');
   const [costMoneda, setCostMoneda] = useState<'USD' | 'UYU'>('USD');
   const [costTipoCambio, setCostTipoCambio] = useState<number>(currentRate);
-  const [tripId, setTripId] = useState<string>(''); // '' = general
-  const [scheduledCostId, setScheduledCostId] = useState('');
+  const [tripId, setTripId] = useState<string>('');
 
   const [scNombre, setScNombre] = useState('');
   const [scDescripcion, setScDescripcion] = useState('');
@@ -166,8 +193,12 @@ export const CostManager: React.FC<CostManagerProps> = ({
     [sortedCosts.length, totalFiltered]
   );
   const activeScheduledCount = useMemo(
-    () => scheduledCosts.filter((sc) => sc.activo).length,
-    [scheduledCosts]
+    () => scheduledCostDefinitions.filter((sc) => sc.active).length,
+    [scheduledCostDefinitions]
+  );
+  const nextDueDate = useMemo(
+    () => nextDueFromDefinitions(scheduledCostDefinitions),
+    [scheduledCostDefinitions]
   );
 
   const metrics = useMemo(() => {
@@ -219,7 +250,6 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setCostMoneda('USD');
     setCostTipoCambio(currentRate);
     setTripId('');
-    setScheduledCostId('');
     setModalOpen(true);
   };
 
@@ -232,7 +262,6 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setCostMoneda(c.moneda ?? 'USD');
     setCostTipoCambio(c.tipoCambio ?? currentRate);
     setTripId(c.tripId ?? '');
-    setScheduledCostId(c.scheduledCostId ?? '');
     setModalOpen(true);
   };
 
@@ -258,7 +287,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setSaveLoading(true);
     try {
       const tcEffective = costMoneda === 'USD' ? currentRate : costTipoCambio;
-      const montoUSD = costMoneda === 'USD' ? amount : amount / tcEffective;
+      const montoUSD = costMoneda === 'USD' ? amount : amount / (tcEffective > 0 ? tcEffective : 1);
       const base = {
         fecha,
         categoria,
@@ -268,8 +297,8 @@ export const CostManager: React.FC<CostManagerProps> = ({
         tipoCambio: tcEffective,
         montoUSD,
         tripId: tripId === '' ? null : tripId,
-        scheduledCostId: scheduledCostId.trim() !== '' ? scheduledCostId.trim() : undefined,
         registradoPor,
+        isScheduled: false as const,
       };
       if (editingId) {
         const prev = costs.find((c) => c.id === editingId);
@@ -277,8 +306,14 @@ export const CostManager: React.FC<CostManagerProps> = ({
           ...base,
           id: editingId,
           comprobante: prev?.comprobante,
-          scheduledCostId: prev?.scheduledCostId ?? base.scheduledCostId,
           registradoPor: prev?.registradoPor ?? registradoPor,
+          ...(prev?.isScheduled === true
+            ? {
+                isScheduled: true as const,
+                scheduleId: prev.scheduleId,
+                scheduledCostId: prev.scheduledCostId,
+              }
+            : { isScheduled: false as const }),
         });
         if (!updated) {
           return;
@@ -338,18 +373,18 @@ export const CostManager: React.FC<CostManagerProps> = ({
       alert('El día del mes debe estar entre 1 y 28.');
       return;
     }
-    onAddScheduledCost({
-      nombre,
-      descripcion: descripcionValue,
+    const newDef: ScheduledCostDefinition = {
+      id: `SC${Date.now()}`,
       categoria: scCategoria,
+      descripcion: `${nombre} — ${descripcionValue}`,
       monto: montoValue,
-      moneda: 'USD',
-      tipoCambioReferencia: currentRate,
-      activo: true,
-      frecuencia: 'monthly',
-      diaDelMes: dayValue,
-      tripId: scTripId === '' ? null : scTripId,
-    });
+      dayOfMonth: dayValue,
+      active: true,
+      creadoPor: user.username,
+      creadoEn: new Date().toISOString().split('T')[0],
+      ...(scTripId === '' ? {} : { tripId: scTripId }),
+    };
+    void onCreateScheduledDefinition(newDef);
     resetScheduledForm();
   };
 
@@ -365,482 +400,501 @@ export const CostManager: React.FC<CostManagerProps> = ({
             </span>
           </p>
         </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setScheduledModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-2 text-sm font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--accent-purple)] hover:text-[var(--accent-purple)]"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Costos programados
-            {activeScheduledCount > 0 && (
-              <span className="rounded-full bg-[var(--accent-purple)] px-1.5 py-0.5 text-[10px] font-bold text-white">
-                {activeScheduledCount}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={openNew}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
-          >
-            <Plus className="h-4 w-4" />
-            Registrar costo
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <div
-          style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
-          className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                Mes actual
-              </p>
-              <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
-                {formatAmount(convertAggregateToDisplay(metrics.totalMonth))}
-              </p>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">{monthLabel}</p>
-            </div>
-            <div
-              className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5"
-              style={{ color: 'var(--accent-blue)' }}
-            >
-              <Calendar className="h-4 w-4" aria-hidden />
-            </div>
-          </div>
-        </div>
-        <div
-          style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
-          className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                Mayor categoría
-              </p>
-              <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
-                {metrics.topCat ? metrics.topCat.name : '—'}
-              </p>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                {metrics.topCat
-                  ? metrics.topCat.total.toLocaleString('es-UY', { style: 'currency', currency: 'USD' })
-                  : 'Sin datos'}
-              </p>
-            </div>
-            <div
-              className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5"
-              style={{ color: 'var(--accent-amber)' }}
-            >
-              {topCatUi ? <topCatUi.Icon className="h-4 w-4" aria-hidden /> : <MoreHorizontal className="h-4 w-4" />}
-            </div>
-          </div>
-        </div>
-        <div
-          style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
-          className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                Vinculados a viajes
-              </p>
-              <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
-                {metrics.pctLinked.toFixed(0)}%
-              </p>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                {formatAmount(
-                  convertAggregateToDisplay((metrics.pctLinked / 100) * totalFiltered)
-                )}{' '}
-                vs{' '}
-                {formatAmount(convertAggregateToDisplay(totalFiltered))}
-              </p>
-            </div>
-            <div
-              className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5"
-              style={{ color: 'var(--accent-emerald)' }}
-            >
-              <Truck className="h-4 w-4" aria-hidden />
-            </div>
-          </div>
-        </div>
-        <div
-          style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
-          className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                Costos programados
-              </p>
-              <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
-                {activeScheduledCount}
-              </p>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                próximo vencimiento: {nextDueDate ?? 'sin fecha'}
-              </p>
-            </div>
-            <div
-              className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5"
-              style={{ color: 'var(--accent-purple)' }}
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-sm)]">
-        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[var(--text-secondary)]">
-          <Filter className="h-4 w-4" />
-          Filtros
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <select
-            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-            value={catFilter}
-            onChange={(e) => setCatFilter((e.target.value || '') as CostCategory | '')}
-          >
-            <option value="">Todas las categorías</option>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {CATEGORY_UI[c].label}
-              </option>
-            ))}
-          </select>
-          <select
-            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-            value={tripFilter}
-            onChange={(e) => setTripFilter(e.target.value)}
-          >
-            <option value="">Todos los viajes / costos</option>
-            <option value="general">Solo costos generales</option>
-            {sortedTrips.map((t) => (
-              <option key={t.id} value={t.id}>
-                {tripOptionLabel(t, clients)}
-              </option>
-            ))}
-          </select>
-          <input
-            type="date"
-            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
-          <input
-            type="date"
-            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
-        <div className="overflow-x-auto">
-          <table
-            className="w-full min-w-[720px] text-sm"
-            aria-label={`Costos — total filtrado en ${displayCurrency === 'UYU' ? 'pesos uruguayos' : 'dólares'}`}
-          >
-            <thead>
-              <tr
-                className="border-b border-[var(--border)]"
-                style={{ backgroundColor: 'var(--bg-elevated)' }}
-              >
-                <SortableHeader
-                  label="Fecha"
-                  column="fecha"
-                  currentColumn={costSort.column}
-                  direction={costSort.direction}
-                  onClick={(col) => handleCostSort(col as CostSortKey)}
-                />
-                <SortableHeader
-                  label="Categoría"
-                  column="categoria"
-                  currentColumn={costSort.column}
-                  direction={costSort.direction}
-                  onClick={(col) => handleCostSort(col as CostSortKey)}
-                />
-                <SortableHeader
-                  label="Descripción"
-                  column="descripcion"
-                  currentColumn={costSort.column}
-                  direction={costSort.direction}
-                  onClick={(col) => handleCostSort(col as CostSortKey)}
-                />
-                <th
-                  scope="col"
-                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
-                >
-                  Viaje
-                </th>
-                <th
-                  scope="col"
-                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
-                >
-                  Programado
-                </th>
-                <SortableHeader
-                  label="Monto"
-                  column="monto"
-                  currentColumn={costSort.column}
-                  direction={costSort.direction}
-                  onClick={(col) => handleCostSort(col as CostSortKey)}
-                  align="right"
-                />
-                <th
-                  scope="col"
-                  className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
-                >
-                  Acciones
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-              {sortedCosts.map((c, i) => {
-                const ui = CATEGORY_UI[c.categoria];
-                const Icon = ui.Icon;
-                const trip = c.tripId ? trips.find((t) => t.id === c.tripId) : null;
-                return (
-                  <tr
-                    key={c.id}
-                    style={{
-                      backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
-                    }}
-                    className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
-                  >
-                    <td className="whitespace-nowrap px-4 py-3 text-[var(--text-primary)]">
-                      {c.fecha}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-2 rounded-full px-2 py-1 text-xs font-medium ${ui.iconClass}`}
-                      >
-                        <Icon className="h-3.5 w-3.5" aria-hidden />
-                        {ui.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-[var(--text-primary)]">{c.descripcion}</td>
-                    <td className="max-w-[220px] truncate px-4 py-3 text-xs text-[var(--text-secondary)]">
-                      {trip ? tripOptionLabel(trip, clients) : 'Costo general'}
-                    </td>
-                    <td className="px-4 py-3">
-                      {c.scheduledCostId ? (
-                        <span
-                          style={{ color: 'var(--accent-purple)' }}
-                          className="inline-flex items-center gap-1 text-[10px] font-semibold"
-                        >
-                          <RefreshCw className="h-3 w-3" aria-hidden />
-                          Auto
-                        </span>
-                      ) : null}
-                    </td>
-                    <td
-                      className="px-4 py-3 text-right"
-                      style={{
-                        color:
-                          costUsd(c) > avgFiltered ? 'var(--accent-emerald)' : 'var(--text-primary)',
-                      }}
-                    >
-                      <div>
-                        <p className="font-semibold text-[var(--text-primary)]">
-                          {c.moneda === 'UYU' ? '$' : 'USD'}{' '}
-                          {c.monto.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
-                        </p>
-                        {c.moneda === 'UYU' && c.montoUSD != null && (
-                          <p className="text-[10px] text-[var(--text-muted)]">
-                            ≈ USD {c.montoUSD.toFixed(0)}
-                          </p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        className="mr-1 rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--accent-blue)]"
-                        title="Editar"
-                        onClick={() => openEdit(c)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded p-1.5 text-[var(--accent-red)] hover:bg-[var(--bg-elevated)]"
-                        title="Eliminar"
-                        onClick={() => void handleDelete(c.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {sortedCosts.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-[var(--text-muted)]">
-                    No hay costos con los filtros seleccionados.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <Modal open={modalOpen} onClose={closeModal} title={editingId ? 'Editar costo' : 'Nuevo costo'} size="md">
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Fecha</label>
-            <input
-              type="date"
-              required
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-              value={fecha}
-              onChange={(e) => setFecha(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Categoría</label>
-            <select
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-              value={categoria}
-              onChange={(e) => setCategoria(e.target.value as CostCategory)}
-            >
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {CATEGORY_UI[cat].label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Descripción</label>
-            <input
-              type="text"
-              required
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-              value={descripcion}
-              onChange={(e) => setDescripcion(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Monto</label>
-            <input
-              type="number"
-              required
-              min={0.01}
-              step="0.01"
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-              value={monto}
-              onChange={(e) => setMonto(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
-              Moneda del gasto
-            </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setCostMoneda('USD')}
-                className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
-                  costMoneda === 'USD'
-                    ? 'border-[var(--accent-blue)] bg-[var(--accent-blue-muted)] text-[var(--accent-blue)]'
-                    : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
-                }`}
-              >
-                USD
-              </button>
-              <button
-                type="button"
-                onClick={() => setCostMoneda('UYU')}
-                className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
-                  costMoneda === 'UYU'
-                    ? 'border-[var(--accent-amber)] bg-[color-mix(in_srgb,var(--accent-amber)_12%,transparent)] text-[var(--accent-amber)]'
-                    : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
-                }`}
-              >
-                $ UYU
-              </button>
-            </div>
-          </div>
-          {costMoneda === 'UYU' && (
-            <div>
-              <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
-                Tipo de cambio al momento del gasto
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="1"
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 font-mono text-sm text-[var(--text-primary)] outline-none"
-                value={costTipoCambio}
-                onChange={(e) => setCostTipoCambio(Number(e.target.value))}
-              />
-              <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-                Equivalente: USD {(Number(monto) / costTipoCambio || 0).toFixed(2)}
-              </p>
-            </div>
-          )}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
-              Vincular a viaje (opcional)
-            </label>
-            <select
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-              value={tripId}
-              onChange={(e) => setTripId(e.target.value)}
-            >
-              <option value="">Costo general (sin viaje)</option>
-              {sortedTrips.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {tripOptionLabel(t, clients)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <input type="hidden" value={scheduledCostId} readOnly />
-          <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-4">
+        {canManageDefinitions ? (
+          <div className="flex flex-wrap gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
             <button
               type="button"
-              onClick={closeModal}
-              className="rounded-lg px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]"
+              onClick={() => setCostSectionTab('list')}
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                costSectionTab === 'list'
+                  ? 'bg-[var(--accent-blue-muted)] text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
             >
-              Cancelar
+              Listado de costos
             </button>
             <button
-              type="submit"
-              disabled={saveLoading}
-              className="inline-flex min-w-[120px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              type="button"
+              onClick={() => setCostSectionTab('scheduled')}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                costSectionTab === 'scheduled'
+                  ? 'bg-[var(--accent-blue-muted)] text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
             >
-              {saveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Guardar
+              <RefreshCw className="h-4 w-4" />
+              Costos programados
+              {activeScheduledCount > 0 && (
+                <span className="rounded-full bg-[var(--accent-purple)] px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {activeScheduledCount}
+                </span>
+              )}
             </button>
           </div>
-        </form>
-      </Modal>
+        ) : null}
+      </div>
 
-      <Modal
-        open={scheduledModalOpen}
-        onClose={() => setScheduledModalOpen(false)}
-        title="Costos recurrentes programados"
-        size="lg"
-      >
+      {costSectionTab === 'list' && (
+        <>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={openNew}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+            >
+              <Plus className="h-4 w-4" />
+              Registrar costo
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div
+              style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
+              className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Mes actual
+                  </p>
+                  <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
+                    {formatAmount(convertAggregateToDisplay(metrics.totalMonth))}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">{monthLabel}</p>
+                </div>
+                <div
+                  className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5"
+                  style={{ color: 'var(--accent-blue)' }}
+                >
+                  <Calendar className="h-4 w-4" aria-hidden />
+                </div>
+              </div>
+            </div>
+            <div
+              style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
+              className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Mayor categoría
+                  </p>
+                  <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
+                    {metrics.topCat ? metrics.topCat.name : '—'}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    {metrics.topCat
+                      ? metrics.topCat.total.toLocaleString('es-UY', {
+                          style: 'currency',
+                          currency: 'USD',
+                        })
+                      : 'Sin datos'}
+                  </p>
+                </div>
+                <div
+                  className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5"
+                  style={{ color: 'var(--accent-amber)' }}
+                >
+                  {topCatUi ? <topCatUi.Icon className="h-4 w-4" aria-hidden /> : <MoreHorizontal className="h-4 w-4" aria-hidden />}
+                </div>
+              </div>
+            </div>
+            <div
+              style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
+              className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Vinculados a viajes
+                  </p>
+                  <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
+                    {metrics.pctLinked.toFixed(0)}%
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    {formatAmount(convertAggregateToDisplay((metrics.pctLinked / 100) * totalFiltered))} vs{' '}
+                    {formatAmount(convertAggregateToDisplay(totalFiltered))}
+                  </p>
+                </div>
+                <div
+                  className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5"
+                  style={{ color: 'var(--accent-emerald)' }}
+                >
+                  <Truck className="h-4 w-4" aria-hidden />
+                </div>
+              </div>
+            </div>
+            <div
+              style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
+              className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Definiciones activas
+                  </p>
+                  <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
+                    {activeScheduledCount}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    próximo: {nextDueDate ?? '—'}
+                  </p>
+                </div>
+                <div
+                  className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5"
+                  style={{ color: 'var(--accent-purple)' }}
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-[var(--shadow-sm)]">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[var(--text-secondary)]">
+              <Filter className="h-4 w-4" />
+              Filtros
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+              <select
+                className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                value={catFilter}
+                onChange={(e) => setCatFilter((e.target.value || '') as CostCategory | '')}
+              >
+                <option value="">Todas las categorías</option>
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {CATEGORY_UI[c].label}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                value={tripFilter}
+                onChange={(e) => setTripFilter(e.target.value)}
+              >
+                <option value="">Todos los viajes / costos</option>
+                <option value="general">Solo costos generales</option>
+                {sortedTrips.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {tripOptionLabel(t, clients)}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="date"
+                className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+              />
+              <input
+                type="date"
+                className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
+            <div className="overflow-x-auto">
+              <table
+                className="w-full min-w-[760px] text-sm"
+                aria-label={`Costos — total filtrado en ${displayCurrency === 'UYU' ? 'pesos uruguayos' : 'dólares'}`}
+              >
+                <thead>
+                  <tr
+                    className="border-b border-[var(--border)]"
+                    style={{ backgroundColor: 'var(--bg-elevated)' }}
+                  >
+                    <SortableHeader
+                      label="Fecha"
+                      column="fecha"
+                      currentColumn={costSort.column}
+                      direction={costSort.direction}
+                      onClick={(col) => handleCostSort(col as CostSortKey)}
+                    />
+                    <SortableHeader
+                      label="Categoría"
+                      column="categoria"
+                      currentColumn={costSort.column}
+                      direction={costSort.direction}
+                      onClick={(col) => handleCostSort(col as CostSortKey)}
+                    />
+                    <SortableHeader
+                      label="Descripción"
+                      column="descripcion"
+                      currentColumn={costSort.column}
+                      direction={costSort.direction}
+                      onClick={(col) => handleCostSort(col as CostSortKey)}
+                    />
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                    >
+                      Viaje
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                    >
+                      Programado
+                    </th>
+                    <SortableHeader
+                      label="Monto"
+                      column="monto"
+                      currentColumn={costSort.column}
+                      direction={costSort.direction}
+                      onClick={(col) => handleCostSort(col as CostSortKey)}
+                      align="right"
+                    />
+                    <th
+                      scope="col"
+                      className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]"
+                    >
+                      Acciones
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                  {sortedCosts.map((c, i) => {
+                    const ui = CATEGORY_UI[c.categoria];
+                    const Icon = ui.Icon;
+                    const trip = c.tripId ? trips.find((t) => t.id === c.tripId) : null;
+                    return (
+                      <tr
+                        key={c.id}
+                        style={{
+                          backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                        }}
+                        className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                      >
+                        <td className="whitespace-nowrap px-4 py-3 text-[var(--text-primary)]">{c.fecha}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex items-center gap-2 rounded-full px-2 py-1 text-xs font-medium ${ui.iconClass}`}
+                          >
+                            <Icon className="h-3.5 w-3.5" aria-hidden />
+                            {ui.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-[var(--text-primary)]">{c.descripcion}</td>
+                        <td className="max-w-[220px] truncate px-4 py-3 text-xs text-[var(--text-secondary)]">
+                          {trip ? tripOptionLabel(trip, clients) : 'Costo general'}
+                        </td>
+                        <td className="px-4 py-3">
+                          {c.isScheduled === true ? (
+                            <span
+                              style={{ color: 'var(--accent-purple)' }}
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold"
+                            >
+                              <RefreshCw className="h-3 w-3" aria-hidden />
+                              Sí
+                            </span>
+                          ) : (
+                            <span className="text-xs text-[var(--text-muted)]">No</span>
+                          )}
+                        </td>
+                        <td
+                          className="px-4 py-3 text-right"
+                          style={{
+                            color:
+                              costUsd(c) > avgFiltered ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                          }}
+                        >
+                          <div>
+                            <p className="font-semibold text-[var(--text-primary)]">
+                              {c.moneda === 'UYU' ? '$' : 'USD'}{' '}
+                              {c.monto.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                            </p>
+                            {c.moneda === 'UYU' && c.montoUSD != null && (
+                              <p className="text-[10px] text-[var(--text-muted)]">
+                                ≈ USD {c.montoUSD.toFixed(0)}
+                              </p>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            className="mr-1 rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--accent-blue)]"
+                            title="Editar"
+                            onClick={() => openEdit(c)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded p-1.5 text-[var(--accent-red)] hover:bg-[var(--bg-elevated)]"
+                            title="Eliminar"
+                            onClick={() => void handleDelete(c.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {sortedCosts.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-[var(--text-muted)]">
+                        No hay costos con los filtros seleccionados.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <Modal open={modalOpen} onClose={closeModal} title={editingId ? 'Editar costo' : 'Nuevo costo'} size="md">
+            <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Fecha</label>
+                <input
+                  type="date"
+                  required
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  value={fecha}
+                  onChange={(e) => setFecha(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Categoría</label>
+                <select
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  value={categoria}
+                  onChange={(e) => setCategoria(e.target.value as CostCategory)}
+                >
+                  {CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {CATEGORY_UI[cat].label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Descripción</label>
+                <input
+                  type="text"
+                  required
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  value={descripcion}
+                  onChange={(e) => setDescripcion(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Monto</label>
+                <input
+                  type="number"
+                  required
+                  min={0.01}
+                  step="0.01"
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  value={monto}
+                  onChange={(e) => setMonto(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
+                  Moneda del gasto
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCostMoneda('USD')}
+                    className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
+                      costMoneda === 'USD'
+                        ? 'border-[var(--accent-blue)] bg-[var(--accent-blue-muted)] text-[var(--accent-blue)]'
+                        : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
+                    }`}
+                  >
+                    USD
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCostMoneda('UYU')}
+                    className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
+                      costMoneda === 'UYU'
+                        ? 'border-[var(--accent-amber)] bg-[color-mix(in_srgb,var(--accent-amber)_12%,transparent)] text-[var(--accent-amber)]'
+                        : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
+                    }`}
+                  >
+                    $ UYU
+                  </button>
+                </div>
+              </div>
+              {costMoneda === 'UYU' && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
+                    Tipo de cambio al momento del gasto
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 font-mono text-sm text-[var(--text-primary)] outline-none"
+                    value={costTipoCambio}
+                    onChange={(e) => setCostTipoCambio(Number(e.target.value))}
+                  />
+                  <p className="mt-1 text-[10px] text-[var(--text-muted)]">
+                    Equivalente: USD {(Number(monto) / costTipoCambio || 0).toFixed(2)}
+                  </p>
+                </div>
+              )}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
+                  Vincular a viaje (opcional)
+                </label>
+                <select
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  value={tripId}
+                  onChange={(e) => setTripId(e.target.value)}
+                >
+                  <option value="">Costo general (sin viaje)</option>
+                  {sortedTrips.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {tripOptionLabel(t, clients)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-4">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="rounded-lg px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={saveLoading}
+                  className="inline-flex min-w-[120px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {saveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Guardar
+                </button>
+              </div>
+            </form>
+          </Modal>
+        </>
+      )}
+
+      {costSectionTab === 'scheduled' && canManageDefinitions && (
         <div className="space-y-6 sm:grid sm:grid-cols-2 sm:gap-6 sm:space-y-0">
           <section className="space-y-3">
-            {scheduledCosts.length === 0 ? (
+            {scheduledCostDefinitions.length === 0 ? (
               <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-6 text-center">
                 <RefreshCw className="mx-auto mb-2 h-6 w-6 text-[var(--accent-purple)]" />
                 <p className="text-sm font-semibold text-[var(--text-primary)]">Sin costos programados</p>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  Configurá costos recurrentes para que se generen automáticamente cada mes.
+                  Las definiciones se guardan en Google Sheets (DB_CostosProgramados). Se ejecutan al cargar la
+                  app (admin).
                 </p>
               </div>
             ) : (
-              scheduledCosts.map((sc) => {
+              scheduledCostDefinitions.map((sc) => {
                 const scUi = CATEGORY_UI[sc.categoria];
                 const ScIcon = scUi.Icon;
                 return (
@@ -850,22 +904,22 @@ export const CostManager: React.FC<CostManagerProps> = ({
                         <button
                           type="button"
                           role="switch"
-                          aria-checked={sc.activo}
-                          onClick={() => onToggleScheduledCost(sc.id)}
-                          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors ${sc.activo ? 'bg-[var(--accent-emerald)]' : 'bg-[var(--border-strong)]'}`}
+                          aria-checked={sc.active}
+                          onClick={() => void onToggleScheduledDefinitionActive(sc.id)}
+                          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors ${sc.active ? 'bg-[var(--accent-emerald)]' : 'bg-[var(--border-strong)]'}`}
                         >
                           <span
-                            className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${sc.activo ? 'translate-x-4' : 'translate-x-0'}`}
+                            className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${sc.active ? 'translate-x-4' : 'translate-x-0'}`}
                           />
                         </button>
                         <div>
-                          <p className="text-sm font-semibold text-[var(--text-primary)]">{sc.nombre}</p>
-                          <p className="text-xs text-[var(--text-muted)]">{sc.descripcion}</p>
+                          <p className="text-sm font-semibold text-[var(--text-primary)]">{sc.descripcion}</p>
+                          <p className="text-xs text-[var(--text-muted)]">ID: {sc.id}</p>
                         </div>
                       </div>
                       <button
                         type="button"
-                        onClick={() => onDeleteScheduledCost(sc.id)}
+                        onClick={() => void onDeleteScheduledDefinition(sc.id)}
                         className="text-[var(--accent-red)] hover:opacity-80"
                       >
                         <Trash2 size={14} />
@@ -881,11 +935,9 @@ export const CostManager: React.FC<CostManagerProps> = ({
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar size={10} />
-                        Día {sc.diaDelMes} de cada mes
+                        Día {sc.dayOfMonth} de cada mes
                       </span>
-                      {sc.ultimaEjecucion && (
-                        <span className="text-[var(--text-muted)]">Último: {sc.ultimaEjecucion}</span>
-                      )}
+                      <span className="text-[var(--text-muted)]">Creado por {sc.creadoPor}</span>
                     </div>
                   </div>
                 );
@@ -894,10 +946,10 @@ export const CostManager: React.FC<CostManagerProps> = ({
           </section>
 
           <section className="border-t border-[var(--border)] pt-4 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0">
-            <h3 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">Agregar nuevo</h3>
+            <h3 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">Agregar definición</h3>
             <form onSubmit={handleAddScheduledCost} className="space-y-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Nombre del costo *</label>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Nombre *</label>
                 <input
                   type="text"
                   required
@@ -915,7 +967,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
                   value={scDescripcion}
                   onChange={(e) => setScDescripcion(e.target.value)}
                   className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-                  placeholder="Alquiler mensual depósito Paso de los Toros"
+                  placeholder="Detalle del gasto recurrente"
                 />
               </div>
               <div>
@@ -958,9 +1010,6 @@ export const CostManager: React.FC<CostManagerProps> = ({
                   className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
                 />
                 <p className="mt-1 text-xs text-[var(--text-muted)]">
-                  El costo se generará automáticamente este día de cada mes.
-                </p>
-                <p className="text-xs text-[var(--text-muted)]">
                   Máximo día 28 para compatibilidad con todos los meses.
                 </p>
               </div>
@@ -985,12 +1034,12 @@ export const CostManager: React.FC<CostManagerProps> = ({
                 type="submit"
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
               >
-                Guardar costo programado
+                Guardar definición
               </button>
             </form>
           </section>
         </div>
-      </Modal>
+      )}
     </div>
   );
 };

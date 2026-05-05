@@ -1,4 +1,4 @@
-import type { ActiveTab, Client, Cost, Trip, TripStatus } from '../types';
+import type { ActiveTab, Client, Cost, ScheduledCostDefinition, Trip, TripStatus } from '../types';
 
 // Uruguay departments (operational reference)
 export const DEPARTAMENTOS = [
@@ -337,4 +337,6 @@ export const MOCK_DATA = {
   clients: MOCK_CLIENTS,
   trips: MOCK_TRIPS,
   costs: MOCK_COSTS,
-} as const;
+  /** Definiciones de costos programados (misma fuente que producción: Sheets). */
+  scheduledCostDefinitions: [] as ScheduledCostDefinition[],
+};

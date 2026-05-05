@@ -139,10 +139,29 @@ function doGet(e) {
       'registradoPor',
     ]);
   }
+  ensureCostSheetHeaders(costSheet);
   const costs = getSheetData('DB_Costos');
 
-  return ContentService.createTextOutput(JSON.stringify({ clients, trips, costs }))
-    .setMimeType(ContentService.MimeType.JSON);
+  let defSheet = ss.getSheetByName('DB_CostosProgramados');
+  if (!defSheet) {
+    defSheet = ss.insertSheet('DB_CostosProgramados');
+    defSheet.appendRow([
+      'id',
+      'categoria',
+      'descripcion',
+      'monto',
+      'dayOfMonth',
+      'active',
+      'creadoPor',
+      'creadoEn',
+      'tripId',
+    ]);
+  }
+  const scheduledCostDefinitions = getSheetData('DB_CostosProgramados');
+
+  return ContentService.createTextOutput(
+    JSON.stringify({ clients, trips, costs, scheduledCostDefinitions })
+  ).setMimeType(ContentService.MimeType.JSON);
 }
 
 function doPost(e) {
@@ -244,7 +263,8 @@ function doPost(e) {
         ]);
       }
       ensureCostSheetHeaders(sheet);
-      sheet.appendRow(costRowFromPayload(data));
+      var costHdrNew = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      sheet.appendRow(costRowValuesFromPayload(data, costHdrNew));
     } else if (type === 'updateCost') {
       const sheet = ss.getSheetByName('DB_Costos');
       if (!sheet) {
@@ -260,7 +280,7 @@ function doPost(e) {
       var found = false;
       for (var r = 1; r < values.length; r++) {
         if (String(values[r][idCol]) === String(data.id)) {
-          var row = costRowFromPayload(data);
+          var row = costRowValuesFromPayload(data, headers);
           for (var c = 0; c < row.length; c++) {
             sheet.getRange(r + 1, c + 1).setValue(row[c]);
           }
@@ -292,6 +312,70 @@ function doPost(e) {
       }
       if (!deleted) {
         return createErrorResponse('Costo no encontrado: ' + data.id);
+      }
+    } else if (type === 'saveScheduledCost') {
+      let defS = ss.getSheetByName('DB_CostosProgramados');
+      if (!defS) {
+        defS = ss.insertSheet('DB_CostosProgramados');
+        defS.appendRow([
+          'id',
+          'categoria',
+          'descripcion',
+          'monto',
+          'dayOfMonth',
+          'active',
+          'creadoPor',
+          'creadoEn',
+          'tripId',
+        ]);
+      }
+      var defHdr = defS.getRange(1, 1, 1, defS.getLastColumn()).getValues()[0];
+      defS.appendRow(definitionRowValues(data, defHdr));
+    } else if (type === 'updateScheduledCost') {
+      var defSheetU = ss.getSheetByName('DB_CostosProgramados');
+      if (!defSheetU) {
+        return createErrorResponse('DB_CostosProgramados no existe');
+      }
+      var defVals = defSheetU.getDataRange().getValues();
+      var defHeadersU = defVals[0];
+      var defIdCol = defHeadersU.indexOf('id');
+      if (defIdCol === -1) {
+        return createErrorResponse('DB_CostosProgramados sin columna id');
+      }
+      var defFound = false;
+      for (var du = 1; du < defVals.length; du++) {
+        if (String(defVals[du][defIdCol]) === String(data.id)) {
+          var defNewRow = definitionRowValues(data, defHeadersU);
+          for (var duc = 0; duc < defNewRow.length; duc++) {
+            defSheetU.getRange(du + 1, duc + 1).setValue(defNewRow[duc]);
+          }
+          defFound = true;
+          break;
+        }
+      }
+      if (!defFound) {
+        return createErrorResponse('Definición no encontrada: ' + data.id);
+      }
+    } else if (type === 'deleteScheduledCost') {
+      var defSheetD = ss.getSheetByName('DB_CostosProgramados');
+      if (!defSheetD) {
+        return createErrorResponse('DB_CostosProgramados no existe');
+      }
+      var defValsD = defSheetD.getDataRange().getValues();
+      var defIdColD = defValsD[0].indexOf('id');
+      if (defIdColD === -1) {
+        return createErrorResponse('DB_CostosProgramados sin columna id');
+      }
+      var defDel = false;
+      for (var dd = 1; dd < defValsD.length; dd++) {
+        if (String(defValsD[dd][defIdColD]) === String(data.id)) {
+          defSheetD.deleteRow(dd + 1);
+          defDel = true;
+          break;
+        }
+      }
+      if (!defDel) {
+        return createErrorResponse('Definición no encontrada: ' + data.id);
       }
     } else if (type === 'uploadInvoice') {
       return uploadFile(data, 'Facturas', function (sheet, rowNum, headers, fileUrl) {
@@ -419,6 +503,10 @@ function ensureCostSheetHeaders(sheet) {
     'scheduledCostId',
     'comprobante',
     'registradoPor',
+    'isScheduled',
+    'scheduleId',
+    'scheduledDay',
+    'scheduledMonths',
   ];
   var lastCol = Math.max(1, sheet.getLastColumn());
   var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
@@ -432,22 +520,50 @@ function ensureCostSheetHeaders(sheet) {
   }
 }
 
-/** Una fila en el mismo orden que doGet / appendRow inicial de DB_Costos. */
-function costRowFromPayload(data) {
-  return [
-    data.id,
-    data.fecha,
-    data.tripId != null && String(data.tripId) !== '' ? data.tripId : '',
-    data.categoria || 'Otros',
-    data.descripcion || '',
-    data.monto != null ? data.monto : 0,
-    data.moneda || 'USD',
-    data.tipoCambio != null ? data.tipoCambio : '',
-    data.montoUSD != null ? data.montoUSD : '',
-    data.scheduledCostId || '',
-    data.comprobante != null && data.comprobante !== undefined ? data.comprobante : '',
-    data.registradoPor || '',
-  ];
+function costCellValue(header, data) {
+  if (header === 'id') return data.id || '';
+  if (header === 'fecha') return data.fecha || '';
+  if (header === 'tripId') return data.tripId != null && String(data.tripId) !== '' ? data.tripId : '';
+  if (header === 'categoria') return data.categoria || 'Otros';
+  if (header === 'descripcion') return data.descripcion || '';
+  if (header === 'monto') return data.monto != null ? data.monto : 0;
+  if (header === 'moneda') return data.moneda || 'USD';
+  if (header === 'tipoCambio') return data.tipoCambio != null ? data.tipoCambio : '';
+  if (header === 'montoUSD') return data.montoUSD != null ? data.montoUSD : '';
+  if (header === 'scheduledCostId') return data.scheduledCostId || data.scheduleId || '';
+  if (header === 'scheduleId') return data.scheduleId || '';
+  if (header === 'isScheduled') return boolOrBlank(data.isScheduled);
+  if (header === 'scheduledDay') return data.scheduledDay != null ? data.scheduledDay : '';
+  if (header === 'scheduledMonths') {
+    if (data.scheduledMonths != null && typeof data.scheduledMonths === 'object') {
+      return JSON.stringify(data.scheduledMonths);
+    }
+    return data.scheduledMonths || '';
+  }
+  if (header === 'comprobante') return data.comprobante != null && data.comprobante !== undefined ? data.comprobante : '';
+  if (header === 'registradoPor') return data.registradoPor || '';
+  return data[header] != null ? data[header] : '';
+}
+
+function costRowValuesFromPayload(data, headers) {
+  return headers.map(function (h) {
+    return costCellValue(h, data);
+  });
+}
+
+function definitionRowValues(data, headers) {
+  return headers.map(function (h) {
+    if (h === 'id') return data.id || '';
+    if (h === 'categoria') return data.categoria || 'Otros';
+    if (h === 'descripcion') return data.descripcion || '';
+    if (h === 'monto') return data.monto != null ? data.monto : 0;
+    if (h === 'dayOfMonth') return data.dayOfMonth != null ? data.dayOfMonth : 1;
+    if (h === 'active') return boolOrBlank(data.active);
+    if (h === 'creadoPor') return data.creadoPor || '';
+    if (h === 'creadoEn') return data.creadoEn || '';
+    if (h === 'tripId') return data.tripId != null && String(data.tripId) !== '' ? String(data.tripId) : '';
+    return data[h] != null ? data[h] : '';
+  });
 }
 
 function buildRow(headers, data) {

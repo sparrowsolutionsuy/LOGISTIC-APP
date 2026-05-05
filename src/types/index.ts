@@ -86,29 +86,32 @@ export interface Cost {
   tipoCambio?: number;
   /** Siempre en USD para analytics y agregados. */
   montoUSD?: number;
-  /** Referencia al costo programado que lo originó (si aplica). */
+  /** true solo si el registro fue generado por ejecución de costo programado. */
+  isScheduled?: boolean;
+  /** Día del mes (1–28) de la definición que originó el costo (opcional, auditoría). */
+  scheduledDay?: number;
+  /** Meses YYYY-MM en los que ya se contabilizó ejecución (opcional; idempotencia principal por fila en Sheets). */
+  scheduledMonths?: string[];
+  /** ID de la definición en DB_CostosProgramados que originó este costo automático. */
+  scheduleId?: string;
+  /** @deprecated Usar scheduleId; se mantiene por compatibilidad con filas antiguas. */
   scheduledCostId?: string;
   comprobante?: string;
   registradoPor: string;
 }
 
-export type ScheduledCostFrequency = 'monthly';
-
-export interface ScheduledCost {
+/** Definición persistida en DB_CostosProgramados (Google Sheets). */
+export interface ScheduledCostDefinition {
   id: string;
-  nombre: string;
   categoria: CostCategory;
   descripcion: string;
   monto: number;
-  moneda?: 'USD' | 'UYU';
-  /** TC de referencia al crear el programado; usado al generar costos en UYU. */
-  tipoCambioReferencia?: number;
-  activo: boolean;
-  frecuencia: ScheduledCostFrequency;
-  diaDelMes: number;
-  tripId: string | null;
+  dayOfMonth: number;
+  active: boolean;
+  creadoPor: string;
   creadoEn: string;
-  ultimaEjecucion: string | null;
+  /** Opcional: vincular el costo generado a un viaje. */
+  tripId?: string | null;
 }
 
 export type DisplayCurrency = 'USD' | 'UYU';
