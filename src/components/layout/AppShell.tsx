@@ -40,7 +40,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     <div className="flex h-screen max-h-screen min-h-0 flex-col overflow-hidden bg-[var(--bg-base)] text-[var(--text-primary)]">
       {demoBanner}
 
-      <header className="sticky top-0 z-30 flex min-h-14 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--header-surface)] px-4 py-2 backdrop-blur-md min-[1024px]:hidden">
+      <header className="print-hide sticky top-0 z-30 flex min-h-14 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--header-surface)] px-4 py-2 backdrop-blur-md min-[1024px]:hidden">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <Button
             variant="ghost"
@@ -110,7 +110,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       ) : null}
 
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-[17rem] shrink-0 border-r border-[var(--border)] min-[1024px]:block">
+        <aside className="print-hide hidden w-[17rem] shrink-0 border-r border-[var(--border)] min-[1024px]:block">
           <Sidebar
             user={user}
             currentView={currentView}
@@ -122,7 +122,7 @@ export const AppShell: React.FC<AppShellProps> = ({
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="hidden min-h-14 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 py-2 shadow-[var(--shadow-xs)] min-[1024px]:flex">
+          <div className="print-hide hidden min-h-14 items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--bg-surface)] px-6 py-2 shadow-[var(--shadow-xs)] min-[1024px]:flex">
             <div className="flex min-w-0 items-center gap-4">
               <nav className="flex items-center gap-2 text-sm text-[var(--text-muted)]" aria-label="Ruta">
                 <span className="font-medium text-[var(--text-secondary)]">GDC</span>

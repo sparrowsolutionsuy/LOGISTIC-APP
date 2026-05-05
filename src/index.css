@@ -217,3 +217,25 @@ body {
   background: transparent !important;
   border: none !important;
 }
+
+@media print {
+  .print-hide,
+  .no-print {
+    display: none !important;
+  }
+
+  .report-content {
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .report-section {
+    page-break-before: auto;
+  }
+}

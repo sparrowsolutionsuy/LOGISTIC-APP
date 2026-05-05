@@ -165,6 +165,40 @@ export interface KPIData {
   realizedRevenue: number;
 }
 
+export interface MonthlyReportData {
+  month: string;
+  monthLabel: string;
+  totalRevenue: number;
+  totalCosts: number;
+  netMargin: number;
+  marginPct: number;
+  totalTrips: number;
+  completedTrips: number;
+  pendingTrips: number;
+  cancelledTrips: number;
+  totalKm: number;
+  totalTons: number;
+  avgRevenuePerTrip: number;
+  avgCostPerTrip: number;
+  avgMarginPerTrip: number;
+  topClientByRevenue: { name: string; revenue: number; trips: number };
+  topRoute: { route: string; revenue: number; count: number };
+  topProduct: { name: string; revenue: number; tons: number };
+  worstMarginTrip: { id: string; client: string; marginPct: number };
+  bestMarginTrip: { id: string; client: string; marginPct: number };
+  costsByCategory: { category: string; total: number; pct: number }[];
+  vsLastMonth: {
+    revenueDelta: number;
+    costsDelta: number;
+    marginDelta: number;
+    tripsDelta: number;
+    marginPctDeltaPp: number;
+  };
+  aiSummary: string;
+  aiAlerts: string[];
+  aiRecommendations: string[];
+}
+
 // === UI STATE ===
 export type ActiveTab =
   | 'dashboard'

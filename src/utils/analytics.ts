@@ -35,7 +35,7 @@ function isFinishedTrip(t: Trip): boolean {
 }
 
 /** Mes YYYY-MM usado para atribuir ingreso realizado (cobro) al P&L mensual. */
-function realizedMonthKey(trip: Trip): string | null {
+export function tripRealizedRevenueMonthKey(trip: Trip): string | null {
   if (trip.facturaCobrada !== true) {
     return null;
   }
@@ -50,7 +50,7 @@ function sumCostsForTrip(costs: Cost[], tripId: string): number {
   return costs.filter((c) => c.tripId === tripId).reduce((acc, c) => acc + costUsd(c), 0);
 }
 
-function monthLabel(ym: string): string {
+export function monthLabel(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
   if (!y || !m) {
     return ym;
@@ -59,8 +59,27 @@ function monthLabel(ym: string): string {
   return d.toLocaleDateString('es-UY', { month: 'short', year: 'numeric' });
 }
 
+export function formatMonthLongEs(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  if (!y || !m) return ym;
+  return new Date(y, m - 1, 1).toLocaleDateString('es-UY', { month: 'long', year: 'numeric' });
+}
+
+/** Mes calendario anterior YYYY-MM. */
+export function previousCalendarMonth(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  if (!y || !m) return ym;
+  let mo = m - 1;
+  let yr = y;
+  if (mo < 1) {
+    mo = 12;
+    yr -= 1;
+  }
+  return `${yr}-${String(mo).padStart(2, '0')}`;
+}
+
 /** Último mes YYYY-MM presente en viajes o costos (determinístico, sin reloj del sistema). */
-function latestYearMonthKey(trips: Trip[], costs: Cost[]): string | null {
+export function latestYearMonthKey(trips: Trip[], costs: Cost[]): string | null {
   let best: string | null = null;
   const consider = (fecha: string) => {
     const k = fecha.slice(0, 7);
@@ -76,6 +95,23 @@ function latestYearMonthKey(trips: Trip[], costs: Cost[]): string | null {
     }
   });
   return best;
+}
+
+/** Meses YYYY-MM únicos con al menos un viaje o costo (o fecha de cobro), más reciente primero. */
+export function collectAvailableMonthKeys(trips: Trip[], costs: Cost[]): string[] {
+  const s = new Set<string>();
+  trips.forEach((t) => {
+    considerMonthKey(s, t.fecha);
+    if (t.facturaFechaCobro) considerMonthKey(s, t.facturaFechaCobro);
+  });
+  costs.forEach((c) => considerMonthKey(s, c.fecha));
+  return Array.from(s).sort((a, b) => b.localeCompare(a));
+}
+
+function considerMonthKey(set: Set<string>, fecha: string | undefined) {
+  if (!fecha || fecha.length < 7) return;
+  const k = fecha.slice(0, 7);
+  if (/^\d{4}-\d{2}$/.test(k)) set.add(k);
 }
 
 function monthsEndingAtYearMonth(endKey: string, count: number): string[] {
@@ -95,6 +131,91 @@ function monthsEndingAtYearMonth(endKey: string, count: number): string[] {
     }
   }
   return out;
+}
+
+/** Meses consecutivos desde startKey hasta endKey inclusive (YYYY-MM). */
+function monthsFromToAscending(startKey: string, endKey: string): string[] {
+  if (!/^\d{4}-\d{2}$/.test(startKey) || !/^\d{4}-\d{2}$/.test(endKey) || startKey > endKey) {
+    return [];
+  }
+  const out: string[] = [];
+  let [y, m] = startKey.split('-').map(Number) as [number, number];
+  const [ey, em] = endKey.split('-').map(Number) as [number, number];
+  for (;;) {
+    const key = `${y}-${String(m).padStart(2, '0')}`;
+    out.push(key);
+    if (y === ey && m === em) break;
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
+function earliestYearMonthKey(trips: Trip[], costs: Cost[]): string | null {
+  const keys = collectAvailableMonthKeys(trips, costs);
+  return keys.length ? keys[keys.length - 1] : null;
+}
+
+function computeMonthlyStatRow(trips: Trip[], costs: Cost[], month: string): MonthlyStats {
+  const monthTrips = trips.filter((t) => t.fecha.startsWith(month));
+  const ids = new Set(monthTrips.map((t) => t.id));
+  const revenue = trips
+    .filter((t) => tripRealizedRevenueMonthKey(t) === month)
+    .reduce((acc, t) => acc + tripRevenueRealized(t), 0);
+
+  const pendingRevenue = monthTrips
+    .filter((t) => isFinishedTrip(t) && t.facturaCobrada !== true)
+    .reduce((acc, t) => acc + tripRevenueUsd(t), 0);
+
+  const costSum = costs
+    .filter((c) => c.fecha.startsWith(month) && (c.tripId === null || ids.has(c.tripId)))
+    .reduce((acc, c) => acc + costUsd(c), 0);
+  const margin = revenue - costSum;
+  const marginPct = revenue > 0 ? (margin / revenue) * 100 : 0;
+  const tonsTransported = monthTrips.reduce((acc, t) => acc + t.pesoKg / 1000, 0);
+
+  return {
+    month,
+    label: monthLabel(month),
+    revenue,
+    pendingRevenue,
+    costs: costSum,
+    margin,
+    marginPct,
+    tripCount: monthTrips.length,
+    tonsTransported,
+  };
+}
+
+export function buildMonthlyStats(
+  trips: Trip[],
+  costs: Cost[],
+  months = 6,
+  centerMonth?: string | null,
+  allTime?: boolean
+): MonthlyStats[] {
+  if (allTime) {
+    const minK = earliestYearMonthKey(trips, costs);
+    const maxK = latestYearMonthKey(trips, costs);
+    if (!minK || !maxK) {
+      return [];
+    }
+    const keys = monthsFromToAscending(minK, maxK);
+    return keys.map((month) => computeMonthlyStatRow(trips, costs, month));
+  }
+
+  const endKey =
+    centerMonth && /^\d{4}-\d{2}$/.test(centerMonth)
+      ? centerMonth
+      : latestYearMonthKey(trips, costs);
+  if (!endKey) {
+    return [];
+  }
+  const keys = monthsEndingAtYearMonth(endKey, months);
+  return keys.map((month) => computeMonthlyStatRow(trips, costs, month));
 }
 
 const EMPTY_KPI: KPIData = {
@@ -128,71 +249,78 @@ export function enrichTrips(trips: Trip[], clients: Client[], costs: Cost[]): Tr
   });
 }
 
-export function buildMonthlyStats(trips: Trip[], costs: Cost[], months = 6): MonthlyStats[] {
-  const endKey = latestYearMonthKey(trips, costs);
-  if (!endKey) {
-    return [];
-  }
-  const keys = monthsEndingAtYearMonth(endKey, months);
-  const tripIdsByMonth = new Map<string, Set<string>>();
-  keys.forEach((k) => tripIdsByMonth.set(k, new Set()));
-
-  trips.forEach((t) => {
-    const key = t.fecha.slice(0, 7);
-    if (tripIdsByMonth.has(key)) {
-      tripIdsByMonth.get(key)?.add(t.id);
-    }
-  });
-
-  return keys.map((month) => {
-    const monthTrips = trips.filter((t) => t.fecha.startsWith(month));
-    const revenue = trips
-      .filter((t) => realizedMonthKey(t) === month)
+/**
+ * KPIs para un mes dado o histórico completo.
+ * @param targetMonth `YYYY-MM` para P&L de ese mes; `'all'` totales históricos; `undefined` = último mes con datos.
+ */
+export function buildKPIData(
+  trips: Trip[],
+  clients: Client[],
+  costs: Cost[],
+  targetMonth?: string
+): KPIData {
+  if (targetMonth === 'all') {
+    const totalRevenueMTD = trips
+      .filter((t) => t.facturaCobrada === true)
       .reduce((acc, t) => acc + tripRevenueRealized(t), 0);
-
-    const pendingRevenue = monthTrips
+    const totalCostsMTD = costs.reduce((acc, c) => acc + costUsd(c), 0);
+    const cobradosAll = trips.filter((t) => t.facturaCobrada === true);
+    const pendingRevenue = trips
       .filter((t) => isFinishedTrip(t) && t.facturaCobrada !== true)
       .reduce((acc, t) => acc + tripRevenueUsd(t), 0);
-
-    const ids = tripIdsByMonth.get(month) ?? new Set<string>();
-    const costSum = costs
-      .filter((c) => c.fecha.startsWith(month) && (c.tripId === null || ids.has(c.tripId)))
-      .reduce((acc, c) => acc + costUsd(c), 0);
-    const margin = revenue - costSum;
-    const marginPct = revenue > 0 ? (margin / revenue) * 100 : 0;
-    const tonsTransported = monthTrips.reduce((acc, t) => acc + t.pesoKg / 1000, 0);
-
+    const netMarginMTD = totalRevenueMTD - totalCostsMTD;
+    const marginPctMTD = totalRevenueMTD > 0 ? (netMarginMTD / totalRevenueMTD) * 100 : 0;
+    const activeTrips = trips.filter((t) => t.estado === 'En Tránsito').length;
+    const pendingTrips = trips.filter((t) => t.estado === 'Pendiente').length;
+    const avgRevenuePerTrip =
+      cobradosAll.length > 0 ? totalRevenueMTD / cobradosAll.length : 0;
+    const revenueByClient = new Map<string, number>();
+    cobradosAll.forEach((t) => {
+      const rev = tripRevenueRealized(t);
+      revenueByClient.set(t.clientId, (revenueByClient.get(t.clientId) ?? 0) + rev);
+    });
+    let topClient: { name: string; revenue: number } | null = null;
+    revenueByClient.forEach((revenue, clientId) => {
+      const name = clients.find((c) => c.id === clientId)?.nombreComercial ?? clientId;
+      if (!topClient || revenue > topClient.revenue) {
+        topClient = { name, revenue };
+      }
+    });
     return {
-      month,
-      label: monthLabel(month),
-      revenue,
+      totalRevenueMTD,
+      totalCostsMTD,
+      netMarginMTD,
+      marginPctMTD,
+      activeTrips,
+      pendingTrips,
+      avgRevenuePerTrip,
+      topClient,
       pendingRevenue,
-      costs: costSum,
-      margin,
-      marginPct,
-      tripCount: monthTrips.length,
-      tonsTransported,
+      realizedRevenue: totalRevenueMTD,
     };
-  });
-}
+  }
 
-export function buildKPIData(trips: Trip[], clients: Client[], costs: Cost[]): KPIData {
-  const mtdKey = latestYearMonthKey(trips, costs);
+  const mtdKey =
+    targetMonth && /^\d{4}-\d{2}$/.test(targetMonth)
+      ? targetMonth
+      : latestYearMonthKey(trips, costs);
   if (!mtdKey) {
     return { ...EMPTY_KPI };
   }
 
-  const mtdTrips = trips.filter((t) => t.fecha.startsWith(mtdKey));
-  const tripIds = new Set(mtdTrips.map((t) => t.id));
+  /** Viajes con fecha operativa en el mes (misma base que `computeMonthlyStatRow`). */
+  const monthTrips = trips.filter((t) => t.fecha.startsWith(mtdKey));
+  const tripIds = new Set(monthTrips.map((t) => t.id));
+  /** Costos del mes: misma regla que el gráfico mensual (incluye gastos sin viaje). */
   const totalCostsMTD = costs
-    .filter((c) => c.tripId !== null && tripIds.has(c.tripId))
+    .filter((c) => c.fecha.startsWith(mtdKey) && (c.tripId === null || tripIds.has(c.tripId)))
     .reduce((acc, c) => acc + costUsd(c), 0);
 
-  const cobradosMtd = trips.filter((t) => realizedMonthKey(t) === mtdKey);
+  const cobradosMtd = trips.filter((t) => tripRealizedRevenueMonthKey(t) === mtdKey);
   const totalRevenueMTD = cobradosMtd.reduce((acc, t) => acc + tripRevenueRealized(t), 0);
   const realizedRevenue = totalRevenueMTD;
 
-  const pendingRevenue = trips
+  const pendingRevenue = monthTrips
     .filter((t) => isFinishedTrip(t) && t.facturaCobrada !== true)
     .reduce((acc, t) => acc + tripRevenueUsd(t), 0);
 
@@ -268,4 +396,46 @@ export function getCostsByCategory(
       pct: grand > 0 ? (total / grand) * 100 : 0,
     }))
     .sort((a, b) => b.total - a.total);
+}
+
+export type WeeklyBucket = { label: string; ingresos: number; costos: number };
+
+/** Ingresos (cobrados en el mes) y costos por semana calendario dentro del mes YYYY-MM. */
+export function buildWeeklyBucketsInMonth(
+  trips: Trip[],
+  costs: Cost[],
+  monthKey: string
+): WeeklyBucket[] {
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+    return [];
+  }
+  const [y, m] = monthKey.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const ranges: [number, number][] = [
+    [1, 7],
+    [8, 14],
+    [15, 21],
+    [22, lastDay],
+  ];
+  return ranges.map(([d0, d1], i) => {
+    const ingresos = trips
+      .filter((t) => {
+        if (!t.fecha.startsWith(monthKey)) return false;
+        const day = Number(t.fecha.slice(8, 10));
+        return day >= d0 && day <= d1 && tripRealizedRevenueMonthKey(t) === monthKey;
+      })
+      .reduce((s, t) => s + tripRevenueRealized(t), 0);
+    const costos = costs
+      .filter((c) => {
+        if (!c.fecha.startsWith(monthKey)) return false;
+        const day = Number(c.fecha.slice(8, 10));
+        return day >= d0 && day <= d1;
+      })
+      .reduce((s, c) => s + costUsd(c), 0);
+    return {
+      label: `Sem. ${i + 1} (${d0}–${Math.min(d1, lastDay)})`,
+      ingresos,
+      costos,
+    };
+  });
 }

@@ -36,6 +36,8 @@ import { useExchangeRate } from './hooks/useExchangeRate';
 import { checkAndExecuteScheduledCosts } from './utils/scheduledCosts';
 import { EXCHANGE_RATE_STORAGE_KEY } from './constants';
 import { sanitizeFileName } from './utils/formatters';
+import { collectAvailableMonthKeys } from './utils/analytics';
+import { ReportModal } from './components/modules/ReportModal';
 
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
@@ -88,8 +90,14 @@ const App: React.FC = () => {
   );
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
   const [insights, setInsights] = useState<AIInsight[]>([]);
   const scheduledExecutionKeysRef = useRef(new Set<string>());
+
+  const availableMonths = useMemo(
+    () => collectAvailableMonthKeys(trips, costs),
+    [trips, costs]
+  );
 
   const {
     displayCurrency,
@@ -440,6 +448,7 @@ const App: React.FC = () => {
   const adminRedirect = () => setActiveTab('dashboard');
 
   return (
+    <>
     <AppShell
       user={user}
       currentView={activeTab}
@@ -467,6 +476,7 @@ const App: React.FC = () => {
           offline={offline}
           onUpdateTrip={onUpdateTrip}
           onNavigateToReport={() => setActiveTab('report')}
+          onOpenMonthlyReport={() => setReportModalOpen(true)}
           displayCurrency={displayCurrency}
           currentRate={currentRate}
           formatAmount={formatAmount}
@@ -558,6 +568,17 @@ const App: React.FC = () => {
         </AdminGuard>
       )}
     </AppShell>
+    <ReportModal
+      open={reportModalOpen}
+      onClose={() => setReportModalOpen(false)}
+      trips={trips}
+      costs={costs}
+      clients={clients}
+      availableMonths={availableMonths}
+      formatAmount={formatAmount}
+      convertAggregateToDisplay={convertAggregateToDisplay}
+    />
+    </>
   );
 };
 

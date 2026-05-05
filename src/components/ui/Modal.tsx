@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { Button } from './Button';
 
-export type ModalSize = 'sm' | 'md' | 'lg';
+export type ModalSize = 'sm' | 'md' | 'lg' | 'full';
 
 export interface ModalProps {
   open: boolean;
@@ -17,6 +17,7 @@ const SIZE_WIDTH: Record<ModalSize, string> = {
   sm: 'sm:max-w-md',
   md: 'sm:max-w-lg',
   lg: 'sm:max-w-3xl',
+  full: 'sm:max-w-[90vw] sm:max-h-[90vh] w-full max-w-none',
 };
 
 export const Modal: React.FC<ModalProps> = ({ open, onClose, title, size = 'md', children }) => {
@@ -106,7 +107,7 @@ export const Modal: React.FC<ModalProps> = ({ open, onClose, title, size = 'md',
       <button
         type="button"
         aria-label="Cerrar modal"
-        className="absolute inset-0 bg-black/60 transition-colors duration-150"
+        className="print-hide absolute inset-0 bg-black/60 transition-colors duration-150"
         onClick={onClose}
       />
       <div
@@ -115,9 +116,13 @@ export const Modal: React.FC<ModalProps> = ({ open, onClose, title, size = 'md',
         aria-modal="true"
         aria-labelledby="modal-title"
         tabIndex={-1}
-        className={`relative z-[101] flex max-h-full w-full flex-col overflow-hidden border border-[var(--border)] bg-[var(--bg-surface)] shadow-lg max-sm:h-full max-sm:max-w-none max-sm:rounded-none sm:max-h-[min(90vh,720px)] sm:rounded-xl ${SIZE_WIDTH[size]}`}
+        className={`relative z-[101] flex max-h-full w-full flex-col overflow-hidden border border-[var(--border)] bg-[var(--bg-surface)] shadow-lg max-sm:h-full max-sm:max-w-none max-sm:rounded-none sm:rounded-xl ${
+          size === 'full'
+            ? 'sm:h-[90vh] sm:max-h-[90vh] ' + SIZE_WIDTH.full
+            : 'sm:max-h-[min(90vh,720px)] ' + SIZE_WIDTH[size]
+        }`}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-4">
+        <div className="no-print flex items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-4">
           <h2 id="modal-title" className="text-base font-semibold text-[var(--text-primary)]">
             {title}
           </h2>
@@ -126,7 +131,7 @@ export const Modal: React.FC<ModalProps> = ({ open, onClose, title, size = 'md',
             size="sm"
             onClick={onClose}
             aria-label="Cerrar"
-            className="!p-2"
+            className="no-print !p-2"
             icon={<X size={18} aria-hidden />}
           >
             <span className="sr-only">Cerrar</span>

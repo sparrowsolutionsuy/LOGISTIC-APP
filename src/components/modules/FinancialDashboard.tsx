@@ -18,12 +18,17 @@ import type { Client, Cost, Trip } from '../../types';
 import {
   buildKPIData,
   buildMonthlyStats,
+  buildWeeklyBucketsInMonth,
   costUsd,
   enrichTrips,
+  formatMonthLongEs,
   getCostsByCategory,
+  tripRealizedRevenueMonthKey,
   tripRevenueRealized,
   tripRevenueUsd,
 } from '../../utils/analytics';
+import { usePeriodFilter } from '../../hooks/usePeriodFilter';
+import { PeriodSelector } from '../ui/PeriodSelector';
 import type { CostCategory } from '../../types';
 import { getBillingStatus, getBillingStatusLabel } from '../../utils/billing';
 
@@ -108,6 +113,8 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
   convertAggregateToDisplay: convertAggregateToDisplayProp,
 }) => {
   const [tab, setTab] = useState<FinTab>('resumen');
+  const { selectedMonth, setSelectedMonth, availableMonths, isAllTime, filteredTrips, filteredCosts } =
+    usePeriodFilter(trips, costs);
 
   const fmtMoney = useMemo(() => {
     if (formatAmountProp && convertAggregateToDisplayProp) {
@@ -116,9 +123,37 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     return formatUsd;
   }, [formatAmountProp, convertAggregateToDisplayProp]);
 
-  const kpi = useMemo(() => buildKPIData(trips, clients, costs), [trips, clients, costs]);
-  const monthly = useMemo(() => buildMonthlyStats(trips, costs, 6), [trips, costs]);
-  const enriched = useMemo(() => enrichTrips(trips, clients, costs), [trips, clients, costs]);
+  const kpi = useMemo(
+    () => buildKPIData(trips, clients, costs, isAllTime ? 'all' : selectedMonth),
+    [trips, costs, clients, isAllTime, selectedMonth]
+  );
+  const monthly = useMemo(
+    () =>
+      buildMonthlyStats(
+        trips,
+        costs,
+        6,
+        isAllTime ? null : selectedMonth,
+        isAllTime
+      ),
+    [trips, costs, isAllTime, selectedMonth]
+  );
+  const enriched = useMemo(
+    () => enrichTrips(isAllTime ? trips : filteredTrips, clients, costs),
+    [isAllTime, trips, filteredTrips, clients, costs]
+  );
+
+  const periodEmpty =
+    !isAllTime && filteredTrips.length === 0 && filteredCosts.length === 0;
+
+  const kpiPeriodSub = isAllTime ? 'Todo el período' : formatMonthLongEs(selectedMonth);
+
+  const cobradosInScope = useMemo(() => {
+    if (isAllTime) return trips.filter((t) => t.facturaCobrada === true);
+    return trips.filter(
+      (t) => t.facturaCobrada === true && tripRealizedRevenueMonthKey(t) === selectedMonth
+    );
+  }, [trips, isAllTime, selectedMonth]);
 
   const areaData = useMemo(
     () =>
@@ -130,20 +165,18 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     [monthly]
   );
 
-  const cobradosTrips = useMemo(() => trips.filter((t) => t.facturaCobrada === true), [trips]);
-
   const totalHistoricRevenue = useMemo(
-    () => cobradosTrips.reduce((s, t) => s + tripRevenueRealized(t), 0),
-    [cobradosTrips]
+    () => cobradosInScope.reduce((s, t) => s + tripRevenueRealized(t), 0),
+    [cobradosInScope]
   );
   const avgRevenuePerTrip = useMemo(
-    () => (cobradosTrips.length > 0 ? totalHistoricRevenue / cobradosTrips.length : 0),
-    [cobradosTrips.length, totalHistoricRevenue]
+    () => (cobradosInScope.length > 0 ? totalHistoricRevenue / cobradosInScope.length : 0),
+    [cobradosInScope.length, totalHistoricRevenue]
   );
 
   const revenueByClient = useMemo(() => {
     const m = new Map<string, number>();
-    cobradosTrips.forEach((t) => {
+    cobradosInScope.forEach((t) => {
       const r = tripRevenueRealized(t);
       m.set(t.clientId, (m.get(t.clientId) ?? 0) + r);
     });
@@ -154,11 +187,11 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       }))
       .filter((x) => x.value > 0)
       .sort((a, b) => b.value - a.value);
-  }, [cobradosTrips, clients]);
+  }, [cobradosInScope, clients]);
 
   const revenueByProduct = useMemo(() => {
     const m = new Map<string, number>();
-    cobradosTrips.forEach((t) => {
+    cobradosInScope.forEach((t) => {
       const key = t.contenido?.trim() || 'Sin especificar';
       const revenue = tripRevenueRealized(t);
       m.set(key, (m.get(key) ?? 0) + revenue);
@@ -167,23 +200,37 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       .map(([name, value]) => ({ name, value }))
       .filter((x) => x.value > 0)
       .sort((a, b) => b.value - a.value);
-  }, [cobradosTrips]);
+  }, [cobradosInScope]);
+
+  const weeklyIngresos = useMemo(
+    () =>
+      !isAllTime && /^\d{4}-\d{2}$/.test(selectedMonth)
+        ? buildWeeklyBucketsInMonth(trips, costs, selectedMonth)
+        : [],
+    [trips, costs, isAllTime, selectedMonth]
+  );
 
   const bestClientHistoric = useMemo(() => {
     const top = revenueByClient[0];
     return top ? { name: top.name, revenue: top.value } : null;
   }, [revenueByClient]);
 
-  const totalCostsAll = useMemo(() => costs.reduce((s, c) => s + costUsd(c), 0), [costs]);
+  const totalCostsAll = useMemo(
+    () => filteredCosts.reduce((s, c) => s + costUsd(c), 0),
+    [filteredCosts]
+  );
   const totalKm = useMemo(
-    () => trips.filter((t) => t.kmRecorridos > 0).reduce((s, t) => s + t.kmRecorridos, 0),
-    [trips]
+    () =>
+      (isAllTime ? trips : filteredTrips)
+        .filter((t) => t.kmRecorridos > 0)
+        .reduce((s, t) => s + t.kmRecorridos, 0),
+    [trips, filteredTrips, isAllTime]
   );
   const costPerKm = useMemo(
     () => (totalKm > 0 ? totalCostsAll / totalKm : 0),
     [totalCostsAll, totalKm]
   );
-  const catBreakdown = useMemo(() => getCostsByCategory(costs), [costs]);
+  const catBreakdown = useMemo(() => getCostsByCategory(filteredCosts), [filteredCosts]);
   const topCat = catBreakdown[0];
 
   const rentBarData = useMemo(
@@ -204,7 +251,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
 
   const top5Routes = useMemo(() => {
     const m = new Map<string, { revenue: number; pending: number; cost: number }>();
-    trips.forEach((t) => {
+    (isAllTime ? trips : filteredTrips).forEach((t) => {
       const key = `${t.origen} → ${t.destino}`;
       const cur = m.get(key) ?? { revenue: 0, pending: 0, cost: 0 };
       if (t.facturaCobrada === true) {
@@ -231,7 +278,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       })
       .sort((a, b) => b.margin - a.margin)
       .slice(0, 5);
-  }, [trips, costs]);
+  }, [trips, filteredTrips, isAllTime, costs]);
 
   const tabs: { id: FinTab; label: string }[] = [
     { id: 'resumen', label: 'Resumen' },
@@ -246,6 +293,21 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
         <h1 className="text-2xl font-bold text-slate-900">Finanzas</h1>
         <p className="text-sm text-slate-500">Análisis consolidado de ingresos, costos y rentabilidad.</p>
       </div>
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4">
+        <PeriodSelector
+          label="Período de análisis"
+          value={selectedMonth}
+          onChange={setSelectedMonth}
+          availableMonths={availableMonths}
+        />
+      </div>
+
+      {periodEmpty ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100">
+          No hay datos para este período. Seleccioná otro mes o &quot;Todos los períodos&quot;.
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-1">
         {tabs.map((t) => (
@@ -267,10 +329,10 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       {tab === 'resumen' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi title="Ingresos MTD" value={fmtMoney(kpi.totalRevenueMTD)} />
-            <Kpi title="Costos MTD" value={fmtMoney(kpi.totalCostsMTD)} />
-            <Kpi title="Margen neto MTD" value={fmtMoney(kpi.netMarginMTD)} />
-            <Kpi title="Margen %" value={`${kpi.marginPctMTD.toFixed(1)}%`} />
+            <Kpi title="Ingresos MTD" value={fmtMoney(kpi.totalRevenueMTD)} sub={kpiPeriodSub} />
+            <Kpi title="Costos MTD" value={fmtMoney(kpi.totalCostsMTD)} sub={kpiPeriodSub} />
+            <Kpi title="Margen neto MTD" value={fmtMoney(kpi.netMarginMTD)} sub={kpiPeriodSub} />
+            <Kpi title="Margen %" value={`${kpi.marginPctMTD.toFixed(1)}%`} sub={kpiPeriodSub} />
           </div>
           <ChartBox title="Ingresos vs costos (6 meses)">
             <ResponsiveContainer width="100%" height="100%">
@@ -379,15 +441,34 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       {tab === 'ingresos' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Kpi title="Total histórico (ingresos)" value={fmtMoney(totalHistoricRevenue)} />
-            <Kpi title="Promedio por viaje" value={fmtMoney(avgRevenuePerTrip)} />
             <Kpi
-              title="Mejor cliente (histórico)"
+              title={isAllTime ? 'Total ingresos (cobrados)' : 'Ingresos cobrados (mes)'}
+              value={fmtMoney(totalHistoricRevenue)}
+              sub={kpiPeriodSub}
+            />
+            <Kpi title="Promedio por viaje" value={fmtMoney(avgRevenuePerTrip)} sub={kpiPeriodSub} />
+            <Kpi
+              title={isAllTime ? 'Mejor cliente' : 'Mejor cliente (mes)'}
               value={bestClientHistoric?.name ?? '—'}
               sub={bestClientHistoric ? fmtMoney(bestClientHistoric.revenue) : undefined}
             />
           </div>
-          <ChartBox title="Ingresos mensuales">
+          {!isAllTime && weeklyIngresos.length > 0 ? (
+            <ChartBox title={`Ingresos vs costos por semana — ${formatMonthLongEs(selectedMonth)}`}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={weeklyIngresos}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+                  <Tooltip formatter={(v: number) => fmtMoney(v)} />
+                  <Legend />
+                  <Bar dataKey="ingresos" name="Ingresos cobrados" fill={COL.ingreso} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="costos" name="Costos" fill={COL.costo} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartBox>
+          ) : null}
+          <ChartBox title={isAllTime ? 'Ingresos mensuales' : 'Ingresos mensuales (ventana)'}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthly.map((m) => ({ label: m.label, Ingresos: m.revenue }))}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -507,8 +588,8 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       {tab === 'costos' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Kpi title="Total costos" value={fmtMoney(totalCostsAll)} />
-            <Kpi title="Costo / km promedio" value={totalKm > 0 ? fmtMoney(costPerKm) : '—'} />
+            <Kpi title="Total costos" value={fmtMoney(totalCostsAll)} sub={kpiPeriodSub} />
+            <Kpi title="Costo / km promedio" value={totalKm > 0 ? fmtMoney(costPerKm) : '—'} sub={kpiPeriodSub} />
             <Kpi
               title="Categoría con mayor gasto"
               value={topCat?.category ?? '—'}

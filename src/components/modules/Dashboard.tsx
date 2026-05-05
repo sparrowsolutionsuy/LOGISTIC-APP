@@ -21,7 +21,15 @@ import type {
   TripWithMetrics,
   User,
 } from '../../types';
-import { buildKPIData, buildMonthlyStats, enrichTrips, tripRevenueUsd } from '../../utils/analytics';
+import {
+  buildKPIData,
+  buildMonthlyStats,
+  enrichTrips,
+  formatMonthLongEs,
+  tripRevenueUsd,
+} from '../../utils/analytics';
+import { usePeriodFilter } from '../../hooks/usePeriodFilter';
+import { PeriodSelector } from '../ui/PeriodSelector';
 import {
   DollarSign,
   Truck,
@@ -31,6 +39,7 @@ import {
   CheckCircle2,
   Clock,
   Banknote,
+  FileBarChart,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 
@@ -48,6 +57,8 @@ export interface DashboardProps {
   kpiPrecomputed?: KPIData;
   /** Admin: abre el reporte de rendimiento con IA (pestaña oculta del menú). */
   onNavigateToReport?: () => void;
+  /** Admin: abre el reporte mensual (modal). */
+  onOpenMonthlyReport?: () => void;
   displayCurrency?: DisplayCurrency;
   currentRate?: number;
   formatAmount?: (n: number) => string;
@@ -143,6 +154,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   offline = false,
   kpiPrecomputed,
   onNavigateToReport,
+  onOpenMonthlyReport,
   displayCurrency = 'USD',
   currentRate = 42,
   formatAmount: formatAmountProp,
@@ -150,6 +162,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
 }) => {
   const isAdmin = user.role === 'admin';
   const [chartsReady, setChartsReady] = useState(false);
+  const { selectedMonth, setSelectedMonth, availableMonths, isAllTime, filteredTrips, filteredCosts } =
+    usePeriodFilter(trips, costs);
 
   const fmtAgg = useMemo(() => {
     if (formatAmountProp && convertAggregateToDisplayProp) {
@@ -162,17 +176,35 @@ export const Dashboard: React.FC<DashboardProps> = ({
     setChartsReady(false);
     const t = window.setTimeout(() => setChartsReady(true), 380);
     return () => window.clearTimeout(t);
-  }, [trips, clients, costs]);
+  }, [trips, clients, costs, selectedMonth, isAllTime]);
 
   const kpi = useMemo(
-    () => kpiPrecomputed ?? buildKPIData(trips, clients, costs),
-    [kpiPrecomputed, trips, clients, costs]
+    () =>
+      kpiPrecomputed ??
+      buildKPIData(trips, clients, costs, isAllTime ? 'all' : selectedMonth),
+    [kpiPrecomputed, trips, costs, clients, isAllTime, selectedMonth]
   );
-  const monthly = useMemo(() => buildMonthlyStats(trips, costs, 6), [trips, costs]);
+  const monthly = useMemo(
+    () =>
+      buildMonthlyStats(
+        trips,
+        costs,
+        6,
+        isAllTime ? null : selectedMonth,
+        isAllTime
+      ),
+    [trips, costs, isAllTime, selectedMonth]
+  );
   const enriched = useMemo(
-    () => enrichedTripsProp ?? enrichTrips(trips, clients, costs),
-    [enrichedTripsProp, trips, clients, costs]
+    () =>
+      enrichedTripsProp ??
+      enrichTrips(isAllTime ? trips : filteredTrips, clients, costs),
+    [enrichedTripsProp, isAllTime, trips, filteredTrips, clients, costs]
   );
+
+  const periodEmpty =
+    !isAllTime && filteredTrips.length === 0 && filteredCosts.length === 0;
+  const kpiPeriodSub = isAllTime ? 'Todo el período' : formatMonthLongEs(selectedMonth);
   const enrichedById = useMemo(() => {
     const m = new Map<string, (typeof enriched)[0]>();
     enriched.forEach((e) => m.set(e.id, e));
@@ -200,19 +232,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
   );
 
   const topRecent = useMemo(() => {
-    return [...trips]
+    const pool = isAllTime ? trips : filteredTrips;
+    return [...pool]
       .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id.localeCompare(a.id))
       .slice(0, 5);
-  }, [trips]);
+  }, [trips, filteredTrips, isAllTime]);
 
   const totalTripsDone = useMemo(
-    () => trips.filter((t) => t.estado === 'Completado' || t.estado === 'Cerrado').length,
-    [trips]
+    () =>
+      (isAllTime ? trips : filteredTrips).filter(
+        (t) => t.estado === 'Completado' || t.estado === 'Cerrado'
+      ).length,
+    [trips, filteredTrips, isAllTime]
   );
 
   const revenueByProduct = useMemo(() => {
     const byProduct = new Map<string, number>();
-    trips
+    (isAllTime ? trips : filteredTrips)
       .filter((t) => t.estado === 'Completado' || t.estado === 'Cerrado')
       .forEach((t) => {
         const product = t.contenido?.trim() || 'Sin especificar';
@@ -223,7 +259,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       .map(([product, total]) => ({ product, total }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 5);
-  }, [trips]);
+  }, [trips, filteredTrips, isAllTime]);
 
   const todayStr = useMemo(() => localISODate(new Date()), []);
   const operativoKpis = useMemo(() => {
@@ -280,15 +316,55 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <p className="mt-1 text-sm text-slate-500">
           {isAdmin ? 'Vista financiera y operativa completa.' : 'Vista operativa — tus asignaciones.'}
         </p>
+        {isAdmin ? (
+          <div className="mt-4 flex flex-col gap-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <PeriodSelector
+                label="Período"
+                value={selectedMonth}
+                onChange={setSelectedMonth}
+                availableMonths={availableMonths}
+              />
+            </div>
+            <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              <button
+                type="button"
+                onClick={() => onOpenMonthlyReport?.()}
+                disabled={trips.length === 0}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border-2 border-[var(--accent-blue)] bg-[var(--bg-surface)] px-4 py-2.5 text-sm font-semibold text-[var(--accent-blue)] shadow-sm hover:bg-[var(--accent-blue-muted)] disabled:opacity-50 sm:w-auto"
+              >
+                <FileBarChart size={18} aria-hidden />
+                Reporte mensual
+              </button>
+              {onNavigateToReport ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="w-full justify-center sm:w-auto"
+                  icon={<Sparkles size={14} aria-hidden />}
+                  disabled={trips.length === 0}
+                  onClick={() => onNavigateToReport()}
+                >
+                  Reporte rendimiento (IA)
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {isAdmin ? (
         <>
+          {periodEmpty ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100">
+              No hay datos para este período. Seleccioná otro mes o &quot;Todos los períodos&quot;.
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
             <KpiCard
               title="Ingresos MTD"
               value={fmtAgg(kpi.totalRevenueMTD)}
-              sub="Solo viajes cobrados"
+              sub={`Solo viajes cobrados · ${kpiPeriodSub}`}
               icon={<Wallet className="h-6 w-6 text-emerald-100" />}
               bg="bg-emerald-700"
             />
@@ -302,18 +378,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <KpiCard
               title="Costos MTD"
               value={fmtAgg(kpi.totalCostsMTD)}
+              sub={kpiPeriodSub}
               icon={<DollarSign className="h-6 w-6 text-slate-100" />}
               bg="bg-slate-700"
             />
             <KpiCard
               title="Margen %"
               value={`${kpi.marginPctMTD.toFixed(1)}%`}
+              sub={kpiPeriodSub}
               icon={<Percent className="h-6 w-6 text-cyan-100" />}
               bg="bg-cyan-800"
             />
             <KpiCard
               title="Viajes realizados"
               value={`${totalTripsDone}`}
+              sub={kpiPeriodSub}
               icon={<Truck className="h-6 w-6 text-blue-100" />}
               bg="bg-blue-900"
             />
@@ -334,7 +413,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
               <h2 className="mb-4 text-base font-semibold text-slate-800">
-                Ingresos vs costos (últimos 6 meses)
+                {isAllTime
+                  ? 'Ingresos vs costos (histórico completo)'
+                  : `Ingresos vs costos (ventana 6 meses · ${formatMonthLongEs(selectedMonth)})`}
               </h2>
               <div className="w-full overflow-x-auto overscroll-x-contain touch-pan-x">
                 <div className="min-h-[200px] h-[220px] min-w-[520px]">
@@ -415,19 +496,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-base font-semibold text-slate-800">Resumen operativo reciente</h2>
-              {onNavigateToReport ? (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<Sparkles size={14} aria-hidden />}
-                  disabled={trips.length === 0}
-                  onClick={() => onNavigateToReport()}
-                >
-                  Ver reporte de rendimiento
-                </Button>
-              ) : null}
+              <p className="text-xs text-slate-500 sm:text-right">
+                Reportes: usá los botones arriba, junto al selector de período.
+              </p>
             </div>
 
             {!chartsReady ? (
