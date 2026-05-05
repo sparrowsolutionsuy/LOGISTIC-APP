@@ -40,10 +40,10 @@ const OPERATIVE_NAV: NavDef[] = [
     showPendingBadge: true,
   },
   { view: 'map', label: ROUTE_NAMES.map, icon: <MapIcon size={20} strokeWidth={2} aria-hidden /> },
-  { view: 'costs', label: ROUTE_NAMES.costs, icon: <Wallet size={20} strokeWidth={2} aria-hidden /> },
 ];
 
 const FINANCIAL_NAV: NavDef[] = [
+  { view: 'costs', label: ROUTE_NAMES.costs, icon: <Wallet size={20} strokeWidth={2} aria-hidden />, roles: ['admin'] },
   {
     view: 'financial',
     label: ROUTE_NAMES.financial,

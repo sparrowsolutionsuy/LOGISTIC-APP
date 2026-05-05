@@ -1,4 +1,5 @@
 import type { Cost, ScheduledCostDefinition } from '../types';
+import { DEFAULT_EXCHANGE_RATE } from '../constants';
 import { saveCostToSheet } from '../services/api';
 
 function currentMonthKey(d: Date): string {
@@ -49,6 +50,9 @@ export async function checkAndExecuteScheduledCosts(
     }
 
     const monto = def.monto;
+    const cur: 'USD' | 'UYU' = def.currency === 'UYU' ? 'UYU' : 'USD';
+    const tipoCambio = cur === 'UYU' ? DEFAULT_EXCHANGE_RATE : 1;
+    const montoUSD = cur === 'USD' ? monto : monto / (tipoCambio > 0 ? tipoCambio : 1);
     const cost: Cost = {
       id: `K${Date.now()}_${def.id}_${Math.random().toString(36).slice(2, 8)}`,
       fecha: fechaIso,
@@ -56,9 +60,10 @@ export async function checkAndExecuteScheduledCosts(
       categoria: def.categoria,
       descripcion: `[AUTO] ${def.descripcion}`,
       monto,
-      moneda: 'USD',
-      tipoCambio: 1,
-      montoUSD: monto,
+      moneda: cur,
+      currency: cur,
+      tipoCambio,
+      montoUSD,
       isScheduled: true,
       scheduledDay: def.dayOfMonth,
       scheduleId: def.id,

@@ -6,8 +6,9 @@ export function costUsd(c: Cost): number {
   if (c.montoUSD != null && Number.isFinite(c.montoUSD)) {
     return c.montoUSD;
   }
-  const mon = c.moneda === 'UYU' ? 'UYU' : 'USD';
-  const tc = c.tipoCambio ?? DEFAULT_EXCHANGE_RATE;
+  const mon = c.currency === 'UYU' || c.moneda === 'UYU' ? 'UYU' : 'USD';
+  const tcRaw = Number(c.tipoCambio) || DEFAULT_EXCHANGE_RATE;
+  const tc = mon === 'UYU' ? Math.max(tcRaw, 1) : tcRaw;
   return mon === 'UYU' ? c.monto / tc : c.monto;
 }
 

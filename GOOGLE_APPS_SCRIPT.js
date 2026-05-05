@@ -132,6 +132,7 @@ function doGet(e) {
       'descripcion',
       'monto',
       'moneda',
+      'currency',
       'tipoCambio',
       'montoUSD',
       'scheduledCostId',
@@ -150,6 +151,7 @@ function doGet(e) {
       'categoria',
       'descripcion',
       'monto',
+      'currency',
       'dayOfMonth',
       'active',
       'creadoPor',
@@ -157,6 +159,7 @@ function doGet(e) {
       'tripId',
     ]);
   }
+  ensureScheduledDefinitionSheetHeaders(defSheet);
   const scheduledCostDefinitions = getSheetData('DB_CostosProgramados');
 
   return ContentService.createTextOutput(
@@ -255,6 +258,7 @@ function doPost(e) {
           'descripcion',
           'monto',
           'moneda',
+          'currency',
           'tipoCambio',
           'montoUSD',
           'scheduledCostId',
@@ -322,6 +326,7 @@ function doPost(e) {
           'categoria',
           'descripcion',
           'monto',
+          'currency',
           'dayOfMonth',
           'active',
           'creadoPor',
@@ -329,6 +334,7 @@ function doPost(e) {
           'tripId',
         ]);
       }
+      ensureScheduledDefinitionSheetHeaders(defS);
       var defHdr = defS.getRange(1, 1, 1, defS.getLastColumn()).getValues()[0];
       defS.appendRow(definitionRowValues(data, defHdr));
     } else if (type === 'updateScheduledCost') {
@@ -336,6 +342,7 @@ function doPost(e) {
       if (!defSheetU) {
         return createErrorResponse('DB_CostosProgramados no existe');
       }
+      ensureScheduledDefinitionSheetHeaders(defSheetU);
       var defVals = defSheetU.getDataRange().getValues();
       var defHeadersU = defVals[0];
       var defIdCol = defHeadersU.indexOf('id');
@@ -498,6 +505,7 @@ function ensureCostSheetHeaders(sheet) {
     'descripcion',
     'monto',
     'moneda',
+    'currency',
     'tipoCambio',
     'montoUSD',
     'scheduledCostId',
@@ -520,6 +528,32 @@ function ensureCostSheetHeaders(sheet) {
   }
 }
 
+/** Asegura columnas esperadas en DB_CostosProgramados (hojas antiguas). */
+function ensureScheduledDefinitionSheetHeaders(sheet) {
+  var expected = [
+    'id',
+    'categoria',
+    'descripcion',
+    'monto',
+    'currency',
+    'dayOfMonth',
+    'active',
+    'creadoPor',
+    'creadoEn',
+    'tripId',
+  ];
+  var lastCol = Math.max(1, sheet.getLastColumn());
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  for (var si = 0; si < expected.length; si++) {
+    var sname = expected[si];
+    if (headers.indexOf(sname) === -1) {
+      var slc = sheet.getLastColumn();
+      sheet.getRange(1, slc + 1).setValue(sname);
+      headers.push(sname);
+    }
+  }
+}
+
 function costCellValue(header, data) {
   if (header === 'id') return data.id || '';
   if (header === 'fecha') return data.fecha || '';
@@ -527,7 +561,8 @@ function costCellValue(header, data) {
   if (header === 'categoria') return data.categoria || 'Otros';
   if (header === 'descripcion') return data.descripcion || '';
   if (header === 'monto') return data.monto != null ? data.monto : 0;
-  if (header === 'moneda') return data.moneda || 'USD';
+  if (header === 'moneda') return data.moneda || data.currency || 'USD';
+  if (header === 'currency') return data.currency || data.moneda || 'USD';
   if (header === 'tipoCambio') return data.tipoCambio != null ? data.tipoCambio : '';
   if (header === 'montoUSD') return data.montoUSD != null ? data.montoUSD : '';
   if (header === 'scheduledCostId') return data.scheduledCostId || data.scheduleId || '';
@@ -557,6 +592,7 @@ function definitionRowValues(data, headers) {
     if (h === 'categoria') return data.categoria || 'Otros';
     if (h === 'descripcion') return data.descripcion || '';
     if (h === 'monto') return data.monto != null ? data.monto : 0;
+    if (h === 'currency') return data.currency || 'USD';
     if (h === 'dayOfMonth') return data.dayOfMonth != null ? data.dayOfMonth : 1;
     if (h === 'active') return boolOrBlank(data.active);
     if (h === 'creadoPor') return data.creadoPor || '';

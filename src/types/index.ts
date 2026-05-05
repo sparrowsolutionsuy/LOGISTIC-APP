@@ -83,6 +83,8 @@ export interface Cost {
   descripcion: string;
   monto: number;
   moneda?: 'USD' | 'UYU';
+  /** Moneda de registro (alias explícito de `moneda` para UI y Sheets `currency`). */
+  currency?: 'USD' | 'UYU';
   tipoCambio?: number;
   /** Siempre en USD para analytics y agregados. */
   montoUSD?: number;
@@ -110,6 +112,8 @@ export interface ScheduledCostDefinition {
   active: boolean;
   creadoPor: string;
   creadoEn: string;
+  /** Moneda del monto recurrente (default USD en Sheets legacy). */
+  currency?: 'USD' | 'UYU';
   /** Opcional: vincular el costo generado a un viaje. */
   tripId?: string | null;
 }

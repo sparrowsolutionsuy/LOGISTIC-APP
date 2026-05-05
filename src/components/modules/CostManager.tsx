@@ -125,6 +125,51 @@ export const CostManager: React.FC<CostManagerProps> = ({
   formatAmount,
   convertAggregateToDisplay,
 }) => {
+  function costRecordCurrency(c: Cost): 'USD' | 'UYU' {
+    return c.currency === 'UYU' || c.moneda === 'UYU' ? 'UYU' : 'USD';
+  }
+
+  function formatMonto(monto: number, currency: 'USD' | 'UYU' = 'USD'): string {
+    if (currency === 'UYU') {
+      return `$U ${monto.toLocaleString('es-UY', { maximumFractionDigits: 0 })}`;
+    }
+    return monto.toLocaleString('es-UY', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0,
+    });
+  }
+
+  function formatNativeTotalsLines(costs: Cost[]): React.ReactNode {
+    if (costs.length === 0) {
+      return '—';
+    }
+    const hasUsdRow = costs.some((c) => costRecordCurrency(c) === 'USD');
+    const hasUyuRow = costs.some((c) => costRecordCurrency(c) === 'UYU');
+    let usd = 0;
+    let uyu = 0;
+    for (const c of costs) {
+      if (costRecordCurrency(c) === 'UYU') {
+        uyu += c.monto;
+      } else {
+        usd += c.monto;
+      }
+    }
+    if (hasUsdRow && hasUyuRow) {
+      return (
+        <span className="flex flex-col gap-0.5 leading-tight">
+          <span>{formatMonto(usd, 'USD')}</span>
+          <span className="text-[var(--text-muted)]">·</span>
+          <span>{formatMonto(uyu, 'UYU')}</span>
+        </span>
+      );
+    }
+    if (hasUyuRow && !hasUsdRow) {
+      return formatMonto(uyu, 'UYU');
+    }
+    return formatMonto(usd, 'USD');
+  }
+
   const canManageDefinitions = user.role === 'admin';
   const [costSectionTab, setCostSectionTab] = useState<'list' | 'scheduled'>('list');
   const [catFilter, setCatFilter] = useState<CostCategory | ''>('');
@@ -148,6 +193,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
   const [scDescripcion, setScDescripcion] = useState('');
   const [scCategoria, setScCategoria] = useState<CostCategory>('Otros');
   const [scMonto, setScMonto] = useState('');
+  const [scMoneda, setScMoneda] = useState<'USD' | 'UYU'>('USD');
   const [scDiaDelMes, setScDiaDelMes] = useState('1');
   const [scTripId, setScTripId] = useState('');
 
@@ -233,6 +279,11 @@ export const CostManager: React.FC<CostManagerProps> = ({
     []
   );
 
+  const costsCurrentMonth = useMemo(() => {
+    const mk = monthKeyNow();
+    return sortedCosts.filter((c) => c.fecha.startsWith(mk));
+  }, [sortedCosts]);
+
   const topCatUi = useMemo(() => {
     if (!metrics.topCat) {
       return null;
@@ -259,7 +310,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setCategoria(c.categoria);
     setDescripcion(c.descripcion);
     setMonto(String(c.monto));
-    setCostMoneda(c.moneda ?? 'USD');
+    setCostMoneda(c.currency ?? c.moneda ?? 'USD');
     setCostTipoCambio(c.tipoCambio ?? currentRate);
     setTripId(c.tripId ?? '');
     setModalOpen(true);
@@ -294,6 +345,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
         descripcion: desc,
         monto: amount,
         moneda: costMoneda,
+        currency: costMoneda,
         tipoCambio: tcEffective,
         montoUSD,
         tripId: tripId === '' ? null : tripId,
@@ -351,6 +403,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setScDescripcion('');
     setScCategoria('Otros');
     setScMonto('');
+    setScMoneda('USD');
     setScDiaDelMes('1');
     setScTripId('');
   };
@@ -378,6 +431,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
       categoria: scCategoria,
       descripcion: `${nombre} — ${descripcionValue}`,
       monto: montoValue,
+      currency: scMoneda,
       dayOfMonth: dayValue,
       active: true,
       creadoPor: user.username,
@@ -396,7 +450,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
           <p className="text-sm text-[var(--text-secondary)]">
             Total filtrado:{' '}
             <span className="font-semibold" style={{ color: 'var(--accent-emerald)' }}>
-              {formatAmount(convertAggregateToDisplay(totalFiltered))}
+              {formatNativeTotalsLines(sortedCosts)}
             </span>
           </p>
         </div>
@@ -458,7 +512,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
                     Mes actual
                   </p>
                   <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
-                    {formatAmount(convertAggregateToDisplay(metrics.totalMonth))}
+                    {formatNativeTotalsLines(costsCurrentMonth)}
                   </p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">{monthLabel}</p>
                 </div>
@@ -483,12 +537,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
                     {metrics.topCat ? metrics.topCat.name : '—'}
                   </p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    {metrics.topCat
-                      ? metrics.topCat.total.toLocaleString('es-UY', {
-                          style: 'currency',
-                          currency: 'USD',
-                        })
-                      : 'Sin datos'}
+                    {metrics.topCat ? formatMonto(metrics.topCat.total, 'USD') : 'Sin datos'}
                   </p>
                 </div>
                 <div
@@ -704,10 +753,9 @@ export const CostManager: React.FC<CostManagerProps> = ({
                         >
                           <div>
                             <p className="font-semibold text-[var(--text-primary)]">
-                              {c.moneda === 'UYU' ? '$' : 'USD'}{' '}
-                              {c.monto.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
+                              {formatMonto(c.monto, costRecordCurrency(c))}
                             </p>
-                            {c.moneda === 'UYU' && c.montoUSD != null && (
+                            {costRecordCurrency(c) === 'UYU' && c.montoUSD != null && (
                               <p className="text-[10px] text-[var(--text-muted)]">
                                 ≈ USD {c.montoUSD.toFixed(0)}
                               </p>
@@ -784,7 +832,9 @@ export const CostManager: React.FC<CostManagerProps> = ({
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Monto</label>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
+                  Monto {costMoneda === 'UYU' ? '($U)' : '(USD)'}
+                </label>
                 <input
                   type="number"
                   required
@@ -796,33 +846,15 @@ export const CostManager: React.FC<CostManagerProps> = ({
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
-                  Moneda del gasto
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCostMoneda('USD')}
-                    className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
-                      costMoneda === 'USD'
-                        ? 'border-[var(--accent-blue)] bg-[var(--accent-blue-muted)] text-[var(--accent-blue)]'
-                        : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
-                    }`}
-                  >
-                    USD
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCostMoneda('UYU')}
-                    className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
-                      costMoneda === 'UYU'
-                        ? 'border-[var(--accent-amber)] bg-[color-mix(in_srgb,var(--accent-amber)_12%,transparent)] text-[var(--accent-amber)]'
-                        : 'border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
-                    }`}
-                  >
-                    $ UYU
-                  </button>
-                </div>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Moneda</label>
+                <select
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  value={costMoneda}
+                  onChange={(e) => setCostMoneda(e.target.value as 'USD' | 'UYU')}
+                >
+                  <option value="USD">USD — Dólar estadounidense</option>
+                  <option value="UYU">UYU — Peso uruguayo</option>
+                </select>
               </div>
               {costMoneda === 'UYU' && (
                 <div>
@@ -931,7 +963,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
                         {scUi.label}
                       </span>
                       <span className="font-semibold text-[var(--text-primary)]">
-                        {sc.monto.toLocaleString('es-UY', { style: 'currency', currency: 'USD' })}
+                        {formatMonto(sc.monto, sc.currency === 'UYU' ? 'UYU' : 'USD')}
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar size={10} />
@@ -986,7 +1018,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
-                  Monto mensual (USD) *
+                  Monto mensual {scMoneda === 'UYU' ? '($U)' : '(USD)'} *
                 </label>
                 <input
                   type="number"
@@ -997,6 +1029,17 @@ export const CostManager: React.FC<CostManagerProps> = ({
                   onChange={(e) => setScMonto(e.target.value)}
                   className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
                 />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Moneda</label>
+                <select
+                  value={scMoneda}
+                  onChange={(e) => setScMoneda(e.target.value as 'USD' | 'UYU')}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                >
+                  <option value="USD">USD — Dólar estadounidense</option>
+                  <option value="UYU">UYU — Peso uruguayo</option>
+                </select>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Día del mes *</label>

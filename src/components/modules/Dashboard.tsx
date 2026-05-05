@@ -43,6 +43,8 @@ export interface DashboardProps {
   onUpdateTrip?: (trip: Trip) => void | Promise<void>;
   /** Opcional: evita recalcular en el hijo si el padre ya memoizó. */
   enrichedTrips?: TripWithMetrics[];
+  /** Demo / sin Sheets: ajusta KPIs operativos a la ventana temporal del dataset. */
+  offline?: boolean;
   kpiPrecomputed?: KPIData;
   /** Admin: abre el reporte de rendimiento con IA (pestaña oculta del menú). */
   onNavigateToReport?: () => void;
@@ -138,6 +140,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   user,
   onUpdateTrip,
   enrichedTrips: enrichedTripsProp,
+  offline = false,
   kpiPrecomputed,
   onNavigateToReport,
   displayCurrency = 'USD',
@@ -227,11 +230,38 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const mine = (t: Trip) => !t.asignadoA || t.asignadoA === user.username;
     const active = trips.filter((t) => t.estado === 'En Tránsito' && mine(t)).length;
     const pending = trips.filter((t) => t.estado === 'Pendiente' && mine(t)).length;
+
+    const finished = (t: Trip) => t.estado === 'Completado' || t.estado === 'Cerrado';
+
+    if (offline && trips.length > 0) {
+      const dataAsOf = trips.reduce((max, t) => (t.fecha > max ? t.fecha : max), trips[0].fecha);
+      const end = new Date(`${dataAsOf}T12:00:00`);
+      const start = new Date(end);
+      start.setDate(start.getDate() - 90);
+      const startStr = localISODate(start);
+      const completedWindow = trips.filter(
+        (t) => finished(t) && mine(t) && t.fecha >= startStr && t.fecha <= dataAsOf
+      ).length;
+      return {
+        active,
+        pending,
+        completedCount: completedWindow,
+        completedTitle: 'Completados (90 d.)',
+        completedSub: 'Demo / offline: ventana desde la última fecha del dataset',
+      };
+    }
+
     const completedToday = trips.filter(
       (t) => t.estado === 'Completado' && t.fecha === todayStr && mine(t)
     ).length;
-    return { active, pending, completedToday };
-  }, [trips, todayStr, user.username]);
+    return {
+      active,
+      pending,
+      completedCount: completedToday,
+      completedTitle: 'Completados hoy',
+      completedSub: undefined as string | undefined,
+    };
+  }, [trips, todayStr, user.username, offline]);
 
   const operativoActiveTrips = useMemo(
     () =>
@@ -526,8 +556,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               bg="bg-amber-600"
             />
             <KpiCard
-              title="Completados hoy"
-              value={`${operativoKpis.completedToday}`}
+              title={operativoKpis.completedTitle}
+              value={`${operativoKpis.completedCount}`}
+              sub={operativoKpis.completedSub}
               icon={<CheckCircle2 className="h-6 w-6 text-emerald-100" />}
               bg="bg-emerald-700"
             />

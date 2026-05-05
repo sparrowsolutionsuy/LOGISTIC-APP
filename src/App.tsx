@@ -41,6 +41,7 @@ const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
 
 const ADMIN_ONLY_TABS = new Set<ActiveTab>([
+  'costs',
   'financial',
   'billing',
   'clients',
@@ -463,6 +464,7 @@ const App: React.FC = () => {
           clients={clients}
           costs={costs}
           user={user}
+          offline={offline}
           onUpdateTrip={onUpdateTrip}
           onNavigateToReport={() => setActiveTab('report')}
           displayCurrency={displayCurrency}

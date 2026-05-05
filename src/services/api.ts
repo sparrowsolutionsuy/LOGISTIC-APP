@@ -189,6 +189,7 @@ export function normalizeScheduledCostDefinition(row: unknown): ScheduledCostDef
       : String(tripRaw).trim();
   const dm = Number(r.dayOfMonth);
   const dayOfMonth = Number.isFinite(dm) ? Math.min(28, Math.max(1, Math.floor(dm))) : 1;
+  const defCurrency: 'USD' | 'UYU' = r.currency === 'UYU' ? 'UYU' : 'USD';
   return {
     id: String(r.id ?? ''),
     categoria: normalizeCostCategory(r.categoria),
@@ -198,6 +199,7 @@ export function normalizeScheduledCostDefinition(row: unknown): ScheduledCostDef
     active: r.active === true || String(r.active).toUpperCase() === 'TRUE',
     creadoPor: String(r.creadoPor ?? ''),
     creadoEn: String(r.creadoEn ?? ''),
+    currency: defCurrency,
     ...(tripId !== undefined ? { tripId } : {}),
   };
 }
@@ -220,7 +222,9 @@ export function normalizeCost(row: unknown): Cost {
       : String(tripIdRaw);
 
   const montoRaw = Number(r.monto) || 0;
-  const moneda = (r.moneda === 'UYU' ? 'UYU' : 'USD') as 'USD' | 'UYU';
+  const currency: 'USD' | 'UYU' =
+    r.currency === 'UYU' || r.moneda === 'UYU' ? 'UYU' : 'USD';
+  const moneda = currency;
   const tipoCambio = Number(r.tipoCambio) || DEFAULT_EXCHANGE_RATE;
   const montoUSD =
     r.montoUSD != null && String(r.montoUSD).trim() !== ''
@@ -266,6 +270,7 @@ export function normalizeCost(row: unknown): Cost {
     descripcion: desc,
     monto: montoRaw,
     moneda,
+    currency,
     tipoCambio,
     montoUSD,
     isScheduled,
