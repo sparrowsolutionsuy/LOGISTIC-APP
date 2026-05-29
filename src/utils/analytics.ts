@@ -2,9 +2,19 @@ import type { Client, Cost, KPIData, MonthlyStats, Trip, TripWithMetrics } from 
 
 // ─── Revenue ────────────────────────────────────────────────────────────────
 
-/** Ingreso en USD generado por un viaje (tarifa ya normalizada a USD) */
+/** Ingreso en USD generado por un viaje (convierte según la moneda original del viaje) */
 export function tripRevenueUSD(trip: Trip): number {
-  return trip.tarifa * (trip.pesoKg / 1000);
+  const tons = trip.pesoKg / 1000;
+  if (trip.moneda === 'UYU') {
+    // Si hay tarifaUYU precalculada, usarla; sino calcular desde tarifa original
+    const totalUYU =
+      trip.tarifaUYU != null && trip.tarifaUYU > 0
+        ? trip.tarifaUYU // tarifaUYU ya es el total (tarifa * tons) en UYU
+        : trip.tarifa * tons;
+    const tc = trip.tipoCambio != null && trip.tipoCambio > 0 ? trip.tipoCambio : 1;
+    return totalUYU / tc;
+  }
+  return trip.tarifa * tons;
 }
 
 /** @deprecated Usar tripRevenueUSD */

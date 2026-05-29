@@ -220,6 +220,74 @@ export interface MonthlyReportData {
   aiRecommendations: string[];
 }
 
+// === REPORTE GENERAL (centro de reportes) ===
+export type ReportScope = 'mensual' | 'historico' | 'semanal';
+
+export interface ReportSeriesPoint {
+  key: string;
+  label: string;
+  ingresos: number;
+  cobrado: number;
+  costos: number;
+  margen: number;
+  highlight?: boolean;
+}
+
+export interface GeneralReportData {
+  scope: ReportScope;
+  title: string;
+  periodLabel: string;
+  rangeStart: string;
+  rangeEnd: string;
+  generatedAt: string;
+
+  totalGenerado: number;
+  totalCobrado: number;
+  totalPendiente: number;
+  totalCostos: number;
+  netMargin: number;
+  marginPct: number;
+  collectionRate: number;
+
+  totalTrips: number;
+  completedTrips: number;
+  pendingTrips: number;
+  totalKm: number;
+  totalTons: number;
+
+  avgTicket: number;
+  avgCostPerTrip: number;
+  avgMarginPerTrip: number;
+  costPerKm: number;
+  revenuePerKm: number;
+
+  topClient: { name: string; revenue: number; trips: number };
+  topRoute: { route: string; revenue: number; count: number };
+  topProduct: { name: string; revenue: number; tons: number };
+  bestMarginTrip: { id: string; client: string; marginPct: number };
+  worstMarginTrip: { id: string; client: string; marginPct: number };
+
+  costsByCategory: { category: string; total: number; pct: number }[];
+  series: ReportSeriesPoint[];
+  seriesKind: 'mensual' | 'semanal';
+  clientBreakdown: { name: string; revenue: number; trips: number }[];
+  trips: TripWithMetrics[];
+
+  comparison: {
+    available: boolean;
+    label: string;
+    revenueDelta: number;
+    costsDelta: number;
+    marginDelta: number;
+    marginPctDeltaPp: number;
+    tripsDelta: number;
+  };
+
+  aiSummary: string;
+  aiAlerts: string[];
+  aiRecommendations: string[];
+}
+
 // === UI STATE ===
 export type ActiveTab =
   | 'dashboard'

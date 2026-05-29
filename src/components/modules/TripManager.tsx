@@ -1041,7 +1041,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                             </p>
                             <p className="text-[var(--text-muted)]">
                               USD{' '}
-                              {trip.tarifa.toLocaleString('es-UY', {
+                              {(ton > 0 ? tripRevenueUSD(trip) / ton : 0).toLocaleString('es-UY', {
                                 maximumFractionDigits: 2,
                               })}
                               /ton

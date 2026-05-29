@@ -44,7 +44,6 @@ export interface DashboardProps {
   onUpdateTrip?: (trip: Trip) => void | Promise<void>;
   offline?: boolean;
   kpiPrecomputed?: KPIData;
-  onNavigateToReport?: () => void;
   onOpenMonthlyReport?: () => void;
   displayCurrency?: DisplayCurrency;
   currentRate?: number;
@@ -175,7 +174,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onUpdateTrip,
   offline = false,
   kpiPrecomputed,
-  onNavigateToReport,
   onOpenMonthlyReport,
   displayCurrency = 'USD',
   currentRate = 42,
@@ -345,26 +343,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </select>
               </label>
               <div className="flex flex-wrap gap-2 sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => onOpenMonthlyReport?.()}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<FileBarChart size={15} aria-hidden />}
                   disabled={trips.length === 0}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg border-2 border-[var(--accent-blue)] bg-[var(--bg-surface)] px-3 py-2 text-sm font-semibold text-[var(--accent-blue)] shadow-sm hover:bg-[var(--accent-blue-muted)] disabled:opacity-50"
+                  onClick={() => onOpenMonthlyReport?.()}
                 >
-                  <FileBarChart size={16} aria-hidden />
-                  Reporte mensual
-                </button>
-                {onNavigateToReport ? (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    icon={<Sparkles size={14} aria-hidden />}
-                    disabled={trips.length === 0}
-                    onClick={() => onNavigateToReport()}
-                  >
-                    Reporte IA
-                  </Button>
-                ) : null}
+                  Generar reporte
+                </Button>
               </div>
             </div>
           ) : null}

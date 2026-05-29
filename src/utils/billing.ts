@@ -49,6 +49,29 @@ export function tripGrandTotalUsd(t: Trip): number {
   return roundMoney(tripSubtotalUsd(t) + tripIvaUsd(t));
 }
 
+/** Monto del servicio en la moneda original del viaje (para mostrar en facturas). */
+export function tripSubtotalNativo(trip: Trip): { monto: number; moneda: 'USD' | 'UYU' } {
+  const tons = trip.pesoKg / 1000;
+  if (trip.moneda === 'UYU') {
+    const totalUYU =
+      trip.tarifaUYU != null && trip.tarifaUYU > 0 ? trip.tarifaUYU : trip.tarifa * tons;
+    return { monto: totalUYU, moneda: 'UYU' };
+  }
+  return { monto: trip.tarifa * tons, moneda: 'USD' };
+}
+
+/** IVA en la moneda original del viaje. */
+export function tripIvaNativo(trip: Trip): { monto: number; moneda: 'USD' | 'UYU' } {
+  const sub = tripSubtotalNativo(trip);
+  return { monto: roundMoney(sub.monto * 0.22), moneda: sub.moneda };
+}
+
+/** Total con IVA en la moneda original del viaje. */
+export function tripGrandTotalNativo(trip: Trip): { monto: number; moneda: 'USD' | 'UYU' } {
+  const sub = tripSubtotalNativo(trip);
+  return { monto: roundMoney(sub.monto * 1.22), moneda: sub.moneda };
+}
+
 export function formatDateUY(iso: string): string {
   const d = iso.split('T')[0];
   const parts = d.split('-');

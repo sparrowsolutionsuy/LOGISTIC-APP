@@ -12,6 +12,36 @@ function getFolderByName(ss, folderName) {
   return folders.hasNext() ? folders.next() : parentFolder.createFolder(folderName);
 }
 
+/** Envía un reporte PDF (base64) por email con adjunto. */
+function sendReportEmail(data) {
+  if (!data || !data.to || !data.fileData) {
+    return createErrorResponse('Faltan datos para enviar el email (destinatario o archivo).');
+  }
+  var recipients = String(data.to)
+    .split(/[;,]/)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; })
+    .join(',');
+  if (!recipients) {
+    return createErrorResponse('Destinatario inválido.');
+  }
+  var decoded = Utilities.base64Decode(data.fileData);
+  var fileName = data.fileName || 'Reporte_GDC.pdf';
+  var blob = Utilities.newBlob(decoded, data.mimeType || 'application/pdf', fileName);
+  var subject = data.subject || 'Reporte GDC';
+  var message = data.message || 'Adjuntamos el reporte solicitado.';
+  MailApp.sendEmail({
+    to: recipients,
+    subject: subject,
+    body: message,
+    htmlBody: message.replace(/\n/g, '<br>'),
+    attachments: [blob],
+    name: 'GDC Reportes',
+  });
+  return ContentService.createTextOutput(JSON.stringify({ status: 'success' }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function uploadFile(data, folderNameFallback, updateSheetFn, sheetName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const contentType = data.mimeType || 'application/pdf';
@@ -440,6 +470,9 @@ function doPost(e) {
           sheet.getRange(rowNum, urlIndex + 1).setValue(fileUrl);
         }
       }, 'DB_Viajes');
+
+    } else if (type === 'sendReportEmail') {
+      return sendReportEmail(data);
 
     } else if (type === 'uploadRemito') {
       if (!data.mimeType) {

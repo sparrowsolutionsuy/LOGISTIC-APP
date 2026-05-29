@@ -84,11 +84,8 @@ export function normalizeTrip(row: unknown): Trip {
   const moneda: 'USD' | 'UYU' = monedaRaw === 'UYU' ? 'UYU' : 'USD';
   const tipoCambio = Number(r.tipoCambio) > 0 ? Number(r.tipoCambio) : 1;
 
-  // La tarifa siempre se normaliza a USD internamente
-  let tarifa = Number(r.tarifa) || 0;
-  if (moneda === 'UYU' && tipoCambio > 0) {
-    tarifa = tarifa / tipoCambio;
-  }
+  // La tarifa se conserva en su moneda original; la conversión a USD la hace tripRevenueUSD
+  const tarifa = Number(r.tarifa) || 0;
 
   return {
     id: String(r.id ?? ''),
@@ -633,6 +630,74 @@ export async function uploadRemitoImage(
       console.error('[GDC API] uploadRemitoImage error:', error);
     }
     return '';
+  }
+}
+
+export interface SendReportEmailParams {
+  to: string;
+  subject: string;
+  message: string;
+  pdfBase64: string;
+  fileName: string;
+}
+
+export interface SendReportEmailResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** Envía el reporte PDF por email vía Apps Script (`type: sendReportEmail`). */
+export async function sendReportByEmail(params: SendReportEmailParams): Promise<SendReportEmailResult> {
+  if (IS_MOCK) {
+    await delay(MOCK_DELAY_MS);
+    console.info('[GDC API] Mock sendReportByEmail →', params.to, params.fileName);
+    return { ok: true };
+  }
+  try {
+    const response = await fetchWithTimeout(
+      SHEET_URL,
+      {
+        method: 'POST',
+        headers: APPS_SCRIPT_PLAIN_HEADERS,
+        body: JSON.stringify({
+          type: 'sendReportEmail',
+          data: {
+            to: params.to,
+            subject: params.subject,
+            message: params.message,
+            fileData: params.pdfBase64,
+            fileName: params.fileName,
+            mimeType: 'application/pdf',
+          },
+        }),
+      },
+      UPLOAD_FETCH_TIMEOUT_MS
+    );
+    if (!response.ok) {
+      return { ok: false, error: `HTTP ${response.status}` };
+    }
+    const text = await response.text();
+    if (responseLooksLikeHtml(text)) {
+      return { ok: false, error: 'El backend devolvió HTML (re-deployá el Apps Script).' };
+    }
+    let result: { status?: string; message?: string };
+    try {
+      result = JSON.parse(text) as { status?: string; message?: string };
+    } catch {
+      return { ok: false, error: 'Respuesta del servidor no válida.' };
+    }
+    if (result.status === 'error') {
+      return { ok: false, error: result.message ?? 'Error del servidor.' };
+    }
+    return { ok: true };
+  } catch (error) {
+    const msg =
+      error instanceof Error && error.name === 'AbortError'
+        ? 'Tiempo de espera agotado.'
+        : error instanceof Error
+          ? error.message
+          : 'Error de red.';
+    return { ok: false, error: msg };
   }
 }
 

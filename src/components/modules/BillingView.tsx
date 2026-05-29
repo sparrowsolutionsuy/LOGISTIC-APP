@@ -14,8 +14,10 @@ import {
   getBillingStatus,
   getBillingStatusLabel,
   roundMoney,
+  tripGrandTotalNativo,
   tripGrandTotalUsd,
-  tripIvaUsd,
+  tripIvaNativo,
+  tripSubtotalNativo,
   tripSubtotalUsd,
 } from '../../utils/billing';
 import { Check, FileText, Loader2, Receipt, UploadCloud } from 'lucide-react';
@@ -437,9 +439,17 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const buildInvoiceBlock = (trip: Trip): string => {
     const billingInfo = getBillingClientInfo(trip, clients);
     const client = clients.find((c) => c.id === trip.clientId) ?? null;
-    const sub = tripSubtotalUsd(trip);
-    const iva = tripIvaUsd(trip);
-    const tot = tripGrandTotalUsd(trip);
+    const sub = tripSubtotalNativo(trip);
+    const iva = tripIvaNativo(trip);
+    const tot = tripGrandTotalNativo(trip);
+    const tons = trip.pesoKg / 1000;
+    const tarifaUnitaria =
+      trip.moneda === 'UYU'
+        ? trip.tarifaUYU != null && trip.tarifaUYU > 0 && tons > 0
+          ? trip.tarifaUYU / tons
+          : trip.tarifa
+        : trip.tarifa;
+    const mon = sub.moneda;
     const lines = [
       '── CLIENTE ──────────────────────────',
       `Razón Social:     ${billingInfo.razonSocial}`,
@@ -460,10 +470,10 @@ export const BillingView: React.FC<BillingViewProps> = ({
       '── VALORES ──────────────────────────',
       `Peso cargado:     ${trip.pesoKg} kg / ${(trip.pesoKg / 1000).toFixed(3)} toneladas`,
       `Kilómetros:       ${trip.kmRecorridos} km`,
-      `Tarifa unitaria:  USD ${trip.tarifa} / tonelada`,
-      `Subtotal:         USD ${sub.toFixed(2)}`,
-      `IVA (22%):        USD ${iva.toFixed(2)}`,
-      `TOTAL:            USD ${tot.toFixed(2)}`,
+      `Tarifa unitaria:  ${mon} ${roundMoney(tarifaUnitaria)} / tonelada`,
+      `Subtotal:         ${mon} ${sub.monto.toFixed(2)}`,
+      `IVA (22%):        ${mon} ${iva.monto.toFixed(2)}`,
+      `TOTAL:            ${mon} ${tot.monto.toFixed(2)}`,
     ];
     return lines.join('\n');
   };
@@ -705,7 +715,12 @@ export const BillingView: React.FC<BillingViewProps> = ({
                         <td className="px-4 py-3 text-right tabular-nums text-[var(--text-primary)]">
                           {trip.kmRecorridos}
                         </td>
-                        <td className="px-4 py-3 text-right tabular-nums text-[var(--text-primary)]">{trip.tarifa}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-[var(--text-primary)]">
+                          {(trip.pesoKg > 0 ? row.totalUsd / (trip.pesoKg / 1000) : 0).toLocaleString(
+                            'es-UY',
+                            { maximumFractionDigits: 2 }
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-right font-semibold tabular-nums text-[var(--text-primary)]">
                           ${row.totalUsd.toLocaleString('es-UY', { maximumFractionDigits: 0 })}
                         </td>
@@ -1350,9 +1365,16 @@ function emailSummaryTsvRows(trips: Trip[]): string[] {
     'TOTAL',
   ].join('\t');
   const body = trips.map((t) => {
-    const precio = roundMoney(t.tarifa * (t.pesoKg / 1000));
-    const iva = roundMoney(precio * 0.22);
-    const total = roundMoney(precio + iva);
+    const subNativo = tripSubtotalNativo(t);
+    const ivaNativo = tripIvaNativo(t);
+    const totalNativo = tripGrandTotalNativo(t);
+    const tons = t.pesoKg / 1000;
+    const tarifaUnitaria =
+      t.moneda === 'UYU'
+        ? t.tarifaUYU != null && t.tarifaUYU > 0 && tons > 0
+          ? t.tarifaUYU / tons
+          : t.tarifa
+        : t.tarifa;
     return [
       t.fecha,
       t.origen,
@@ -1362,21 +1384,48 @@ function emailSummaryTsvRows(trips: Trip[]): string[] {
       String(t.pesoKg),
       String(t.kmRecorridos),
       t.remitoUrl ?? '',
-      'USD',
-      String(t.tarifa),
-      String(precio),
-      String(iva),
-      String(total),
+      subNativo.moneda,
+      String(roundMoney(tarifaUnitaria)),
+      String(roundMoney(subNativo.monto)),
+      String(roundMoney(ivaNativo.monto)),
+      String(roundMoney(totalNativo.monto)),
     ].join('\t');
   });
-  const sumKg = trips.reduce((a, t) => a + t.pesoKg, 0);
-  const sumPrecio = roundMoney(trips.reduce((a, t) => a + t.tarifa * (t.pesoKg / 1000), 0));
-  const sumIva = roundMoney(sumPrecio * 0.22);
-  const sumTot = roundMoney(sumPrecio + sumIva);
-  const footer = ['TOTALES', '', '', '', '', String(sumKg), '', '', '', '', String(sumPrecio), String(sumIva), String(sumTot)].join(
-    '\t'
-  );
-  return [header, ...body, footer];
+
+  // Totales agrupados por moneda (una fila por cada moneda con datos).
+  const byMoneda: Record<'USD' | 'UYU', { kg: number; precio: number; iva: number; total: number }> = {
+    USD: { kg: 0, precio: 0, iva: 0, total: 0 },
+    UYU: { kg: 0, precio: 0, iva: 0, total: 0 },
+  };
+  trips.forEach((t) => {
+    const sub = tripSubtotalNativo(t);
+    const iva = tripIvaNativo(t);
+    const tot = tripGrandTotalNativo(t);
+    byMoneda[sub.moneda].kg += t.pesoKg;
+    byMoneda[sub.moneda].precio += sub.monto;
+    byMoneda[sub.moneda].iva += iva.monto;
+    byMoneda[sub.moneda].total += tot.monto;
+  });
+  const footers = (['USD', 'UYU'] as const)
+    .filter((m) => byMoneda[m].total !== 0 || byMoneda[m].kg !== 0)
+    .map((m) =>
+      [
+        `TOTALES ${m}`,
+        '',
+        '',
+        '',
+        '',
+        String(byMoneda[m].kg),
+        '',
+        '',
+        m,
+        '',
+        String(roundMoney(byMoneda[m].precio)),
+        String(roundMoney(byMoneda[m].iva)),
+        String(roundMoney(byMoneda[m].total)),
+      ].join('\t')
+    );
+  return [header, ...body, ...footers];
 }
 
 function EmailSummaryBody({
@@ -1393,20 +1442,40 @@ function EmailSummaryBody({
   const precios = useMemo(
     () =>
       trips.map((t) => {
-        const precio = roundMoney(t.tarifa * (t.pesoKg / 1000));
-        const iva = roundMoney(precio * 0.22);
-        const total = roundMoney(precio + iva);
-        return { t, precio, iva, total };
+        const sub = tripSubtotalNativo(t);
+        const iva = tripIvaNativo(t);
+        const total = tripGrandTotalNativo(t);
+        const tons = t.pesoKg / 1000;
+        const tarifaUnitaria =
+          t.moneda === 'UYU'
+            ? t.tarifaUYU != null && t.tarifaUYU > 0 && tons > 0
+              ? t.tarifaUYU / tons
+              : t.tarifa
+            : t.tarifa;
+        return { t, sub, iva, total, tarifaUnitaria };
       }),
     [trips]
   );
   const totals = useMemo(() => {
-    const sumKg = trips.reduce((a, t) => a + t.pesoKg, 0);
-    const sumPrecio = roundMoney(trips.reduce((a, t) => a + t.tarifa * (t.pesoKg / 1000), 0));
-    const sumIva = roundMoney(sumPrecio * 0.22);
-    const sumTot = roundMoney(sumPrecio + sumIva);
-    return { sumKg, sumPrecio, sumIva, sumTot };
+    const byMoneda = {
+      USD: { kg: 0, subtotal: 0, iva: 0, total: 0 },
+      UYU: { kg: 0, subtotal: 0, iva: 0, total: 0 },
+    };
+    trips.forEach((t) => {
+      const sub = tripSubtotalNativo(t);
+      const iva = tripIvaNativo(t);
+      const tot = tripGrandTotalNativo(t);
+      const m = sub.moneda;
+      byMoneda[m].kg += t.pesoKg;
+      byMoneda[m].subtotal += sub.monto;
+      byMoneda[m].iva += iva.monto;
+      byMoneda[m].total += tot.monto;
+    });
+    return byMoneda;
   }, [trips]);
+  const totalsRows = (['USD', 'UYU'] as const).filter(
+    (m) => totals[m].total !== 0 || totals[m].kg !== 0
+  );
 
   return (
     <div className="space-y-4">
@@ -1436,7 +1505,7 @@ function EmailSummaryBody({
             </tr>
           </thead>
           <tbody>
-            {precios.map(({ t, precio, iva, total }) => (
+            {precios.map(({ t, sub, iva, total, tarifaUnitaria }) => (
               <tr key={t.id}>
                 <td className="border border-slate-300 px-2 py-1">{t.fecha}</td>
                 <td className="border border-slate-300 px-2 py-1">{t.origen}</td>
@@ -1446,28 +1515,30 @@ function EmailSummaryBody({
                 <td className="border border-slate-300 px-2 py-1 text-right">{t.pesoKg}</td>
                 <td className="border border-slate-300 px-2 py-1 text-right">{t.kmRecorridos}</td>
                 <td className="border border-slate-300 px-2 py-1 break-all">{t.remitoUrl ?? ''}</td>
-                <td className="border border-slate-300 px-2 py-1">USD</td>
-                <td className="border border-slate-300 px-2 py-1 text-right">{t.tarifa}</td>
-                <td className="border border-slate-300 px-2 py-1 text-right">{precio}</td>
-                <td className="border border-slate-300 px-2 py-1 text-right">{iva}</td>
-                <td className="border border-slate-300 px-2 py-1 text-right font-semibold">{total}</td>
+                <td className="border border-slate-300 px-2 py-1">{sub.moneda}</td>
+                <td className="border border-slate-300 px-2 py-1 text-right">{roundMoney(tarifaUnitaria)}</td>
+                <td className="border border-slate-300 px-2 py-1 text-right">{roundMoney(sub.monto)}</td>
+                <td className="border border-slate-300 px-2 py-1 text-right">{roundMoney(iva.monto)}</td>
+                <td className="border border-slate-300 px-2 py-1 text-right font-semibold">{roundMoney(total.monto)}</td>
               </tr>
             ))}
           </tbody>
           <tfoot>
-            <tr className="bg-slate-50 font-semibold">
-              <td className="border border-slate-300 px-2 py-1" colSpan={5}>
-                Totales
-              </td>
-              <td className="border border-slate-300 px-2 py-1 text-right">{totals.sumKg}</td>
-              <td className="border border-slate-300 px-2 py-1" />
-              <td className="border border-slate-300 px-2 py-1" />
-              <td className="border border-slate-300 px-2 py-1">USD</td>
-              <td className="border border-slate-300 px-2 py-1" />
-              <td className="border border-slate-300 px-2 py-1 text-right">{totals.sumPrecio}</td>
-              <td className="border border-slate-300 px-2 py-1 text-right">{totals.sumIva}</td>
-              <td className="border border-slate-300 px-2 py-1 text-right">{totals.sumTot}</td>
-            </tr>
+            {totalsRows.map((m) => (
+              <tr key={m} className="bg-slate-50 font-semibold">
+                <td className="border border-slate-300 px-2 py-1" colSpan={5}>
+                  Totales {m}
+                </td>
+                <td className="border border-slate-300 px-2 py-1 text-right">{totals[m].kg}</td>
+                <td className="border border-slate-300 px-2 py-1" />
+                <td className="border border-slate-300 px-2 py-1" />
+                <td className="border border-slate-300 px-2 py-1">{m}</td>
+                <td className="border border-slate-300 px-2 py-1" />
+                <td className="border border-slate-300 px-2 py-1 text-right">{roundMoney(totals[m].subtotal)}</td>
+                <td className="border border-slate-300 px-2 py-1 text-right">{roundMoney(totals[m].iva)}</td>
+                <td className="border border-slate-300 px-2 py-1 text-right">{roundMoney(totals[m].total)}</td>
+              </tr>
+            ))}
           </tfoot>
         </table>
       </div>

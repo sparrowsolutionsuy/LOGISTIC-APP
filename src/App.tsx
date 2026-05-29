@@ -37,7 +37,7 @@ import { useExchangeRate } from './hooks/useExchangeRate';
 import { EXCHANGE_RATE_STORAGE_KEY } from './constants';
 import { sanitizeFileName } from './utils/formatters';
 import { collectAvailableMonthKeys } from './utils/analytics';
-import { ReportModal } from './components/modules/ReportModal';
+import { ReportCenter } from './components/modules/ReportCenter';
 
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
@@ -461,7 +461,6 @@ const App: React.FC = () => {
           user={user}
           offline={offline}
           onUpdateTrip={onUpdateTrip}
-          onNavigateToReport={() => setActiveTab('report')}
           onOpenMonthlyReport={() => setReportModalOpen(true)}
           displayCurrency={displayCurrency}
           currentRate={currentRate}
@@ -555,7 +554,7 @@ const App: React.FC = () => {
         </AdminGuard>
       )}
     </AppShell>
-    <ReportModal
+    <ReportCenter
       open={reportModalOpen}
       onClose={() => setReportModalOpen(false)}
       trips={trips}
