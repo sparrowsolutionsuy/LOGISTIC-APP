@@ -1,5 +1,11 @@
 import type { BillingStatus, TripStatus } from '../../types';
-import { getBillingStatusLabel } from '../../utils/billing';
+
+const BILLING_STATUS_LABELS: Record<BillingStatus, string> = {
+  pendiente: 'Sin factura',
+  generada: 'Factura generada',
+  solicitada: 'Pago solicitado',
+  cobrada: 'Cobrado',
+};
 
 interface BadgeProps {
   status?: TripStatus;
@@ -25,7 +31,7 @@ const BILLING_BADGE_MAP: Record<BillingStatus, string> = {
 export default function Badge({ status, billingStatus, size = 'md' }: BadgeProps) {
   if (billingStatus != null) {
     const cssVars = BILLING_BADGE_MAP[billingStatus];
-    const label = getBillingStatusLabel(billingStatus);
+    const label = BILLING_STATUS_LABELS[billingStatus];
     return (
       <span
         role="status"

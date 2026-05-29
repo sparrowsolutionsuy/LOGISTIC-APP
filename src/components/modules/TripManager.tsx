@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import type { Trip, TripStatus, Client, User, Cost, TripWithMetrics, DisplayCurrency } from '../../types';
-import { enrichTrips, tripRevenueUsd, costUsd } from '../../utils/analytics';
+import { enrichTrips, tripRevenueUSD, calcCombustiblePorKm } from '../../utils/analytics';
 import { useSortableTable } from '../../hooks/useSortableTable';
 import Badge from '../ui/Badge';
 import SortableHeader from '../ui/SortableHeader';
@@ -58,7 +58,7 @@ function getClientName(clients: Client[], id: string): string {
 }
 
 function sumCostsForTrip(costs: Cost[], tripId: string): number {
-  return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + costUsd(c), 0);
+  return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + (c.montoUSD ?? 0), 0);
 }
 
 function operativoCanSeeTrip(t: Trip, user: User): boolean {
@@ -194,6 +194,11 @@ export const TripManager: React.FC<TripManagerProps> = ({
   const enrichedFiltered = useMemo(
     () => enrichTrips(filteredTrips, clients, costs),
     [filteredTrips, clients, costs]
+  );
+
+  const marginEsEstimado = useMemo(
+    () => calcCombustiblePorKm(trips, costs) > 0,
+    [trips, costs]
   );
 
   type TripSortKey = 'fecha' | 'clientName' | 'estado' | 'tarifa' | 'netMargin';
@@ -479,8 +484,8 @@ export const TripManager: React.FC<TripManagerProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Gestión de viajes</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className="text-xl font-bold text-[var(--text-primary)]">Gestión de viajes</h1>
+          <p className="text-sm text-[var(--text-muted)]">
             {isAdmin ? 'Administración completa del ciclo de vida.' : 'Tus asignaciones operativas.'}
           </p>
         </div>
@@ -496,24 +501,24 @@ export const TripManager: React.FC<TripManagerProps> = ({
         )}
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center text-sm font-semibold text-slate-700">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm">
+        <div className="mb-3 flex items-center text-sm font-semibold text-[var(--text-secondary)]">
           <Filter className="mr-2 h-4 w-4" />
           Filtros y búsqueda
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-7">
           <div className="relative lg:col-span-2">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-[var(--text-muted)]" />
             <input
               type="text"
               placeholder="Cliente, origen, destino, carga o ID…"
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
             />
           </div>
           <select
-            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm outline-none"
+            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm outline-none"
             value={clientFilter}
             onChange={(e) => setClientFilter(e.target.value)}
           >
@@ -525,7 +530,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
             ))}
           </select>
           <select
-            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm outline-none"
+            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm outline-none"
             value={estadoFilter}
             onChange={(e) => setEstadoFilter((e.target.value || '') as TripStatus | '')}
           >
@@ -537,13 +542,13 @@ export const TripManager: React.FC<TripManagerProps> = ({
           </select>
           <input
             type="date"
-            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm"
+            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
           />
           <input
             type="date"
-            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm"
+            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm"
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
           />
@@ -563,7 +568,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
         <div className="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            className="rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-100"
+            className="rounded-lg px-3 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-muted)]"
             onClick={() => setClosedWarnTrip(null)}
           >
             Cancelar
@@ -656,10 +661,10 @@ export const TripManager: React.FC<TripManagerProps> = ({
           )}
 
           <div className="md:col-span-2">
-            <label className="mb-1 block text-sm font-medium text-slate-700">Cliente</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Cliente</label>
             <select
               required
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.clientId || ''}
               onChange={(e) => setNewTrip({ ...newTrip, clientId: e.target.value })}
             >
@@ -672,19 +677,19 @@ export const TripManager: React.FC<TripManagerProps> = ({
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Fecha</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Fecha</label>
             <input
               type="date"
               required
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.fecha || ''}
               onChange={(e) => setNewTrip({ ...newTrip, fecha: e.target.value })}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Estado</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Estado</label>
             <select
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.estado || 'Pendiente'}
               onChange={(e) =>
                 setNewTrip({ ...newTrip, estado: e.target.value as TripStatus })
@@ -697,31 +702,31 @@ export const TripManager: React.FC<TripManagerProps> = ({
             </select>
           </div>
           <div className="md:col-span-2">
-            <label className="mb-1 block text-sm font-medium text-slate-700">Contenido de carga</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Contenido de carga</label>
             <input
               type="text"
               required
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.contenido || ''}
               onChange={(e) => setNewTrip({ ...newTrip, contenido: e.target.value })}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Origen</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Origen</label>
             <input
               type="text"
               required
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.origen || ''}
               onChange={(e) => setNewTrip({ ...newTrip, origen: e.target.value })}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Destino</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Destino</label>
             <input
               type="text"
               required
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.destino || ''}
               onChange={(e) => setNewTrip({ ...newTrip, destino: e.target.value })}
             />
@@ -765,36 +770,36 @@ export const TripManager: React.FC<TripManagerProps> = ({
             </div>
           )}
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Peso (kg)</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Peso (kg)</label>
             <input
               type="number"
               required
               min={0.01}
               step="0.01"
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.pesoKg ?? ''}
               onChange={(e) => setNewTrip({ ...newTrip, pesoKg: Number(e.target.value) })}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">KM recorridos</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">KM recorridos</label>
             <input
               type="number"
               required
               min={0}
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.kmRecorridos ?? ''}
               onChange={(e) => setNewTrip({ ...newTrip, kmRecorridos: Number(e.target.value) })}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">Tarifa (por tonelada)</label>
+            <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Tarifa (por tonelada)</label>
             <input
               type="number"
               required
               min={0.01}
               step="0.01"
-              className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 outline-none"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 outline-none"
               value={newTrip.tarifa ?? ''}
               onChange={(e) => setNewTrip({ ...newTrip, tarifa: Number(e.target.value) })}
             />
@@ -807,9 +812,9 @@ export const TripManager: React.FC<TripManagerProps> = ({
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Moneda de la tarifa</label>
+                  <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Moneda de la tarifa</label>
                   <select
-                    className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm outline-none"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm outline-none"
                     value={newTrip.moneda ?? 'USD'}
                     onChange={(e) =>
                       setNewTrip({ ...newTrip, moneda: e.target.value as 'USD' | 'UYU' })
@@ -820,7 +825,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                  <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
                     Tipo de cambio (USD → UYU)
                   </label>
                   <input
@@ -828,7 +833,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                     step="0.01"
                     min="0"
                     placeholder="Ej: 43.50"
-                    className="w-full rounded-lg border border-slate-300 bg-slate-50 p-2 font-mono text-sm outline-none"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 font-mono text-sm outline-none"
                     value={newTrip.tipoCambio ?? ''}
                     onChange={(e) =>
                       setNewTrip({
@@ -837,7 +842,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                       })
                     }
                   />
-                  <p className="mt-0.5 text-[10px] text-slate-400">
+                  <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
                     {newTrip.moneda === 'UYU'
                       ? 'Requerido para conversión a USD'
                       : 'Opcional - para referencia'}
@@ -857,7 +862,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
 
                     if (peso === 0 || tarifa === 0) {
                       return (
-                        <p className="text-xs italic text-slate-400">
+                        <p className="text-xs italic text-[var(--text-muted)]">
                           Completá peso y tarifa para ver el total
                         </p>
                       );
@@ -880,11 +885,11 @@ export const TripManager: React.FC<TripManagerProps> = ({
             </div>
           </div>
 
-          <div className="md:col-span-2 flex justify-end gap-2 border-t border-slate-100 pt-4">
+          <div className="md:col-span-2 flex justify-end gap-2 border-t border-[var(--border-subtle)] pt-4">
             <button
               type="button"
               onClick={closeForm}
-              className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100"
+              className="rounded-lg px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-muted)]"
             >
               Cancelar
             </button>
@@ -954,12 +959,17 @@ export const TripManager: React.FC<TripManagerProps> = ({
                   Ton
                 </th>
                 <SortableHeader
-                  label="Margen"
+                  label={marginEsEstimado ? 'Margen *' : 'Margen'}
                   column="netMargin"
                   currentColumn={sort.column}
                   direction={sort.direction}
                   onClick={(col) => handleSort(col as TripSortKey)}
                   align="right"
+                  title={
+                    marginEsEstimado
+                      ? 'Margen estimado (incluye combustible prorrateado)'
+                      : undefined
+                  }
                 />
                 <th
                   scope="col"
@@ -977,11 +987,14 @@ export const TripManager: React.FC<TripManagerProps> = ({
             </thead>
             <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
               {pageSlice.map((trip, i) => {
-                const c = sumCostsForTrip(costs, trip.id);
-                const rev = tripRevenueUsd(trip);
-                const hasCosts = costs.some((x) => x.tripId === trip.id);
-                const margin = hasCosts ? rev - c : null;
+                const hasCosts =
+                  trip.totalCosts > 0 || costs.some((x) => x.tripId === trip.id);
                 const uploadingThis = uploadLoading && uploadTripId === trip.id;
+                const ton = trip.pesoKg / 1000;
+                const tarifaUyuPerTon =
+                  trip.moneda === 'UYU' && trip.tarifaUYU && ton > 0
+                    ? trip.tarifaUYU / ton
+                    : trip.tarifa * (trip.tipoCambio ?? currentRate);
 
                 return (
                   <tr
@@ -1017,17 +1030,30 @@ export const TripManager: React.FC<TripManagerProps> = ({
                     </td>
                     <td className="px-4 py-3 text-right text-xs">
                       <div>
-                        <p className="font-medium text-[var(--text-primary)]">
-                          {trip.moneda ?? 'USD'} {trip.tarifa}/ton
-                        </p>
+                        {trip.moneda === 'UYU' ? (
+                          <>
+                            <p className="font-medium text-[var(--text-primary)]">
+                              UYU{' '}
+                              {tarifaUyuPerTon.toLocaleString('es-UY', {
+                                maximumFractionDigits: 0,
+                              })}
+                              /ton
+                            </p>
+                            <p className="text-[var(--text-muted)]">
+                              USD{' '}
+                              {trip.tarifa.toLocaleString('es-UY', {
+                                maximumFractionDigits: 2,
+                              })}
+                              /ton
+                            </p>
+                          </>
+                        ) : (
+                          <p className="font-medium text-[var(--text-primary)]">
+                            USD {trip.tarifa}/ton
+                          </p>
+                        )}
                         <p className="text-[var(--text-muted)]">
-                          {formatAmount(
-                            convertToDisplay(
-                              trip.tarifa * (trip.pesoKg / 1000),
-                              trip.moneda ?? 'USD',
-                              trip.tipoCambio ?? currentRate
-                            )
-                          )}
+                          {formatAmount(convertAggregateToDisplay(tripRevenueUSD(trip)))}
                         </p>
                       </div>
                     </td>
@@ -1038,13 +1064,24 @@ export const TripManager: React.FC<TripManagerProps> = ({
                       })}
                     </td>
                     <td className="px-4 py-3 text-right text-xs">
-                      {margin !== null ? (
+                      {hasCosts ? (
                         <span
+                          title={
+                            marginEsEstimado
+                              ? 'Margen estimado (incluye combustible prorrateado)'
+                              : undefined
+                          }
                           style={{
-                            color: margin >= 0 ? 'var(--accent-emerald)' : 'var(--accent-red)',
+                            color:
+                              trip.netMargin >= 0 ? 'var(--accent-emerald)' : 'var(--accent-red)',
                           }}
                         >
-                          {formatAmount(convertAggregateToDisplay(margin))}
+                          {formatAmount(convertAggregateToDisplay(trip.netMargin))}
+                          {marginEsEstimado ? (
+                            <span className="ml-0.5 text-[var(--text-muted)]" aria-hidden>
+                              *
+                            </span>
+                          ) : null}
                         </span>
                       ) : (
                         <span className="text-[var(--text-muted)]">—</span>
@@ -1102,7 +1139,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                           </button>
                         )}
                         {isAdmin && trip.estado !== 'Cerrado' && (
-                          <label className="cursor-pointer rounded-md p-1.5 text-slate-600 hover:bg-slate-100">
+                          <label className="cursor-pointer rounded-md p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-muted)]">
                             <input
                               type="file"
                               accept={ACCEPT_INVOICE}
@@ -1178,7 +1215,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
       </div>
 
       {isAdmin && (
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-[var(--text-muted)]">
           Facturas: PDF, JPG o PNG, máximo 5 MB. Al completar la subida el viaje pasa a estado Cerrado.
         </p>
       )}

@@ -31,11 +31,12 @@ import { generateMonthlyReport } from '../../utils/reportGenerator';
 
 const CATEGORY_FILL: Record<CostCategory, string> = {
   Combustible: '#f97316',
+  Sueldos: '#22c55e',
+  Alquiler: '#8b5cf6',
+  'Cuota Banco': '#06b6d4',
+  Service: '#eab308',
   Mantenimiento: '#3b82f6',
-  Peajes: '#eab308',
-  Viáticos: '#22c55e',
-  Neumáticos: '#8b5cf6',
-  Seguros: '#06b6d4',
+  'AD Blue': '#14b8a6',
   Otros: '#94a3b8',
 };
 

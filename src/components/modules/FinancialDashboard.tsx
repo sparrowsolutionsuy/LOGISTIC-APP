@@ -19,21 +19,22 @@ import {
   buildKPIData,
   buildMonthlyStats,
   buildWeeklyBucketsInMonth,
-  costUsd,
   enrichTrips,
   formatMonthLongEs,
   getCostsByCategory,
-  tripRealizedRevenueMonthKey,
-  tripRevenueRealized,
-  tripRevenueUsd,
+  isCobrado,
+  isPendienteCobro,
+  monthLabel,
+  tripRevenueUSD,
 } from '../../utils/analytics';
 import { usePeriodFilter } from '../../hooks/usePeriodFilter';
 import { PeriodSelector } from '../ui/PeriodSelector';
 import type { CostCategory } from '../../types';
-import { getBillingStatus, getBillingStatusLabel } from '../../utils/billing';
+import { CheckCircle2, Clock, Minus } from 'lucide-react';
 
 const COL = {
   ingreso: '#10b981',
+  cobrado: '#3b82f6',
   costo: '#f59e0b',
   margen: '#3b82f6',
   v: '#8b5cf6',
@@ -45,22 +46,37 @@ const PIE_EXTRA = [COL.v, COL.r, COL.c, COL.ingreso, COL.costo, COL.margen];
 
 const CATEGORY_FILL: Record<CostCategory, string> = {
   Combustible: '#f97316',
+  Sueldos: '#6366f1',
+  Alquiler: '#a855f7',
+  'Cuota Banco': '#ec4899',
+  Service: '#14b8a6',
   Mantenimiento: '#3b82f6',
-  Peajes: '#eab308',
-  Viáticos: '#22c55e',
-  Neumáticos: '#8b5cf6',
-  Seguros: '#06b6d4',
+  'AD Blue': '#0ea5e9',
   Otros: '#94a3b8',
 };
 
 type FinTab = 'resumen' | 'ingresos' | 'costos' | 'rentabilidad';
 
-function sumCostsForTrip(costs: Cost[], tripId: string): number {
-  return costs.filter((c) => c.tripId === tripId).reduce((a, c) => a + costUsd(c), 0);
-}
-
 function formatUsd(n: number): string {
   return n.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+}
+
+/** Devuelve las `count` claves YYYY-MM (ascendente) que terminan en `endKey`. */
+function monthKeysEndingAt(endKey: string, count: number): string[] {
+  const [ys, ms] = endKey.split('-');
+  let y = Number(ys);
+  let mo = Number(ms);
+  if (!Number.isFinite(y) || !Number.isFinite(mo)) return [];
+  const out: string[] = [];
+  for (let i = 0; i < count; i++) {
+    out.unshift(`${y}-${String(mo).padStart(2, '0')}`);
+    mo -= 1;
+    if (mo === 0) {
+      mo = 12;
+      y -= 1;
+    }
+  }
+  return out;
 }
 
 function marginRowStyle(pct: number, revenue: number): React.CSSProperties {
@@ -76,21 +92,63 @@ function marginRowStyle(pct: number, revenue: number): React.CSSProperties {
   return { color: 'var(--accent-red)', fontWeight: 600 };
 }
 
-const Kpi: React.FC<{ title: string; value: string; sub?: string }> = ({ title, value, sub }) => (
-  <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{title}</p>
-    <p className="mt-1 text-xl font-bold text-slate-900">{value}</p>
-    {sub && <p className="mt-1 text-xs text-slate-500">{sub}</p>}
+type KpiTone = 'default' | 'positive' | 'negative' | 'warning' | 'accent';
+
+const TONE_COLOR: Record<KpiTone, string> = {
+  default: 'var(--text-primary)',
+  positive: 'var(--accent-emerald)',
+  negative: 'var(--accent-red)',
+  warning: 'var(--accent-amber)',
+  accent: 'var(--accent-blue)',
+};
+
+const Kpi: React.FC<{ title: string; value: string; sub?: string; tone?: KpiTone }> = ({
+  title,
+  value,
+  sub,
+  tone = 'default',
+}) => (
+  <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm">
+    <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">{title}</p>
+    <p className="mt-1 text-xl font-bold" style={{ color: TONE_COLOR[tone] }}>
+      {value}
+    </p>
+    {sub && <p className="mt-1 text-xs text-[var(--text-muted)]">{sub}</p>}
   </div>
 );
+
+function CobradoStatusCell({ trip }: { trip: Trip }) {
+  if (isCobrado(trip)) {
+    return (
+      <span className="inline-flex items-center gap-1 text-emerald-600" title="Cobrado">
+        <CheckCircle2 size={18} aria-hidden />
+        <span className="sr-only">Cobrado</span>
+      </span>
+    );
+  }
+  if (isPendienteCobro(trip)) {
+    return (
+      <span className="inline-flex items-center gap-1 text-amber-600" title="Pendiente de cobro">
+        <Clock size={18} aria-hidden />
+        <span className="sr-only">Pendiente de cobro</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center text-[var(--text-muted)]" title="Sin facturar">
+      <Minus size={18} aria-hidden />
+      <span className="sr-only">Sin facturar</span>
+    </span>
+  );
+}
 
 const ChartBox: React.FC<{ title: string; children: React.ReactNode; className?: string }> = ({
   title,
   children,
   className = 'h-72',
 }) => (
-  <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-    <h3 className="mb-3 text-sm font-semibold text-slate-800">{title}</h3>
+  <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm">
+    <h3 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">{title}</h3>
     <div className={`w-full overflow-x-auto ${className}`}>
       <div className="min-w-[520px] h-full">{children}</div>
     </div>
@@ -102,6 +160,7 @@ export interface FinancialDashboardProps {
   clients: Client[];
   costs: Cost[];
   formatAmount?: (n: number) => string;
+  formatAmountPrecise?: (n: number) => string;
   convertAggregateToDisplay?: (amountUSD: number) => number;
 }
 
@@ -110,6 +169,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
   clients,
   costs,
   formatAmount: formatAmountProp,
+  formatAmountPrecise: formatAmountPreciseProp,
   convertAggregateToDisplay: convertAggregateToDisplayProp,
 }) => {
   const [tab, setTab] = useState<FinTab>('resumen');
@@ -123,61 +183,74 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     return formatUsd;
   }, [formatAmountProp, convertAggregateToDisplayProp]);
 
+  // Formato con 2 decimales para ratios por unidad (costo/km, margen/km).
+  const fmtMoneyPrecise = useMemo(() => {
+    if (formatAmountPreciseProp && convertAggregateToDisplayProp) {
+      return (n: number) => formatAmountPreciseProp(convertAggregateToDisplayProp(n));
+    }
+    return (n: number) =>
+      n.toLocaleString('es-UY', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+  }, [formatAmountPreciseProp, convertAggregateToDisplayProp]);
+
+  const scopeTrips = isAllTime ? trips : filteredTrips;
+  const periodTripCount = scopeTrips.length;
+
+  // KPIs del PERÍODO seleccionado (mes elegido o "todos los períodos").
   const kpi = useMemo(
-    () => buildKPIData(trips, clients, costs, isAllTime ? 'all' : selectedMonth),
-    [trips, costs, clients, isAllTime, selectedMonth]
+    () => buildKPIData(trips, clients, costs, selectedMonth),
+    [trips, clients, costs, selectedMonth]
   );
-  const monthly = useMemo(
-    () =>
-      buildMonthlyStats(
-        trips,
-        costs,
-        6,
-        isAllTime ? null : selectedMonth,
-        isAllTime
-      ),
-    [trips, costs, isAllTime, selectedMonth]
-  );
+
   const enriched = useMemo(
-    () => enrichTrips(isAllTime ? trips : filteredTrips, clients, costs),
-    [isAllTime, trips, filteredTrips, clients, costs]
+    () => enrichTrips(scopeTrips, clients, costs),
+    [scopeTrips, clients, costs]
   );
 
   const periodEmpty =
     !isAllTime && filteredTrips.length === 0 && filteredCosts.length === 0;
 
-  const kpiPeriodSub = isAllTime ? 'Todo el período' : formatMonthLongEs(selectedMonth);
+  const periodSub = isAllTime ? 'Todos los períodos' : formatMonthLongEs(selectedMonth);
 
-  const cobradosInScope = useMemo(() => {
-    if (isAllTime) return trips.filter((t) => t.facturaCobrada === true);
-    return trips.filter(
-      (t) => t.facturaCobrada === true && tripRealizedRevenueMonthKey(t) === selectedMonth
-    );
-  }, [trips, isAllTime, selectedMonth]);
+  // ─── Métricas de valor derivadas (período) ───────────────────────────────
+  const collectionRate = kpi.totalGenerado > 0 ? (kpi.totalCobrado / kpi.totalGenerado) * 100 : 0;
+  const costRatioPnl = kpi.totalGenerado > 0 ? (kpi.totalCostos / kpi.totalGenerado) * 100 : 0;
+  const ticketPromedio = periodTripCount > 0 ? kpi.totalGenerado / periodTripCount : 0;
+  const marginPerTrip = periodTripCount > 0 ? kpi.margenNeto / periodTripCount : 0;
+
+  // ─── Ventana de tendencia: 6 meses que terminan en el mes seleccionado ────
+  const trendMonthly = useMemo(() => {
+    if (isAllTime) return buildMonthlyStats(trips, costs, 6, null, true);
+    const keys = monthKeysEndingAt(selectedMonth, 6);
+    return keys.map((k) => buildMonthlyStats(trips, costs, 1, k)[0]).filter(Boolean);
+  }, [trips, costs, isAllTime, selectedMonth]);
+
+  const trendSuffix = isAllTime
+    ? '(histórico)'
+    : `(6 meses hasta ${monthLabel(selectedMonth)})`;
+
+  const barOpacity = (month: string) => (isAllTime || month === selectedMonth ? 1 : 0.4);
 
   const areaData = useMemo(
     () =>
-      monthly.map((m) => ({
+      trendMonthly.map((m) => ({
+        month: m.month,
         label: m.label,
-        Ingresos: m.revenue,
-        Costos: m.costs,
+        totalGenerado: m.totalGenerado,
+        totalCobrado: m.totalCobrado,
+        costs: m.costs,
       })),
-    [monthly]
-  );
-
-  const totalHistoricRevenue = useMemo(
-    () => cobradosInScope.reduce((s, t) => s + tripRevenueRealized(t), 0),
-    [cobradosInScope]
-  );
-  const avgRevenuePerTrip = useMemo(
-    () => (cobradosInScope.length > 0 ? totalHistoricRevenue / cobradosInScope.length : 0),
-    [cobradosInScope.length, totalHistoricRevenue]
+    [trendMonthly]
   );
 
   const revenueByClient = useMemo(() => {
     const m = new Map<string, number>();
-    cobradosInScope.forEach((t) => {
-      const r = tripRevenueRealized(t);
+    scopeTrips.forEach((t) => {
+      const r = tripRevenueUSD(t);
       m.set(t.clientId, (m.get(t.clientId) ?? 0) + r);
     });
     return Array.from(m.entries())
@@ -187,20 +260,20 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       }))
       .filter((x) => x.value > 0)
       .sort((a, b) => b.value - a.value);
-  }, [cobradosInScope, clients]);
+  }, [scopeTrips, clients]);
 
   const revenueByProduct = useMemo(() => {
     const m = new Map<string, number>();
-    cobradosInScope.forEach((t) => {
+    scopeTrips.forEach((t) => {
       const key = t.contenido?.trim() || 'Sin especificar';
-      const revenue = tripRevenueRealized(t);
+      const revenue = tripRevenueUSD(t);
       m.set(key, (m.get(key) ?? 0) + revenue);
     });
     return Array.from(m.entries())
       .map(([name, value]) => ({ name, value }))
       .filter((x) => x.value > 0)
       .sort((a, b) => b.value - a.value);
-  }, [cobradosInScope]);
+  }, [scopeTrips]);
 
   const weeklyIngresos = useMemo(
     () =>
@@ -210,13 +283,8 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     [trips, costs, isAllTime, selectedMonth]
   );
 
-  const bestClientHistoric = useMemo(() => {
-    const top = revenueByClient[0];
-    return top ? { name: top.name, revenue: top.value } : null;
-  }, [revenueByClient]);
-
   const totalCostsAll = useMemo(
-    () => filteredCosts.reduce((s, c) => s + costUsd(c), 0),
+    () => filteredCosts.reduce((s, c) => s + (c.montoUSD ?? 0), 0),
     [filteredCosts]
   );
   const totalKm = useMemo(
@@ -235,36 +303,68 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
 
   const rentBarData = useMemo(
     () =>
-      monthly.map((m) => ({
+      trendMonthly.map((m) => ({
+        month: m.month,
         label: m.label,
-        Ingresos: m.revenue,
+        Ingresos: m.totalGenerado,
         Costos: m.costs,
         Margen: m.margin,
       })),
-    [monthly]
+    [trendMonthly]
   );
 
   const marginEvolution = useMemo(
-    () => monthly.map((m) => ({ label: m.label, 'Margen %': Number(m.marginPct.toFixed(1)) })),
-    [monthly]
+    () =>
+      trendMonthly.map((m) => ({
+        month: m.month,
+        label: m.label,
+        'Margen %': Number(m.marginPct.toFixed(1)),
+      })),
+    [trendMonthly]
   );
+
+  const ingresosBar = useMemo(
+    () =>
+      trendMonthly.map((m) => ({
+        month: m.month,
+        label: m.label,
+        Ingresos: m.totalGenerado,
+        Cobrado: m.totalCobrado,
+      })),
+    [trendMonthly]
+  );
+
+  const costosBar = useMemo(
+    () => trendMonthly.map((m) => ({ month: m.month, label: m.label, Costos: m.costs })),
+    [trendMonthly]
+  );
+
+  const marginPerKm = totalKm > 0 ? kpi.margenNeto / totalKm : 0;
+  const costPerTrip = periodTripCount > 0 ? totalCostsAll / periodTripCount : 0;
+  const costRatioReg = kpi.totalGenerado > 0 ? (totalCostsAll / kpi.totalGenerado) * 100 : 0;
+
+  const enrichedById = useMemo(() => {
+    const m = new Map<string, (typeof enriched)[0]>();
+    enriched.forEach((e) => m.set(e.id, e));
+    return m;
+  }, [enriched]);
 
   const top5Routes = useMemo(() => {
     const m = new Map<string, { revenue: number; pending: number; cost: number }>();
-    (isAllTime ? trips : filteredTrips).forEach((t) => {
+    scopeTrips.forEach((t) => {
       const key = `${t.origen} → ${t.destino}`;
       const cur = m.get(key) ?? { revenue: 0, pending: 0, cost: 0 };
-      if (t.facturaCobrada === true) {
-        cur.revenue += tripRevenueRealized(t);
-      } else if (t.estado === 'Completado' || t.estado === 'Cerrado') {
-        cur.pending += tripRevenueUsd(t);
+      const rev = tripRevenueUSD(t);
+      cur.revenue += rev;
+      if (isPendienteCobro(t)) {
+        cur.pending += rev;
       }
-      cur.cost += sumCostsForTrip(costs, t.id);
+      cur.cost += enrichedById.get(t.id)?.totalCosts ?? 0;
       m.set(key, cur);
     });
     return Array.from(m.entries())
       .map(([route, v]) => {
-        const gross = v.revenue + v.pending;
+        const gross = v.revenue;
         const margin = gross - v.cost;
         const marginPct = gross > 0 ? (margin / gross) * 100 : 0;
         return {
@@ -278,7 +378,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       })
       .sort((a, b) => b.margin - a.margin)
       .slice(0, 5);
-  }, [trips, filteredTrips, isAllTime, costs]);
+  }, [scopeTrips, enrichedById]);
+
+  const bestRoute = top5Routes[0];
 
   const tabs: { id: FinTab; label: string }[] = [
     { id: 'resumen', label: 'Resumen' },
@@ -290,8 +392,8 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Finanzas</h1>
-        <p className="text-sm text-slate-500">Análisis consolidado de ingresos, costos y rentabilidad.</p>
+        <h1 className="text-2xl font-bold text-[var(--text-primary)]">Finanzas</h1>
+        <p className="text-sm text-[var(--text-muted)]">Análisis consolidado de ingresos, costos y rentabilidad.</p>
       </div>
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4">
@@ -300,6 +402,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
           value={selectedMonth}
           onChange={setSelectedMonth}
           availableMonths={availableMonths}
+          forceDropdown
         />
       </div>
 
@@ -309,7 +412,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-1">
+      <div className="flex flex-wrap gap-2 border-b border-[var(--border)] pb-1">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -317,8 +420,8 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
             onClick={() => setTab(t.id)}
             className={`rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
               tab === t.id
-                ? 'bg-white text-blue-800 shadow-sm ring-1 ring-slate-200'
-                : 'text-slate-600 hover:bg-slate-100'
+                ? 'bg-[var(--bg-surface)] text-[var(--accent-blue)] shadow-sm ring-1 ring-[var(--border)]'
+                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-muted)]'
             }`}
           >
             {t.label}
@@ -328,19 +431,49 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
 
       {tab === 'resumen' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi title="Ingresos MTD" value={fmtMoney(kpi.totalRevenueMTD)} sub={kpiPeriodSub} />
-            <Kpi title="Costos MTD" value={fmtMoney(kpi.totalCostsMTD)} sub={kpiPeriodSub} />
-            <Kpi title="Margen neto MTD" value={fmtMoney(kpi.netMarginMTD)} sub={kpiPeriodSub} />
-            <Kpi title="Margen %" value={`${kpi.marginPctMTD.toFixed(1)}%`} sub={kpiPeriodSub} />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Kpi title="Total Generado" value={fmtMoney(kpi.totalGenerado)} sub={periodSub} />
+            <Kpi
+              title="Total Cobrado"
+              value={fmtMoney(kpi.totalCobrado)}
+              sub={`${collectionRate.toFixed(0)}% del generado`}
+              tone="positive"
+            />
+            <Kpi
+              title="Pendiente de Cobro"
+              value={fmtMoney(kpi.totalPendienteCobro)}
+              sub="Facturado sin cobrar"
+              tone="warning"
+            />
+            <Kpi
+              title="Total Costos"
+              value={fmtMoney(kpi.totalCostos)}
+              sub={kpi.totalGenerado > 0 ? `${costRatioPnl.toFixed(0)}% de los ingresos` : periodSub}
+            />
+            <Kpi
+              title="Margen Neto"
+              value={fmtMoney(kpi.margenNeto)}
+              sub="Generado − costos"
+              tone={kpi.margenNeto >= 0 ? 'positive' : 'negative'}
+            />
+            <Kpi
+              title="Margen %"
+              value={`${kpi.margenPct.toFixed(1)}%`}
+              sub="Sobre total generado"
+              tone={kpi.margenPct >= 20 ? 'positive' : kpi.margenPct >= 10 ? 'warning' : 'negative'}
+            />
           </div>
-          <ChartBox title="Ingresos vs costos (6 meses)">
+          <ChartBox title={`Ingresos vs costos ${trendSuffix}`}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={areaData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="fdIng" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="fdGen" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={COL.ingreso} stopOpacity={0.45} />
                     <stop offset="95%" stopColor={COL.ingreso} stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="fdCob" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={COL.cobrado} stopOpacity={0.45} />
+                    <stop offset="95%" stopColor={COL.cobrado} stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="fdCost" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={COL.costo} stopOpacity={0.45} />
@@ -354,14 +487,24 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 <Legend />
                 <Area
                   type="monotone"
-                  dataKey="Ingresos"
+                  dataKey="totalGenerado"
+                  name="Total generado"
                   stroke={COL.ingreso}
-                  fill="url(#fdIng)"
+                  fill="url(#fdGen)"
                   strokeWidth={2}
                 />
                 <Area
                   type="monotone"
-                  dataKey="Costos"
+                  dataKey="totalCobrado"
+                  name="Cobrado"
+                  stroke={COL.cobrado}
+                  fill="url(#fdCob)"
+                  strokeWidth={2}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="costs"
+                  name="Costos"
                   stroke={COL.costo}
                   fill="url(#fdCost)"
                   strokeWidth={2}
@@ -371,7 +514,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
           </ChartBox>
           <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
             <div className="border-b border-[var(--border)] px-4 py-3">
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Rentabilidad por viaje</h3>
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                Rentabilidad por viaje — {periodSub}
+              </h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[820px] text-sm">
@@ -384,10 +529,10 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                       Cliente
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                      Ingreso cobrado
+                      Ingreso (USD)
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                      Estado cobro
+                    <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Estado Cobro
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
                       Costos
@@ -402,9 +547,8 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 </thead>
                 <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                   {enriched.map((row, i) => {
-                    const rev = row.revenueRealized;
+                    const rev = tripRevenueUSD(row);
                     const pct = row.marginPct;
-                    const st = getBillingStatus(row);
                     return (
                       <tr
                         key={row.id}
@@ -416,8 +560,8 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                         <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{row.id}</td>
                         <td className="px-4 py-3 text-[var(--text-primary)]">{row.clientName}</td>
                         <td className="px-4 py-3 text-right text-[var(--text-primary)]">{fmtMoney(rev)}</td>
-                        <td className="px-4 py-3 text-left text-xs font-medium text-[var(--text-secondary)]">
-                          {getBillingStatusLabel(st)}
+                        <td className="px-4 py-3 text-center">
+                          <CobradoStatusCell trip={row} />
                         </td>
                         <td className="px-4 py-3 text-right text-[var(--text-primary)]">
                           {fmtMoney(row.totalCosts)}
@@ -440,17 +584,24 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
 
       {tab === 'ingresos' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi title="Ingresos generados" value={fmtMoney(kpi.totalGenerado)} sub={periodSub} />
             <Kpi
-              title={isAllTime ? 'Total ingresos (cobrados)' : 'Ingresos cobrados (mes)'}
-              value={fmtMoney(totalHistoricRevenue)}
-              sub={kpiPeriodSub}
+              title="Ingresos cobrados"
+              value={fmtMoney(kpi.totalCobrado)}
+              sub={`Tasa de cobro ${collectionRate.toFixed(0)}%`}
+              tone="positive"
             />
-            <Kpi title="Promedio por viaje" value={fmtMoney(avgRevenuePerTrip)} sub={kpiPeriodSub} />
             <Kpi
-              title={isAllTime ? 'Mejor cliente' : 'Mejor cliente (mes)'}
-              value={bestClientHistoric?.name ?? '—'}
-              sub={bestClientHistoric ? fmtMoney(bestClientHistoric.revenue) : undefined}
+              title="Pendiente de cobro"
+              value={fmtMoney(kpi.totalPendienteCobro)}
+              sub="Facturado sin cobrar"
+              tone="warning"
+            />
+            <Kpi
+              title="Ticket promedio"
+              value={periodTripCount > 0 ? fmtMoney(ticketPromedio) : '—'}
+              sub={`${periodTripCount} viaje(s) en el período`}
             />
           </div>
           {!isAllTime && weeklyIngresos.length > 0 ? (
@@ -468,19 +619,29 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
               </ResponsiveContainer>
             </ChartBox>
           ) : null}
-          <ChartBox title={isAllTime ? 'Ingresos mensuales' : 'Ingresos mensuales (ventana)'}>
+          <ChartBox title={`Ingresos por mes ${trendSuffix}`}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthly.map((m) => ({ label: m.label, Ingresos: m.revenue }))}>
+              <BarChart data={ingresosBar}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
                 <Tooltip formatter={(v: number) => fmtMoney(v)} />
-                <Bar dataKey="Ingresos" fill={COL.ingreso} radius={[4, 4, 0, 0]} />
+                <Legend />
+                <Bar dataKey="Ingresos" name="Generado" fill={COL.ingreso} radius={[4, 4, 0, 0]}>
+                  {ingresosBar.map((d) => (
+                    <Cell key={d.month} fill={COL.ingreso} fillOpacity={barOpacity(d.month)} />
+                  ))}
+                </Bar>
+                <Bar dataKey="Cobrado" name="Cobrado" fill={COL.cobrado} radius={[4, 4, 0, 0]}>
+                  {ingresosBar.map((d) => (
+                    <Cell key={d.month} fill={COL.cobrado} fillOpacity={barOpacity(d.month)} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </ChartBox>
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <ChartBox title="Distribución de ingresos por cliente">
+            <ChartBox title={`Ingresos por cliente — ${periodSub}`}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -587,28 +748,48 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
 
       {tab === 'costos' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Kpi title="Total costos" value={fmtMoney(totalCostsAll)} sub={kpiPeriodSub} />
-            <Kpi title="Costo / km promedio" value={totalKm > 0 ? fmtMoney(costPerKm) : '—'} sub={kpiPeriodSub} />
+          <p className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3 text-sm text-[var(--text-secondary)]">
+            Los costos de combustible se imputan proporcionalmente a los viajes según km recorridos (70% de
+            carga, 30% sin carga). Los márgenes por viaje son estimados.
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Kpi title="Costos totales" value={fmtMoney(totalCostsAll)} sub={periodSub} />
+            <Kpi
+              title="Costos / ingresos"
+              value={kpi.totalGenerado > 0 ? `${costRatioReg.toFixed(0)}%` : '—'}
+              sub="Cuanto menor, mejor"
+              tone={costRatioReg <= 70 ? 'positive' : costRatioReg <= 85 ? 'warning' : 'negative'}
+            />
+            <Kpi title="Costo por km" value={totalKm > 0 ? fmtMoneyPrecise(costPerKm) : '—'} sub={periodSub} />
+            <Kpi
+              title="Costo por viaje"
+              value={periodTripCount > 0 ? fmtMoney(costPerTrip) : '—'}
+              sub={`${periodTripCount} viaje(s)`}
+            />
             <Kpi
               title="Categoría con mayor gasto"
               value={topCat?.category ?? '—'}
-              sub={topCat ? fmtMoney(topCat.total) : undefined}
+              sub={topCat ? `${fmtMoney(topCat.total)} · ${topCat.pct.toFixed(0)}%` : undefined}
+              tone="accent"
             />
           </div>
-          <ChartBox title="Costos mensuales">
+          <ChartBox title={`Costos por mes ${trendSuffix}`}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthly.map((m) => ({ label: m.label, Costos: m.costs }))}>
+              <BarChart data={costosBar}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
                 <Tooltip formatter={(v: number) => fmtMoney(v)} />
-                <Bar dataKey="Costos" fill={COL.costo} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Costos" fill={COL.costo} radius={[4, 4, 0, 0]}>
+                  {costosBar.map((d) => (
+                    <Cell key={d.month} fill={COL.costo} fillOpacity={barOpacity(d.month)} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </ChartBox>
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <ChartBox title="Distribución por categoría">
+            <ChartBox title={`Distribución por categoría — ${periodSub}`}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -689,7 +870,37 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
 
       {tab === 'rentabilidad' && (
         <div className="space-y-6">
-          <ChartBox title="Comparativo mensual: ingresos, costos y margen">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Kpi
+              title="Margen neto"
+              value={fmtMoney(kpi.margenNeto)}
+              sub={periodSub}
+              tone={kpi.margenNeto >= 0 ? 'positive' : 'negative'}
+            />
+            <Kpi
+              title="Margen %"
+              value={`${kpi.margenPct.toFixed(1)}%`}
+              sub="Sobre ingresos generados"
+              tone={kpi.margenPct >= 20 ? 'positive' : kpi.margenPct >= 10 ? 'warning' : 'negative'}
+            />
+            <Kpi
+              title="Margen por viaje"
+              value={periodTripCount > 0 ? fmtMoney(marginPerTrip) : '—'}
+              sub={`${periodTripCount} viaje(s)`}
+            />
+            <Kpi
+              title="Margen por km"
+              value={totalKm > 0 ? fmtMoneyPrecise(marginPerKm) : '—'}
+              sub={`${totalKm.toLocaleString('es-UY')} km`}
+            />
+            <Kpi
+              title="Ruta más rentable"
+              value={bestRoute ? bestRoute.route : '—'}
+              sub={bestRoute ? `Margen ${bestRoute.marginPct.toFixed(0)}% · ${fmtMoney(bestRoute.margin)}` : undefined}
+              tone="accent"
+            />
+          </div>
+          <ChartBox title={`Ingresos, costos y margen ${trendSuffix}`}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={rentBarData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -697,13 +908,25 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
                 <Tooltip formatter={(v: number) => fmtMoney(v)} />
                 <Legend />
-                <Bar dataKey="Ingresos" fill={COL.ingreso} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Costos" fill={COL.costo} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Margen" fill={COL.margen} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Ingresos" fill={COL.ingreso} radius={[4, 4, 0, 0]}>
+                  {rentBarData.map((d) => (
+                    <Cell key={d.month} fill={COL.ingreso} fillOpacity={barOpacity(d.month)} />
+                  ))}
+                </Bar>
+                <Bar dataKey="Costos" fill={COL.costo} radius={[4, 4, 0, 0]}>
+                  {rentBarData.map((d) => (
+                    <Cell key={d.month} fill={COL.costo} fillOpacity={barOpacity(d.month)} />
+                  ))}
+                </Bar>
+                <Bar dataKey="Margen" fill={COL.margen} radius={[4, 4, 0, 0]}>
+                  {rentBarData.map((d) => (
+                    <Cell key={d.month} fill={COL.margen} fillOpacity={barOpacity(d.month)} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </ChartBox>
-          <ChartBox title="Evolución del % de margen mensual">
+          <ChartBox title={`Evolución del % de margen ${trendSuffix}`}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={marginEvolution}>
                 <defs>
@@ -728,7 +951,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
           </ChartBox>
           <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
             <div className="border-b border-[var(--border)] px-4 py-3">
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">Top 5 rutas más rentables</h3>
+              <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                Top 5 rutas más rentables — {periodSub}
+              </h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] text-sm">
@@ -738,7 +963,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                       Ruta
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                      Ingresos (cobrado)
+                      Ingresos (USD)
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
                       Pendiente
@@ -756,7 +981,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                 </thead>
                 <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                   {top5Routes.map((r, i) => {
-                    const gross = r.revenue + r.pending;
+                    const gross = r.revenue;
                     return (
                     <tr
                       key={r.route}

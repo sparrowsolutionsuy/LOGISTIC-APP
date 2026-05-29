@@ -92,7 +92,7 @@ const MapFallback: React.FC = () => (
   <div className="flex h-full min-h-[320px] w-full animate-pulse flex-col rounded-xl bg-slate-200/80">
     <div className="m-4 h-8 w-40 rounded bg-slate-300/90" />
     <div className="mx-4 flex flex-1 items-center justify-center rounded-lg bg-slate-300/50">
-      <p className="text-sm font-medium text-slate-600">Cargando mapa…</p>
+      <p className="text-sm font-medium text-[var(--text-secondary)]">Cargando mapa…</p>
     </div>
   </div>
 );
@@ -428,13 +428,13 @@ Respondé SOLO con JSON válido sin markdown:
   return (
     <div className="flex h-[calc(100vh-120px)] min-h-[480px] flex-col gap-4 lg:flex-row lg:gap-0">
       <div className="flex flex-1 flex-col space-y-3 lg:pr-4">
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-          <div className="flex items-center font-medium text-slate-700">
-            <Filter className="mr-2 h-4 w-4 text-slate-500" />
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-3 shadow-sm">
+          <div className="flex items-center font-medium text-[var(--text-secondary)]">
+            <Filter className="mr-2 h-4 w-4 text-[var(--text-muted)]" />
             <span className="text-sm">Filtros</span>
           </div>
           <select
-            className="rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm text-slate-900 outline-none"
+            className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none"
             value={selectedDept}
             onChange={(e) => setSelectedDept(e.target.value)}
           >
@@ -446,7 +446,7 @@ Respondé SOLO con JSON válido sin markdown:
             ))}
           </select>
           <select
-            className="max-w-[220px] rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm text-slate-900 outline-none"
+            className="max-w-[220px] rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none"
             value={selectedClient}
             onChange={(e) => setSelectedClient(e.target.value)}
           >
@@ -457,12 +457,12 @@ Respondé SOLO con JSON válido sin markdown:
               </option>
             ))}
           </select>
-          <span className="ml-auto text-xs text-slate-500">
+          <span className="ml-auto text-xs text-[var(--text-muted)]">
             {activeTrips.length} viajes activos · {filteredClients.length} en mapa
           </span>
         </div>
 
-        <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-xl border border-slate-300 shadow-lg lg:min-h-0">
+        <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-xl border border-[var(--border)] shadow-lg lg:min-h-0">
           <Suspense fallback={<MapFallback />}>
             <StrategicMapCanvas
               clients={filteredClients}

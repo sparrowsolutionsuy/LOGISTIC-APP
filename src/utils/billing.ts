@@ -1,5 +1,5 @@
 import type { BillingStatus, Trip } from '../types';
-import { tripRevenueUsd } from './analytics';
+import { tripRevenueUSD } from './analytics';
 
 export function getBillingStatus(trip: Trip): BillingStatus {
   if (trip.facturaCobrada) {
@@ -38,7 +38,7 @@ export function roundMoney(n: number): number {
 }
 
 export function tripSubtotalUsd(t: Trip): number {
-  return tripRevenueUsd(t);
+  return tripRevenueUSD(t);
 }
 
 export function tripIvaUsd(t: Trip): number {

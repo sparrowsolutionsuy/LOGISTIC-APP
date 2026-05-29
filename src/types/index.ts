@@ -3,11 +3,12 @@ export type TripStatus = 'Pendiente' | 'En Tránsito' | 'Completado' | 'Cerrado'
 export type UserRole = 'admin' | 'operativo';
 export type CostCategory =
   | 'Combustible'
+  | 'Sueldos'
+  | 'Alquiler'
+  | 'Cuota Banco'
+  | 'Service'
   | 'Mantenimiento'
-  | 'Peajes'
-  | 'Viáticos'
-  | 'Neumáticos'
-  | 'Seguros'
+  | 'AD Blue'
   | 'Otros';
 
 export interface User {
@@ -47,30 +48,22 @@ export interface Trip {
   contenido: string;
   pesoKg: number;
   kmRecorridos: number;
-  tarifa: number;
-  /** Moneda en que se pactó la tarifa (por tonelada). */
-  moneda?: 'USD' | 'UYU';
-  /** TC USD→UYU vigente al momento del registro. */
-  tipoCambio?: number;
-  /** Total tarifa en UYU de referencia (opcional, persistido). */
-  tarifaUYU?: number;
+  tarifa: number; // tarifa en la moneda original del viaje
+  tarifaUYU?: number; // tarifa en UYU (calculada al momento de crear)
+  moneda?: 'USD' | 'UYU'; // moneda de la tarifa
+  tipoCambio?: number; // tipo de cambio al momento del viaje
   origen: string;
   destino: string;
   facturaUrl?: string;
-  /** URL del remito escaneado en Google Drive (u origen mock). */
   remitoUrl?: string;
-  /** Usuario operativo asignado (viajes visibles solo para ese usuario). */
   asignadoA?: string;
-  /** Factura PDF creada en app externa. */
+  // Campos del pipeline de facturación/cobro
   facturaGenerada?: boolean;
-  /** Mail enviado al cliente solicitando pago. */
   facturaSolicitada?: boolean;
-  /** ISO date: cuándo se envió el mail de solicitud. */
-  facturaFechaSolicitud?: string;
-  /** Dinero recibido. */
+  facturaFechaSolicitud?: string; // ISO date string o ''
   facturaCobrada?: boolean;
-  /** ISO date: cuándo se cobró. */
-  facturaFechaCobro?: string;
+  facturaFechaCobro?: string; // ISO date string o ''
+  scheduledCostId?: string;
 }
 
 export type BillingStatus = 'pendiente' | 'generada' | 'solicitada' | 'cobrada';
@@ -81,25 +74,22 @@ export interface Cost {
   tripId: string | null;
   categoria: CostCategory;
   descripcion: string;
-  monto: number;
-  moneda?: 'USD' | 'UYU';
+  monto: number; // monto en la moneda original
+  moneda?: 'USD' | 'UYU'; // moneda del costo
   /** Moneda de registro (alias explícito de `moneda` para UI y Sheets `currency`). */
   currency?: 'USD' | 'UYU';
-  tipoCambio?: number;
-  /** Siempre en USD para analytics y agregados. */
-  montoUSD?: number;
-  /** true solo si el registro fue generado por ejecución de costo programado. */
+  tipoCambio?: number; // tipo de cambio usado
+  montoUSD?: number; // monto convertido a USD (precalculado)
+  comprobante?: string;
+  registradoPor: string;
   isScheduled?: boolean;
   /** Día del mes (1–28) de la definición que originó el costo (opcional, auditoría). */
   scheduledDay?: number;
   /** Meses YYYY-MM en los que ya se contabilizó ejecución (opcional; idempotencia principal por fila en Sheets). */
   scheduledMonths?: string[];
-  /** ID de la definición en DB_CostosProgramados que originó este costo automático. */
   scheduleId?: string;
   /** @deprecated Usar scheduleId; se mantiene por compatibilidad con filas antiguas. */
   scheduledCostId?: string;
-  comprobante?: string;
-  registradoPor: string;
 }
 
 /** Definición persistida en DB_CostosProgramados (Google Sheets). */
@@ -127,42 +117,73 @@ export interface ExchangeRateContext {
 }
 
 // === ANALYTICS ===
+/** Resultado de revenue de un viaje normalizado a USD */
+export interface TripRevenueUSD {
+  tripId: string;
+  revenueUSD: number; // ingreso generado en USD
+  cobrado: boolean; // true si facturaCobrada === true
+  pendienteCobro: boolean; // true si facturaSolicitada pero no cobrada
+}
+
 export interface TripWithMetrics extends Trip {
   clientName: string;
   totalCosts: number;
-  /** Ingreso contabilizado solo si el viaje está cobrado (mismo criterio que KPIs). */
-  revenueRealized: number;
   netMargin: number;
   marginPct: number;
 }
 
+/** Estadísticas mensuales actualizadas */
 export interface MonthlyStats {
   month: string;
   label: string;
-  /** Ingresos realizados (solo viajes con `facturaCobrada` en ese mes). */
-  revenue: number;
-  /** Ingreso bruto pendiente de cobro (Completado/Cerrado sin cobrar, fecha del viaje en el mes). */
-  pendingRevenue: number;
+  totalGenerado: number;
+  totalCobrado: number;
+  totalPendienteCobro: number;
   costs: number;
   margin: number;
   marginPct: number;
   tripCount: number;
   tonsTransported: number;
+  kmRecorridos: number;
+  /** @deprecated Usar totalCobrado */
+  revenue?: number;
+  /** @deprecated Usar totalPendienteCobro */
+  pendingRevenue?: number;
 }
 
+/** KPIs del dashboard con distinción cobrado/pendiente */
 export interface KPIData {
-  totalRevenueMTD: number;
-  totalCostsMTD: number;
-  netMarginMTD: number;
-  marginPctMTD: number;
-  activeTrips: number;
-  pendingTrips: number;
-  avgRevenuePerTrip: number;
-  topClient: { name: string; revenue: number } | null;
-  /** Suma de ingreso bruto (trip tarifa × ton) en viajes terminados aún no cobrados. */
-  pendingRevenue: number;
-  /** Igual a `totalRevenueMTD` (ingresos realizados en el mes MTD). */
-  realizedRevenue: number;
+  totalGenerado: number; // suma de TODOS los ingresos del periodo (USD)
+  totalCobrado: number; // suma de ingresos efectivamente cobrados (USD)
+  totalPendienteCobro: number; // suma de ingresos facturados pero no cobrados (USD)
+  totalCostos: number; // suma de costos del periodo (USD)
+  margenNeto: number; // totalGenerado - totalCostos
+  margenPct: number; // (margenNeto / totalGenerado) * 100
+  viajesRealizados: number; // cantidad de viajes Completado + Cerrado
+  viajesActivos: number; // En Tránsito
+  viajesPendientes: number; // Pendiente
+  kmRecorridos: number; // suma de kmRecorridos del periodo
+  toneladasTransportadas: number; // suma pesoKg/1000 del periodo
+  topCliente: { name: string; revenue: number } | null;
+  /** @deprecated Usar totalGenerado */
+  totalRevenueMTD?: number;
+  /** @deprecated Usar totalCostos */
+  totalCostsMTD?: number;
+  /** @deprecated Usar margenNeto */
+  netMarginMTD?: number;
+  /** @deprecated Usar margenPct */
+  marginPctMTD?: number;
+  /** @deprecated Usar viajesActivos */
+  activeTrips?: number;
+  /** @deprecated Usar viajesPendientes */
+  pendingTrips?: number;
+  avgRevenuePerTrip?: number;
+  /** @deprecated Usar topCliente */
+  topClient?: { name: string; revenue: number } | null;
+  /** @deprecated Usar totalPendienteCobro */
+  pendingRevenue?: number;
+  /** @deprecated Usar totalCobrado */
+  realizedRevenue?: number;
 }
 
 export interface MonthlyReportData {

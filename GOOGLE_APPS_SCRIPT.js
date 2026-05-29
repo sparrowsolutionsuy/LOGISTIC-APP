@@ -114,13 +114,32 @@ function doGet(e) {
       'facturaSolicitada',
       'facturaFechaSolicitud',
       'facturaCobrada',
-      'facturaFechaCobro'
+      'facturaFechaCobro',
     ]);
+  } else {
+    var requiredTripCols = [
+      'facturaGenerada',
+      'facturaSolicitada',
+      'facturaFechaSolicitud',
+      'facturaCobrada',
+      'facturaFechaCobro',
+      'moneda',
+      'tipoCambio',
+      'tarifaUYU',
+    ];
+    var tripHeaders = tripSheet.getRange(1, 1, 1, tripSheet.getLastColumn()).getValues()[0];
+    requiredTripCols.forEach(function (col) {
+      if (tripHeaders.indexOf(col) === -1) {
+        tripSheet.getRange(1, tripHeaders.length + 1).setValue(col);
+        tripHeaders.push(col);
+      }
+    });
   }
   ensureTripSheetHeaders(tripSheet);
 
   const trips = getSheetData('DB_Viajes');
 
+  // Asegurar DB_Costos
   let costSheet = ss.getSheetByName('DB_Costos');
   if (!costSheet) {
     costSheet = ss.insertSheet('DB_Costos');
@@ -132,39 +151,20 @@ function doGet(e) {
       'descripcion',
       'monto',
       'moneda',
-      'currency',
       'tipoCambio',
       'montoUSD',
-      'scheduledCostId',
       'comprobante',
       'registradoPor',
+      'isScheduled',
+      'scheduleId',
     ]);
   }
   ensureCostSheetHeaders(costSheet);
   const costs = getSheetData('DB_Costos');
 
-  let defSheet = ss.getSheetByName('DB_CostosProgramados');
-  if (!defSheet) {
-    defSheet = ss.insertSheet('DB_CostosProgramados');
-    defSheet.appendRow([
-      'id',
-      'categoria',
-      'descripcion',
-      'monto',
-      'currency',
-      'dayOfMonth',
-      'active',
-      'creadoPor',
-      'creadoEn',
-      'tripId',
-    ]);
-  }
-  ensureScheduledDefinitionSheetHeaders(defSheet);
-  const scheduledCostDefinitions = getSheetData('DB_CostosProgramados');
-
-  return ContentService.createTextOutput(
-    JSON.stringify({ clients, trips, costs, scheduledCostDefinitions })
-  ).setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(JSON.stringify({ clients, trips, costs })).setMimeType(
+    ContentService.MimeType.JSON
+  );
 }
 
 function doPost(e) {
@@ -208,8 +208,8 @@ function doPost(e) {
     } else if (type === 'trip') {
       const sheet = ss.getSheetByName('DB_Viajes');
       ensureTripSheetHeaders(sheet);
-      const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-      sheet.appendRow(tripRowFromPayload(data, headers));
+      const tripHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      sheet.appendRow(tripRowFromPayload(data, tripHeaders));
     } else if (type === 'client') {
       const sheet = ss.getSheetByName('DB_Clientes');
       const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -225,11 +225,58 @@ function doPost(e) {
         if (String(values[i][idCol]) === String(data.id)) {
           const rowNum = i + 1;
           const prev = values[i];
-          const prevData = {};
-          headers.forEach(function (h, idx) {
-            prevData[h] = prev[idx];
-          });
-          const merged = Object.assign({}, prevData, data);
+          var prevFactura =
+            headers.indexOf('facturaUrl') > -1 ? prev[headers.indexOf('facturaUrl')] : '';
+          var prevRemito =
+            headers.indexOf('remitoUrl') > -1 ? prev[headers.indexOf('remitoUrl')] : '';
+          const merged = {
+            id: data.id,
+            fecha: data.fecha,
+            clientId: data.clientId,
+            estado: data.estado,
+            contenido: data.contenido,
+            pesoKg: data.pesoKg,
+            kmRecorridos: data.kmRecorridos,
+            tarifa: data.tarifa,
+            origen: data.origen,
+            destino: data.destino,
+            facturaUrl: data.facturaUrl !== undefined ? data.facturaUrl || '' : prevFactura,
+            remitoUrl: data.remitoUrl !== undefined ? data.remitoUrl || '' : prevRemito,
+            asignadoA: data.asignadoA || '',
+            moneda: data.moneda || 'USD',
+            tipoCambio: data.tipoCambio || 1,
+            tarifaUYU: data.tarifaUYU || '',
+            facturaGenerada:
+              data.facturaGenerada !== undefined
+                ? data.facturaGenerada
+                : headers.indexOf('facturaGenerada') > -1
+                  ? prev[headers.indexOf('facturaGenerada')]
+                  : false,
+            facturaSolicitada:
+              data.facturaSolicitada !== undefined
+                ? data.facturaSolicitada
+                : headers.indexOf('facturaSolicitada') > -1
+                  ? prev[headers.indexOf('facturaSolicitada')]
+                  : false,
+            facturaFechaSolicitud:
+              data.facturaFechaSolicitud ||
+              (headers.indexOf('facturaFechaSolicitud') > -1
+                ? prev[headers.indexOf('facturaFechaSolicitud')]
+                : '') ||
+              '',
+            facturaCobrada:
+              data.facturaCobrada !== undefined
+                ? data.facturaCobrada
+                : headers.indexOf('facturaCobrada') > -1
+                  ? prev[headers.indexOf('facturaCobrada')]
+                  : false,
+            facturaFechaCobro:
+              data.facturaFechaCobro ||
+              (headers.indexOf('facturaFechaCobro') > -1
+                ? prev[headers.indexOf('facturaFechaCobro')]
+                : '') ||
+              '',
+          };
           const newRow = tripRowFromPayload(merged, headers);
           sheet.getRange(rowNum, 1, 1, newRow.length).setValues([newRow]);
           break;
@@ -258,12 +305,12 @@ function doPost(e) {
           'descripcion',
           'monto',
           'moneda',
-          'currency',
           'tipoCambio',
           'montoUSD',
-          'scheduledCostId',
           'comprobante',
           'registradoPor',
+          'isScheduled',
+          'scheduleId',
         ]);
       }
       ensureCostSheetHeaders(sheet);
@@ -482,14 +529,14 @@ function tripRowFromPayload(data, headers) {
     if (h === 'facturaUrl') return data.facturaUrl || '';
     if (h === 'remitoUrl') return data.remitoUrl || '';
     if (h === 'moneda') return data.moneda || 'USD';
-    if (h === 'tipoCambio') return data.tipoCambio != null ? data.tipoCambio : '';
     if (h === 'tarifaUYU') return data.tarifaUYU != null ? data.tarifaUYU : '';
     if (h === 'asignadoA') return data.asignadoA || '';
-    if (h === 'facturaGenerada') return boolOrBlank(data.facturaGenerada);
-    if (h === 'facturaSolicitada') return boolOrBlank(data.facturaSolicitada);
+    if (h === 'facturaGenerada') return data.facturaGenerada ? 1 : 0;
+    if (h === 'facturaSolicitada') return data.facturaSolicitada ? 1 : 0;
     if (h === 'facturaFechaSolicitud') return data.facturaFechaSolicitud || '';
-    if (h === 'facturaCobrada') return boolOrBlank(data.facturaCobrada);
+    if (h === 'facturaCobrada') return data.facturaCobrada ? 1 : 0;
     if (h === 'facturaFechaCobro') return data.facturaFechaCobro || '';
+    if (h === 'tipoCambio') return data.tipoCambio != null && data.tipoCambio !== '' ? data.tipoCambio : 1;
     // Preserva columnas extra/legadas sin romper el orden actual de la hoja.
     return data[h] != null ? data[h] : '';
   });
@@ -563,11 +610,13 @@ function costCellValue(header, data) {
   if (header === 'monto') return data.monto != null ? data.monto : 0;
   if (header === 'moneda') return data.moneda || data.currency || 'USD';
   if (header === 'currency') return data.currency || data.moneda || 'USD';
-  if (header === 'tipoCambio') return data.tipoCambio != null ? data.tipoCambio : '';
-  if (header === 'montoUSD') return data.montoUSD != null ? data.montoUSD : '';
+  if (header === 'tipoCambio') return data.tipoCambio != null && data.tipoCambio !== '' ? data.tipoCambio : 1;
+  if (header === 'montoUSD') {
+    return data.montoUSD != null && data.montoUSD !== '' ? data.montoUSD : data.monto != null ? data.monto : 0;
+  }
   if (header === 'scheduledCostId') return data.scheduledCostId || data.scheduleId || '';
   if (header === 'scheduleId') return data.scheduleId || '';
-  if (header === 'isScheduled') return boolOrBlank(data.isScheduled);
+  if (header === 'isScheduled') return data.isScheduled ? 1 : 0;
   if (header === 'scheduledDay') return data.scheduledDay != null ? data.scheduledDay : '';
   if (header === 'scheduledMonths') {
     if (data.scheduledMonths != null && typeof data.scheduledMonths === 'object') {

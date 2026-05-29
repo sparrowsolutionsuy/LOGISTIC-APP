@@ -8,6 +8,7 @@ import {
   previousCalendarMonth,
   tripRealizedRevenueMonthKey,
   tripRevenueRealized,
+  tripRevenueUSD,
 } from './analytics';
 
 function isFinished(t: Trip) {
@@ -173,7 +174,7 @@ export async function generateMonthlyReport(
   let bestPct = -Infinity;
   let worstPct = Infinity;
   enriched.forEach((row) => {
-    if (row.revenueRealized <= 0) return;
+    if (tripRevenueUSD(row) <= 0) return;
     const p = row.marginPct;
     if (p > bestPct) {
       bestPct = p;

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import type {
   Cost,
   CostCategory,
@@ -8,17 +8,13 @@ import type {
   DisplayCurrency,
   User,
 } from '../../types';
-import { costUsd } from '../../utils/analytics';
+import { calcCombustiblePorKm, costUsd } from '../../utils/analytics';
 import { useSortableTable } from '../../hooks/useSortableTable';
 import { Modal } from '../ui/Modal';
 import SortableHeader from '../ui/SortableHeader';
 import {
   Fuel,
   Wrench,
-  Receipt,
-  Coffee,
-  CircleDot,
-  Shield,
   MoreHorizontal,
   Plus,
   Pencil,
@@ -28,29 +24,33 @@ import {
   RefreshCw,
   Calendar,
   Truck,
+  Users,
+  Home,
+  CreditCard,
+  Settings,
+  Droplets,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 const CATEGORIES: CostCategory[] = [
   'Combustible',
+  'Sueldos',
+  'Alquiler',
+  'Cuota Banco',
+  'Service',
   'Mantenimiento',
-  'Peajes',
-  'Viáticos',
-  'Neumáticos',
-  'Seguros',
+  'AD Blue',
   'Otros',
 ];
 
-const CATEGORY_UI: Record<
-  CostCategory,
-  { Icon: LucideIcon; iconClass: string; label: string }
-> = {
+const CATEGORY_UI: Record<CostCategory, { Icon: LucideIcon; iconClass: string; label: string }> = {
   Combustible: { Icon: Fuel, iconClass: 'text-orange-500 bg-orange-500/15', label: 'Combustible' },
-  Mantenimiento: { Icon: Wrench, iconClass: 'text-blue-500 bg-blue-500/15', label: 'Mantenimiento' },
-  Peajes: { Icon: Receipt, iconClass: 'text-amber-500 bg-amber-500/15', label: 'Peajes' },
-  Viáticos: { Icon: Coffee, iconClass: 'text-emerald-500 bg-emerald-500/15', label: 'Viáticos' },
-  Neumáticos: { Icon: CircleDot, iconClass: 'text-violet-500 bg-violet-500/15', label: 'Neumáticos' },
-  Seguros: { Icon: Shield, iconClass: 'text-cyan-500 bg-cyan-500/15', label: 'Seguros' },
+  Sueldos: { Icon: Users, iconClass: 'text-blue-500 bg-blue-500/15', label: 'Sueldos' },
+  Alquiler: { Icon: Home, iconClass: 'text-purple-500 bg-purple-500/15', label: 'Alquiler' },
+  'Cuota Banco': { Icon: CreditCard, iconClass: 'text-red-500 bg-red-500/15', label: 'Cuota Banco' },
+  Service: { Icon: Wrench, iconClass: 'text-cyan-500 bg-cyan-500/15', label: 'Service' },
+  Mantenimiento: { Icon: Settings, iconClass: 'text-blue-500 bg-blue-500/15', label: 'Mantenimiento' },
+  'AD Blue': { Icon: Droplets, iconClass: 'text-sky-500 bg-sky-500/15', label: 'AD Blue' },
   Otros: { Icon: MoreHorizontal, iconClass: 'text-slate-400 bg-slate-500/15', label: 'Otros' },
 };
 
@@ -186,8 +186,14 @@ export const CostManager: React.FC<CostManagerProps> = ({
   const [descripcion, setDescripcion] = useState('');
   const [monto, setMonto] = useState('');
   const [costMoneda, setCostMoneda] = useState<'USD' | 'UYU'>('USD');
-  const [costTipoCambio, setCostTipoCambio] = useState<number>(currentRate);
+  const [costTipoCambio, setCostTipoCambio] = useState<number>(40);
   const [tripId, setTripId] = useState<string>('');
+
+  useEffect(() => {
+    if (categoria === 'Combustible') {
+      setTripId('');
+    }
+  }, [categoria]);
 
   const [scNombre, setScNombre] = useState('');
   const [scDescripcion, setScDescripcion] = useState('');
@@ -233,10 +239,6 @@ export const CostManager: React.FC<CostManagerProps> = ({
   const totalFiltered = useMemo(
     () => sortedCosts.reduce((s, c) => s + (c.montoUSD ?? costUsd(c)), 0),
     [sortedCosts]
-  );
-  const avgFiltered = useMemo(
-    () => (sortedCosts.length > 0 ? totalFiltered / sortedCosts.length : 0),
-    [sortedCosts.length, totalFiltered]
   );
   const activeScheduledCount = useMemo(
     () => scheduledCostDefinitions.filter((sc) => sc.active).length,
@@ -292,6 +294,15 @@ export const CostManager: React.FC<CostManagerProps> = ({
     return CATEGORY_UI[key] ?? null;
   }, [metrics.topCat]);
 
+  const fuelMetrics = useMemo(() => {
+    const costoPorKm = calcCombustiblePorKm(trips, costs);
+    const totalCombustibleUSD = costs
+      .filter((c) => c.categoria === 'Combustible')
+      .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
+    const sinCarga30 = totalCombustibleUSD * 0.3;
+    return { costoPorKm, sinCarga30 };
+  }, [trips, costs]);
+
   const openNew = () => {
     setEditingId(null);
     setFecha(new Date().toISOString().slice(0, 10));
@@ -299,7 +310,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setDescripcion('');
     setMonto('');
     setCostMoneda('USD');
-    setCostTipoCambio(currentRate);
+    setCostTipoCambio(40);
     setTripId('');
     setModalOpen(true);
   };
@@ -312,7 +323,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
     setMonto(String(c.monto));
     setCostMoneda(c.currency ?? c.moneda ?? 'USD');
     setCostTipoCambio(c.tipoCambio ?? currentRate);
-    setTripId(c.tripId ?? '');
+    setTripId(c.categoria === 'Combustible' ? '' : (c.tripId ?? ''));
     setModalOpen(true);
   };
 
@@ -337,8 +348,9 @@ export const CostManager: React.FC<CostManagerProps> = ({
 
     setSaveLoading(true);
     try {
-      const tcEffective = costMoneda === 'USD' ? currentRate : costTipoCambio;
-      const montoUSD = costMoneda === 'USD' ? amount : amount / (tcEffective > 0 ? tcEffective : 1);
+      const montoUSD =
+        costMoneda === 'USD' ? amount : amount / (costTipoCambio > 0 ? costTipoCambio : 1);
+      const effectiveTripId = categoria === 'Combustible' ? null : tripId === '' ? null : tripId;
       const base = {
         fecha,
         categoria,
@@ -346,9 +358,9 @@ export const CostManager: React.FC<CostManagerProps> = ({
         monto: amount,
         moneda: costMoneda,
         currency: costMoneda,
-        tipoCambio: tcEffective,
+        tipoCambio: costMoneda === 'UYU' ? costTipoCambio : undefined,
         montoUSD,
-        tripId: tripId === '' ? null : tripId,
+        tripId: effectiveTripId,
         registradoPor,
         isScheduled: false as const,
       };
@@ -501,7 +513,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
             <div
               style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
               className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
@@ -572,6 +584,29 @@ export const CostManager: React.FC<CostManagerProps> = ({
                   <Truck className="h-4 w-4" aria-hidden />
                 </div>
               </div>
+            </div>
+            <div
+              style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
+              className="border border-[var(--border)] bg-[var(--bg-surface)] p-5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Costo/km estimado
+                  </p>
+                  <p className="mt-1.5 text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
+                    {fuelMetrics.costoPorKm.toFixed(2)}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">USD/km (70% carga)</p>
+                </div>
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5 text-orange-500">
+                  <Fuel className="h-4 w-4" aria-hidden />
+                </div>
+              </div>
+              <p className="mt-3 border-t border-[var(--border-subtle)] pt-3 text-xs text-[var(--text-secondary)]">
+                <span className="font-medium text-[var(--text-primary)]">30% sin carga:</span>{' '}
+                {formatMonto(fuelMetrics.sinCarga30, 'USD')}
+              </p>
             </div>
             <div
               style={{ borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)' }}
@@ -690,7 +725,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
                       Programado
                     </th>
                     <SortableHeader
-                      label="Monto"
+                      label="Monto USD"
                       column="monto"
                       currentColumn={costSort.column}
                       direction={costSort.direction}
@@ -707,7 +742,7 @@ export const CostManager: React.FC<CostManagerProps> = ({
                 </thead>
                 <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                   {sortedCosts.map((c, i) => {
-                    const ui = CATEGORY_UI[c.categoria];
+                    const ui = CATEGORY_UI[c.categoria] ?? CATEGORY_UI.Otros;
                     const Icon = ui.Icon;
                     const trip = c.tripId ? trips.find((t) => t.id === c.tripId) : null;
                     return (
@@ -744,23 +779,17 @@ export const CostManager: React.FC<CostManagerProps> = ({
                             <span className="text-xs text-[var(--text-muted)]">No</span>
                           )}
                         </td>
-                        <td
-                          className="px-4 py-3 text-right"
-                          style={{
-                            color:
-                              costUsd(c) > avgFiltered ? 'var(--accent-emerald)' : 'var(--text-primary)',
-                          }}
-                        >
-                          <div>
-                            <p className="font-semibold text-[var(--text-primary)]">
-                              {formatMonto(c.monto, costRecordCurrency(c))}
-                            </p>
-                            {costRecordCurrency(c) === 'UYU' && c.montoUSD != null && (
-                              <p className="text-[10px] text-[var(--text-muted)]">
-                                ≈ USD {c.montoUSD.toFixed(0)}
-                              </p>
-                            )}
-                          </div>
+                        <td className="px-4 py-3 text-right" style={{ color: 'var(--accent-emerald)' }}>
+                          {(c.montoUSD ?? 0).toLocaleString('es-UY', {
+                            style: 'currency',
+                            currency: 'USD',
+                            maximumFractionDigits: 2,
+                          })}
+                          {c.moneda === 'UYU' && (
+                            <span className="ml-1 text-[10px] text-[var(--text-muted)]">
+                              (UYU {c.monto.toLocaleString('es-UY')})
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <button
@@ -845,41 +874,41 @@ export const CostManager: React.FC<CostManagerProps> = ({
                   onChange={(e) => setMonto(e.target.value)}
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Moneda</label>
-                <select
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
-                  value={costMoneda}
-                  onChange={(e) => setCostMoneda(e.target.value as 'USD' | 'UYU')}
-                >
-                  <option value="USD">USD — Dólar estadounidense</option>
-                  <option value="UYU">UYU — Peso uruguayo</option>
-                </select>
-              </div>
-              {costMoneda === 'UYU' && (
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
-                    Tipo de cambio al momento del gasto
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1"
-                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 font-mono text-sm text-[var(--text-primary)] outline-none"
-                    value={costTipoCambio}
-                    onChange={(e) => setCostTipoCambio(Number(e.target.value))}
-                  />
-                  <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-                    Equivalente: USD {(Number(monto) / costTipoCambio || 0).toFixed(2)}
-                  </p>
+                  <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">Moneda</label>
+                  <select
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                    value={costMoneda}
+                    onChange={(e) => setCostMoneda(e.target.value as 'USD' | 'UYU')}
+                  >
+                    <option value="USD">USD</option>
+                    <option value="UYU">UYU</option>
+                  </select>
                 </div>
-              )}
+                {costMoneda === 'UYU' && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
+                      Tipo de cambio
+                    </label>
+                    <input
+                      type="number"
+                      value={costTipoCambio}
+                      onChange={(e) => setCostTipoCambio(Number(e.target.value))}
+                      min={1}
+                      step="0.1"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                    />
+                  </div>
+                )}
+              </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-[var(--text-secondary)]">
                   Vincular a viaje (opcional)
                 </label>
                 <select
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  disabled={categoria === 'Combustible'}
+                  className={`w-full rounded-lg border border-[var(--border)] bg-[var(--bg-base)] p-2 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)] ${categoria === 'Combustible' ? 'cursor-not-allowed opacity-50' : ''}`}
                   value={tripId}
                   onChange={(e) => setTripId(e.target.value)}
                 >
@@ -890,6 +919,11 @@ export const CostManager: React.FC<CostManagerProps> = ({
                     </option>
                   ))}
                 </select>
+                {categoria === 'Combustible' ? (
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    El combustible siempre se registra como costo general
+                  </p>
+                ) : null}
               </div>
               <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-4">
                 <button

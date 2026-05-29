@@ -5,59 +5,46 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  AreaChart,
-  Area,
   BarChart,
   Bar,
   Legend,
 } from 'recharts';
 import type { TooltipProps } from 'recharts';
-import type {
-  Client,
-  Cost,
-  DisplayCurrency,
-  KPIData,
-  Trip,
-  TripWithMetrics,
-  User,
-} from '../../types';
+import type { Client, Cost, DisplayCurrency, KPIData, Trip, User } from '../../types';
 import {
   buildKPIData,
   buildMonthlyStats,
-  enrichTrips,
-  formatMonthLongEs,
-  tripRevenueUsd,
+  getAvailableMonths,
+  monthLabel,
+  tripRevenueUSD,
 } from '../../utils/analytics';
-import { usePeriodFilter } from '../../hooks/usePeriodFilter';
-import { PeriodSelector } from '../ui/PeriodSelector';
+import { generateLogisticsInsights } from '../../services/geminiService';
 import {
   DollarSign,
   Truck,
-  Percent,
   Wallet,
   Sparkles,
   CheckCircle2,
   Clock,
-  Banknote,
   FileBarChart,
+  TrendingUp,
+  Route,
+  Package,
+  Users,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
+import Badge from '../ui/Badge';
 
 export interface DashboardProps {
   trips: Trip[];
   clients: Client[];
   costs: Cost[];
   user: User;
-  /** Marcar viaje como completado (vista operativa). */
   onUpdateTrip?: (trip: Trip) => void | Promise<void>;
-  /** Opcional: evita recalcular en el hijo si el padre ya memoizó. */
-  enrichedTrips?: TripWithMetrics[];
-  /** Demo / sin Sheets: ajusta KPIs operativos a la ventana temporal del dataset. */
   offline?: boolean;
   kpiPrecomputed?: KPIData;
-  /** Admin: abre el reporte de rendimiento con IA (pestaña oculta del menú). */
   onNavigateToReport?: () => void;
-  /** Admin: abre el reporte mensual (modal). */
   onOpenMonthlyReport?: () => void;
   displayCurrency?: DisplayCurrency;
   currentRate?: number;
@@ -78,28 +65,22 @@ function formatUsd(n: number): string {
 
 type ChartTooltipProps = TooltipProps<number, string>;
 
-const ChartTooltipEs: React.FC<
-  ChartTooltipProps & { formatMoney: (n: number) => string }
-> = ({ active, payload, label, formatMoney }) => {
-  if (!active || !payload?.length) {
-    return null;
-  }
+const ChartTooltipEs: React.FC<ChartTooltipProps & { formatMoney: (n: number) => string }> = ({
+  active,
+  payload,
+  label,
+  formatMoney,
+}) => {
+  if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-md">
-      <p className="mb-1 font-semibold text-slate-800">{label}</p>
-      <ul className="space-y-0.5 text-slate-600">
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 text-sm shadow-md">
+      <p className="mb-1 font-semibold text-[var(--text-primary)]">{label}</p>
+      <ul className="space-y-0.5 text-[var(--text-secondary)]">
         {payload.map((p) => (
           <li key={String(p.dataKey)}>
-            <span className="text-slate-500">{p.name}: </span>
-            <span className="font-medium text-slate-900">
-              {typeof p.value === 'number'
-                ? String(p.dataKey) === 'Viajes' ||
-                  String(p.name ?? '')
-                    .toLowerCase()
-                    .includes('viaje')
-                  ? p.value
-                  : formatMoney(p.value)
-                : p.value}
+            <span className="text-[var(--text-muted)]">{p.name}: </span>
+            <span className="font-medium text-[var(--text-primary)]">
+              {typeof p.value === 'number' ? formatMoney(p.value) : p.value}
             </span>
           </li>
         ))}
@@ -109,17 +90,16 @@ const ChartTooltipEs: React.FC<
 };
 
 const DashboardChartSkeleton: React.FC = () => (
-  <div className="flex min-h-[200px] w-full animate-pulse flex-col gap-4 rounded-lg border border-slate-100 bg-slate-50 p-4">
+  <div className="flex min-h-[240px] w-full animate-pulse flex-col gap-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4">
     <div className="flex flex-1 items-end justify-between gap-2 pt-8">
-      {Array.from({ length: 8 }).map((_, i) => (
+      {Array.from({ length: 6 }).map((_, i) => (
         <div
           key={i}
-          className="flex-1 rounded-t bg-slate-200"
+          className="flex-1 rounded-t bg-[var(--bg-muted)]"
           style={{ height: `${30 + ((i * 17) % 55)}%` }}
         />
       ))}
     </div>
-    <div className="h-3 w-2/3 rounded bg-slate-200" />
   </div>
 );
 
@@ -129,20 +109,63 @@ const KpiCard: React.FC<{
   icon: React.ReactNode;
   bg: string;
   sub?: string;
-}> = ({ title, value, icon, bg, sub }) => (
+  valueClassName?: string;
+  titleTip?: string;
+}> = ({ title, value, icon, bg, sub, valueClassName, titleTip }) => (
   <div
     className={`${bg} rounded-lg p-4 text-white shadow-lg transition-colors duration-150 md:hover:scale-[1.01]`}
+    title={titleTip}
   >
     <div className="flex items-start justify-between gap-2">
       <div className="min-w-0 flex-1">
         <p className="mb-1 text-xs font-medium text-white/80 sm:text-sm">{title}</p>
-        <h3 className="truncate text-xl font-bold sm:text-2xl">{value}</h3>
-        {sub ? <p className="mt-1 text-[10px] font-medium leading-snug text-white/75 sm:text-xs">{sub}</p> : null}
+        <h3 className={`truncate text-xl font-bold sm:text-2xl ${valueClassName ?? ''}`}>{value}</h3>
+        {sub ? (
+          <p className="mt-1 text-[10px] font-medium leading-snug text-white/75 sm:text-xs">{sub}</p>
+        ) : null}
       </div>
       <div className="shrink-0 rounded-lg bg-white/10 p-2 backdrop-blur-sm">{icon}</div>
     </div>
   </div>
 );
+
+const OperativoKpiCard: React.FC<{
+  title: string;
+  value: string;
+  icon: React.ReactNode;
+  sub?: string;
+}> = ({ title, value, icon, sub }) => (
+  <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm">
+    <div className="flex items-start gap-3">
+      <div className="rounded-lg bg-[var(--bg-muted)] p-2 text-[var(--text-secondary)]">{icon}</div>
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-[var(--text-muted)]">{title}</p>
+        <p className="text-lg font-bold text-[var(--text-primary)]">{value}</p>
+        {sub ? <p className="mt-0.5 text-xs text-[var(--text-muted)]">{sub}</p> : null}
+      </div>
+    </div>
+  </div>
+);
+
+function CobradoCell({ trip }: { trip: Trip }) {
+  if (trip.facturaCobrada === true) {
+    return (
+      <span className="inline-flex items-center gap-1 text-emerald-600" title="Cobrado">
+        <CheckCircle2 size={18} aria-hidden />
+        <span className="sr-only">Cobrado</span>
+      </span>
+    );
+  }
+  if (trip.facturaSolicitada === true) {
+    return (
+      <span className="inline-flex items-center gap-1 text-amber-600" title="Pendiente de cobro">
+        <Clock size={18} aria-hidden />
+        <span className="sr-only">Pendiente de cobro</span>
+      </span>
+    );
+  }
+  return <span className="text-[var(--text-muted)]">—</span>;
+}
 
 export const Dashboard: React.FC<DashboardProps> = ({
   trips,
@@ -150,7 +173,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
   costs,
   user,
   onUpdateTrip,
-  enrichedTrips: enrichedTripsProp,
   offline = false,
   kpiPrecomputed,
   onNavigateToReport,
@@ -161,112 +183,96 @@ export const Dashboard: React.FC<DashboardProps> = ({
   convertAggregateToDisplay: convertAggregateToDisplayProp,
 }) => {
   const isAdmin = user.role === 'admin';
+  const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [chartsReady, setChartsReady] = useState(false);
-  const { selectedMonth, setSelectedMonth, availableMonths, isAllTime, filteredTrips, filteredCosts } =
-    usePeriodFilter(trips, costs);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insights, setInsights] = useState<string[]>([]);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
 
-  const fmtAgg = useMemo(() => {
+  const availableMonths = useMemo(() => getAvailableMonths(trips, costs), [trips, costs]);
+
+  useEffect(() => {
+    const months = getAvailableMonths(trips, costs);
+    if (months.length > 0 && !selectedMonth) {
+      setSelectedMonth(months[0]);
+    }
+  }, [trips, costs, selectedMonth]);
+
+  const fmt = useMemo(() => {
     if (formatAmountProp && convertAggregateToDisplayProp) {
       return (n: number) => formatAmountProp(convertAggregateToDisplayProp(n));
     }
     return formatUsd;
   }, [formatAmountProp, convertAggregateToDisplayProp]);
 
+  const kpi = useMemo(
+    () =>
+      kpiPrecomputed ?? buildKPIData(trips, clients, costs, selectedMonth || undefined),
+    [kpiPrecomputed, trips, clients, costs, selectedMonth]
+  );
+
+  const monthly = useMemo(() => buildMonthlyStats(trips, costs, 6), [trips, costs]);
+
+  const chartData = useMemo(
+    () =>
+      monthly.map((row) => ({
+        label: row.label,
+        totalGenerado: row.totalGenerado,
+        totalCobrado: row.totalCobrado,
+        costs: row.costs,
+      })),
+    [monthly]
+  );
+
+  const tripsInPeriod = useMemo(() => {
+    if (!selectedMonth) return trips;
+    return trips.filter((t) => t.fecha.startsWith(selectedMonth));
+  }, [trips, selectedMonth]);
+
+  const topRecent = useMemo(
+    () =>
+      [...tripsInPeriod]
+        .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id.localeCompare(a.id))
+        .slice(0, 5),
+    [tripsInPeriod]
+  );
+
+  const clientNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    clients.forEach((c) => m.set(c.id, c.nombreComercial));
+    return m;
+  }, [clients]);
+
+  const periodEmpty =
+    Boolean(selectedMonth) && tripsInPeriod.length === 0 && costs.filter((c) => c.fecha.startsWith(selectedMonth)).length === 0;
+
+  const periodLabel = selectedMonth ? monthLabel(selectedMonth) : 'Todos los períodos';
+
   useEffect(() => {
     setChartsReady(false);
     const t = window.setTimeout(() => setChartsReady(true), 380);
     return () => window.clearTimeout(t);
-  }, [trips, clients, costs, selectedMonth, isAllTime]);
+  }, [trips, costs, selectedMonth]);
 
-  const kpi = useMemo(
-    () =>
-      kpiPrecomputed ??
-      buildKPIData(trips, clients, costs, isAllTime ? 'all' : selectedMonth),
-    [kpiPrecomputed, trips, costs, clients, isAllTime, selectedMonth]
-  );
-  const monthly = useMemo(
-    () =>
-      buildMonthlyStats(
-        trips,
-        costs,
-        6,
-        isAllTime ? null : selectedMonth,
-        isAllTime
-      ),
-    [trips, costs, isAllTime, selectedMonth]
-  );
-  const enriched = useMemo(
-    () =>
-      enrichedTripsProp ??
-      enrichTrips(isAllTime ? trips : filteredTrips, clients, costs),
-    [enrichedTripsProp, isAllTime, trips, filteredTrips, clients, costs]
-  );
-
-  const periodEmpty =
-    !isAllTime && filteredTrips.length === 0 && filteredCosts.length === 0;
-  const kpiPeriodSub = isAllTime ? 'Todo el período' : formatMonthLongEs(selectedMonth);
-  const enrichedById = useMemo(() => {
-    const m = new Map<string, (typeof enriched)[0]>();
-    enriched.forEach((e) => m.set(e.id, e));
-    return m;
-  }, [enriched]);
-
-  const areaData = useMemo(
-    () =>
-      monthly.map((row) => ({
-        label: row.label,
-        ingresosRealizados: row.revenue,
-        ingresosPendientes: row.pendingRevenue,
-        Costos: row.costs,
-      })),
-    [monthly]
-  );
-
-  const barData = useMemo(
-    () =>
-      monthly.map((row) => ({
-        label: row.label,
-        Viajes: row.tripCount,
-      })),
-    [monthly]
-  );
-
-  const topRecent = useMemo(() => {
-    const pool = isAllTime ? trips : filteredTrips;
-    return [...pool]
-      .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id.localeCompare(a.id))
-      .slice(0, 5);
-  }, [trips, filteredTrips, isAllTime]);
-
-  const totalTripsDone = useMemo(
-    () =>
-      (isAllTime ? trips : filteredTrips).filter(
-        (t) => t.estado === 'Completado' || t.estado === 'Cerrado'
-      ).length,
-    [trips, filteredTrips, isAllTime]
-  );
-
-  const revenueByProduct = useMemo(() => {
-    const byProduct = new Map<string, number>();
-    (isAllTime ? trips : filteredTrips)
-      .filter((t) => t.estado === 'Completado' || t.estado === 'Cerrado')
-      .forEach((t) => {
-        const product = t.contenido?.trim() || 'Sin especificar';
-        const revenue = tripRevenueUsd(t);
-        byProduct.set(product, (byProduct.get(product) ?? 0) + revenue);
-      });
-    return Array.from(byProduct.entries())
-      .map(([product, total]) => ({ product, total }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
-  }, [trips, filteredTrips, isAllTime]);
+  const handleGenerateInsights = async () => {
+    setInsightsLoading(true);
+    setInsightsError(null);
+    try {
+      const lines = await generateLogisticsInsights(tripsInPeriod.length ? tripsInPeriod : trips, clients);
+      setInsights(lines);
+    } catch {
+      setInsightsError('No se pudieron generar los insights. Intentá de nuevo.');
+    } finally {
+      setInsightsLoading(false);
+    }
+  };
 
   const todayStr = useMemo(() => localISODate(new Date()), []);
+
   const operativoKpis = useMemo(() => {
     const mine = (t: Trip) => !t.asignadoA || t.asignadoA === user.username;
     const active = trips.filter((t) => t.estado === 'En Tránsito' && mine(t)).length;
     const pending = trips.filter((t) => t.estado === 'Pendiente' && mine(t)).length;
-
     const finished = (t: Trip) => t.estado === 'Completado' || t.estado === 'Cerrado';
 
     if (offline && trips.length > 0) {
@@ -302,99 +308,143 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const operativoActiveTrips = useMemo(
     () =>
       trips.filter(
-        (t) =>
-          t.estado === 'En Tránsito' &&
-          (!t.asignadoA || t.asignadoA === user.username)
+        (t) => t.estado === 'En Tránsito' && (!t.asignadoA || t.asignadoA === user.username)
       ),
     [trips, user.username]
   );
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-        <h1 className="text-lg font-bold text-slate-900 sm:text-xl">Panel ejecutivo</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {isAdmin ? 'Vista financiera y operativa completa.' : 'Vista operativa — tus asignaciones.'}
-        </p>
-        {isAdmin ? (
-          <div className="mt-4 flex flex-col gap-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0 flex-1">
-              <PeriodSelector
-                label="Período"
-                value={selectedMonth}
-                onChange={setSelectedMonth}
-                availableMonths={availableMonths}
-              />
-            </div>
-            <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-              <button
-                type="button"
-                onClick={() => onOpenMonthlyReport?.()}
-                disabled={trips.length === 0}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border-2 border-[var(--accent-blue)] bg-[var(--bg-surface)] px-4 py-2.5 text-sm font-semibold text-[var(--accent-blue)] shadow-sm hover:bg-[var(--accent-blue-muted)] disabled:opacity-50 sm:w-auto"
-              >
-                <FileBarChart size={18} aria-hidden />
-                Reporte mensual
-              </button>
-              {onNavigateToReport ? (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="w-full justify-center sm:w-auto"
-                  icon={<Sparkles size={14} aria-hidden />}
-                  disabled={trips.length === 0}
-                  onClick={() => onNavigateToReport()}
-                >
-                  Reporte rendimiento (IA)
-                </Button>
-              ) : null}
-            </div>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-lg font-bold text-[var(--text-primary)] sm:text-xl">Panel ejecutivo</h1>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              {isAdmin ? 'Vista financiera y operativa completa.' : 'Vista operativa — tus asignaciones.'}
+            </p>
           </div>
-        ) : null}
+          {isAdmin ? (
+            <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
+              <label className="flex flex-col gap-1 text-left sm:text-right">
+                <span className="text-xs font-medium text-[var(--text-muted)]">Período</span>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="min-w-[180px] rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 text-sm font-medium text-[var(--text-primary)] shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  disabled={availableMonths.length === 0}
+                >
+                  {availableMonths.length === 0 ? (
+                    <option value="">Todos los períodos</option>
+                  ) : (
+                    availableMonths.map((ym) => (
+                      <option key={ym} value={ym}>
+                        {monthLabel(ym)}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => onOpenMonthlyReport?.()}
+                  disabled={trips.length === 0}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border-2 border-[var(--accent-blue)] bg-[var(--bg-surface)] px-3 py-2 text-sm font-semibold text-[var(--accent-blue)] shadow-sm hover:bg-[var(--accent-blue-muted)] disabled:opacity-50"
+                >
+                  <FileBarChart size={16} aria-hidden />
+                  Reporte mensual
+                </button>
+                {onNavigateToReport ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={<Sparkles size={14} aria-hidden />}
+                    disabled={trips.length === 0}
+                    onClick={() => onNavigateToReport()}
+                  >
+                    Reporte IA
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {isAdmin ? (
         <>
           {periodEmpty ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100">
-              No hay datos para este período. Seleccioná otro mes o &quot;Todos los períodos&quot;.
+              No hay datos para {periodLabel}. Seleccioná otro mes.
             </div>
           ) : null}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+
+          {/* Fila 1: KPIs financieros (5 cards) */}
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
             <KpiCard
-              title="Ingresos MTD"
-              value={fmtAgg(kpi.totalRevenueMTD)}
-              sub={`Solo viajes cobrados · ${kpiPeriodSub}`}
-              icon={<Wallet className="h-6 w-6 text-emerald-100" />}
+              title="Total Generado"
+              value={fmt(kpi.totalGenerado)}
+              titleTip="Ingresos generados por viajes en el período"
+              icon={<Wallet className="h-6 w-6 text-blue-100" />}
+              bg="bg-blue-900"
+              sub={periodLabel}
+            />
+            <KpiCard
+              title="Cobrado"
+              value={fmt(kpi.totalCobrado)}
+              icon={<CheckCircle2 className="h-6 w-6 text-emerald-100" />}
               bg="bg-emerald-700"
+              sub={periodLabel}
             />
             <KpiCard
-              title="Ingresos pendientes"
-              value={fmtAgg(kpi.pendingRevenue)}
-              sub="Por cobrar"
-              icon={<Banknote className="h-6 w-6 text-amber-100" />}
-              bg="bg-amber-700"
+              title="Pendiente de Cobro"
+              value={fmt(kpi.totalPendienteCobro)}
+              icon={<Clock className="h-6 w-6 text-amber-100" />}
+              bg="bg-amber-600"
+              sub="Facturado sin cobrar"
             />
             <KpiCard
-              title="Costos MTD"
-              value={fmtAgg(kpi.totalCostsMTD)}
-              sub={kpiPeriodSub}
+              title="Costos"
+              value={fmt(kpi.totalCostos)}
               icon={<DollarSign className="h-6 w-6 text-slate-100" />}
               bg="bg-slate-700"
+              sub={periodLabel}
             />
             <KpiCard
-              title="Margen %"
-              value={`${kpi.marginPctMTD.toFixed(1)}%`}
-              sub={kpiPeriodSub}
-              icon={<Percent className="h-6 w-6 text-cyan-100" />}
+              title="Margen Neto"
+              value={fmt(kpi.margenNeto)}
+              sub={`${kpi.margenPct.toFixed(1)}% del generado`}
+              icon={<TrendingUp className="h-6 w-6 text-cyan-100" />}
               bg="bg-cyan-800"
+              valueClassName={kpi.margenNeto < 0 ? 'text-red-200' : undefined}
             />
-            <KpiCard
+          </div>
+
+          {/* Fila 2: KPIs operativos */}
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <OperativoKpiCard
               title="Viajes realizados"
-              value={`${totalTripsDone}`}
-              sub={kpiPeriodSub}
-              icon={<Truck className="h-6 w-6 text-blue-100" />}
-              bg="bg-blue-900"
+              value={String(kpi.viajesRealizados)}
+              icon={<Truck size={20} />}
+              sub={periodLabel}
+            />
+            <OperativoKpiCard
+              title="Km recorridos"
+              value={kpi.kmRecorridos.toLocaleString('es-UY')}
+              icon={<Route size={20} />}
+              sub={periodLabel}
+            />
+            <OperativoKpiCard
+              title="Toneladas transportadas"
+              value={kpi.toneladasTransportadas.toLocaleString('es-UY', { maximumFractionDigits: 1 })}
+              icon={<Package size={20} />}
+              sub={periodLabel}
+            />
+            <OperativoKpiCard
+              title="Top cliente"
+              value={kpi.topCliente?.name ?? '—'}
+              icon={<Users size={20} />}
+              sub={kpi.topCliente ? fmt(kpi.topCliente.revenue) : undefined}
             />
           </div>
 
@@ -405,210 +455,158 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <span className="ml-1 font-mono">(TC referencia: {currentRate.toFixed(2)} UYU/USD)</span>
               )}
             </span>
-            <span className="italic">
-              Los ingresos y costos históricos usan el TC del momento de cada transacción
-            </span>
+            <span className="italic">Gráfico: últimos 6 meses · KPIs: {periodLabel}</span>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-              <h2 className="mb-4 text-base font-semibold text-slate-800">
-                {isAllTime
-                  ? 'Ingresos vs costos (histórico completo)'
-                  : `Ingresos vs costos (ventana 6 meses · ${formatMonthLongEs(selectedMonth)})`}
-              </h2>
-              <div className="w-full overflow-x-auto overscroll-x-contain touch-pan-x">
-                <div className="min-h-[200px] h-[220px] min-w-[520px]">
-                  {!chartsReady ? (
-                    <DashboardChartSkeleton />
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={areaData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="dashIngReal" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#059669" stopOpacity={0.35} />
-                            <stop offset="95%" stopColor="#059669" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="dashIngPend" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#d97706" stopOpacity={0.28} />
-                            <stop offset="95%" stopColor="#d97706" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="dashCost" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#dc2626" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#dc2626" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#64748b" />
-                        <YAxis tick={{ fontSize: 11 }} stroke="#64748b" tickFormatter={(v) => `$${v}`} />
-                        <Tooltip content={<ChartTooltipEs formatMoney={fmtAgg} />} />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Area
-                          type="monotone"
-                          dataKey="ingresosRealizados"
-                          name="Ingresos (realizados)"
-                          stroke="#059669"
-                          fill="url(#dashIngReal)"
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="ingresosPendientes"
-                          name="Ingresos (pendientes)"
-                          stroke="#d97706"
-                          strokeDasharray="4 2"
-                          fill="url(#dashIngPend)"
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="Costos"
-                          name="Costos"
-                          stroke="#dc2626"
-                          fill="url(#dashCost)"
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-              <h2 className="mb-4 text-base font-semibold text-slate-800">Viajes por mes</h2>
-              <div className="w-full overflow-x-auto overscroll-x-contain touch-pan-x">
-                <div className="min-h-[200px] h-[220px] min-w-[520px]">
-                  {!chartsReady ? (
-                    <DashboardChartSkeleton />
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={barData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#64748b" />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 11 }} stroke="#64748b" />
-                        <Tooltip content={<ChartTooltipEs formatMoney={fmtAgg} />} />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Bar dataKey="Viajes" name="Cantidad de viajes" fill="#1d4ed8" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
+          {/* Gráfico mensual (6 meses, sin filtro) */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm sm:p-6">
+            <h2 className="mb-4 text-base font-semibold text-[var(--text-primary)]">
+              Ingresos y costos — últimos 6 meses
+            </h2>
+            <div className="w-full overflow-x-auto overscroll-x-contain touch-pan-x">
+              <div className="min-h-[240px] h-[260px] min-w-[520px]">
+                {!chartsReady ? (
+                  <DashboardChartSkeleton />
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#64748b" />
+                      <YAxis tick={{ fontSize: 11 }} stroke="#64748b" tickFormatter={(v) => `$${v}`} />
+                      <Tooltip content={<ChartTooltipEs formatMoney={fmt} />} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Bar
+                        dataKey="totalGenerado"
+                        name="Total generado"
+                        fill="#059669"
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar
+                        dataKey="totalCobrado"
+                        name="Cobrado"
+                        fill="#2563eb"
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar dataKey="costs" name="Costos" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="text-base font-semibold text-slate-800">Resumen operativo reciente</h2>
-              <p className="text-xs text-slate-500 sm:text-right">
-                Reportes: usá los botones arriba, junto al selector de período.
-              </p>
+          {/* Tabla últimos viajes + insights IA */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm sm:p-6">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text-primary)]">Últimos viajes</h2>
+                <p className="text-xs text-[var(--text-muted)]">{periodLabel} · máximo 5 registros</p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={insightsLoading || trips.length === 0}
+                icon={
+                  insightsLoading ? (
+                    <Loader2 size={14} className="animate-spin" aria-hidden />
+                  ) : (
+                    <Sparkles size={14} aria-hidden />
+                  )
+                }
+                onClick={() => void handleGenerateInsights()}
+              >
+                Generar insights IA
+              </Button>
             </div>
+
+            {insightsError ? (
+              <p className="mb-3 text-sm text-red-600">{insightsError}</p>
+            ) : null}
+            {insights.length > 0 ? (
+              <ul className="mb-4 space-y-2 rounded-lg border border-[color-mix(in_srgb,var(--accent-blue)_30%,transparent)] bg-[var(--accent-blue-muted)] p-3 text-sm text-[var(--text-primary)]">
+                {insights.map((line, i) => (
+                  <li key={i} className="flex gap-2">
+                    <Sparkles size={14} className="mt-0.5 shrink-0 text-blue-600" aria-hidden />
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
 
             {!chartsReady ? (
               <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="h-10 animate-pulse rounded bg-slate-100" />
+                  <div key={i} className="h-10 animate-pulse rounded bg-[var(--bg-muted)]" />
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
-                  <div className="border-b border-[var(--border)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
-                    Top 5 viajes recientes
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[520px] text-sm">
-                      <thead>
-                        <tr
-                          className="border-b border-[var(--border)]"
-                          style={{ backgroundColor: 'var(--bg-elevated)' }}
-                        >
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            Viaje
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            Fecha
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            Estado
-                          </th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            Margen
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-                        {topRecent.map((t, i) => {
-                          const m = enrichedById.get(t.id);
-                          return (
-                            <tr
-                              key={t.id}
-                              style={{
-                                backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
-                              }}
-                              className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
-                            >
-                              <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{t.id}</td>
-                              <td className="px-4 py-3 text-[var(--text-primary)]">{t.fecha}</td>
-                              <td className="px-4 py-3 text-[var(--text-primary)]">{t.estado}</td>
-                              <td
-                                className="px-4 py-3 text-right font-medium text-[var(--text-primary)]"
-                                title={t.facturaCobrada ? undefined : 'No cobrado aún'}
-                              >
-                                {t.facturaCobrada === true && m ? fmtAgg(m.netMargin) : '—'}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
-                  <div className="border-b border-[var(--border)] px-4 py-3 text-sm font-semibold text-[var(--text-primary)]">
-                    Ingresos por producto (top 5)
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[420px] text-sm">
-                      <thead>
-                        <tr
-                          className="border-b border-[var(--border)]"
-                          style={{ backgroundColor: 'var(--bg-elevated)' }}
-                        >
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            Producto
-                          </th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            Ingresos
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-                        {revenueByProduct.map((row, i) => (
-                          <tr
-                            key={row.product}
-                            style={{
-                              backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
-                            }}
-                            className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
-                          >
-                            <td className="px-4 py-3 text-[var(--text-primary)]">{row.product}</td>
-                            <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
-                              {fmtAgg(row.total)}
-                            </td>
-                          </tr>
-                        ))}
-                        {revenueByProduct.length === 0 ? (
-                          <tr>
-                            <td colSpan={2} className="px-4 py-6 text-center text-[var(--text-muted)]">
-                              Sin viajes realizados para calcular ingresos por producto.
-                            </td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+              <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+                <table className="w-full min-w-[720px] text-sm">
+                  <thead>
+                    <tr
+                      className="border-b border-[var(--border)]"
+                      style={{ backgroundColor: 'var(--bg-elevated)' }}
+                    >
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        ID
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Fecha
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Cliente
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Ruta
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Estado
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Ingreso (USD)
+                      </th>
+                      <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                        Cobrado
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                    {topRecent.map((t, i) => (
+                      <tr
+                        key={t.id}
+                        style={{
+                          backgroundColor: i % 2 === 0 ? 'var(--bg-table-row)' : 'var(--bg-table-alt)',
+                        }}
+                        className="hover:bg-[var(--bg-table-hover)] transition-colors duration-100"
+                      >
+                        <td className="px-4 py-3 font-mono text-xs text-[var(--text-muted)]">{t.id}</td>
+                        <td className="px-4 py-3 text-[var(--text-primary)]">{t.fecha}</td>
+                        <td className="px-4 py-3 text-[var(--text-primary)]">
+                          {clientNameById.get(t.clientId) ?? 'Desconocido'}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--text-primary)]">
+                          {t.origen} → {t.destino}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge status={t.estado} />
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
+                          {fmt(tripRevenueUSD(t))}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <CobradoCell trip={t} />
+                        </td>
+                      </tr>
+                    ))}
+                    {topRecent.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-[var(--text-muted)]">
+                          No hay viajes en este período.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
@@ -637,10 +635,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
             />
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-            <h2 className="mb-4 text-base font-semibold text-slate-800">Viajes en curso asignados</h2>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 shadow-sm sm:p-6">
+            <h2 className="mb-4 text-base font-semibold text-[var(--text-primary)]">Viajes en curso asignados</h2>
             {operativoActiveTrips.length === 0 ? (
-              <p className="text-sm text-slate-500">No tenés viajes en tránsito asignados.</p>
+              <p className="text-sm text-[var(--text-muted)]">No tenés viajes en tránsito asignados.</p>
             ) : (
               <ul className="space-y-3">
                 {operativoActiveTrips.map((t) => {
@@ -648,16 +646,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   return (
                     <li
                       key={t.id}
-                      className="flex flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"
+                      className="flex flex-col gap-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-4 sm:flex-row sm:items-center sm:justify-between"
                     >
                       <div>
-                        <p className="font-mono text-xs text-slate-500">{t.id}</p>
-                        <p className="font-medium text-slate-900">{client?.nombreComercial ?? 'Cliente'}</p>
-                        <p className="text-sm text-slate-600">
+                        <p className="font-mono text-xs text-[var(--text-muted)]">{t.id}</p>
+                        <p className="font-medium text-[var(--text-primary)]">{client?.nombreComercial ?? 'Cliente'}</p>
+                        <p className="text-sm text-[var(--text-secondary)]">
                           {t.origen} → {t.destino} · {t.estado}
                         </p>
                       </div>
-                      {onUpdateTrip && (
+                      {onUpdateTrip ? (
                         <button
                           type="button"
                           onClick={() => void onUpdateTrip({ ...t, estado: 'Completado' })}
@@ -665,7 +663,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         >
                           Marcar como completado
                         </button>
-                      )}
+                      ) : null}
                     </li>
                   );
                 })}

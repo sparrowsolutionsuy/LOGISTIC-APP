@@ -8,6 +8,8 @@ export interface PeriodSelectorProps {
   label?: string;
   /** Si es false, no se muestra la opción "Todos los períodos" (p. ej. reporte mensual). */
   includeAllOption?: boolean;
+  /** Si es true, siempre se renderiza un menú desplegable (en vez de pills en desktop). */
+  forceDropdown?: boolean;
 }
 
 function optionLabel(ym: string): string {
@@ -21,6 +23,7 @@ export const PeriodSelector: React.FC<PeriodSelectorProps> = ({
   availableMonths,
   label = 'Período',
   includeAllOption = true,
+  forceDropdown = false,
 }) => {
   const options: { value: string; label: string }[] = [
     ...(includeAllOption ? [{ value: 'all', label: 'Todos los períodos' }] : []),
@@ -28,6 +31,26 @@ export const PeriodSelector: React.FC<PeriodSelectorProps> = ({
   ];
 
   const usePills = availableMonths.length <= 6;
+
+  if (forceDropdown) {
+    return (
+      <div className="space-y-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{label}</p>
+        <select
+          className="w-full max-w-xs rounded-lg border border-[var(--border)] bg-[var(--bg-base)] px-3 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)] focus:ring-1 focus:ring-[var(--accent-blue)]"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          aria-label={label}
+        >
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ActiveTab, AIInsight, Client, Cost, ScheduledCostDefinition, Trip, User } from './types';
 import { Dashboard } from './components/modules/Dashboard';
 import { StrategicMap } from './components/modules/StrategicMap';
@@ -19,6 +19,7 @@ import {
   deleteScheduledCostDefinition,
   deleteTripFromSheet,
   fetchLogisticsData,
+  fetchScheduledCostDefinitions,
   lastLogisticsFetchWasMock,
   saveClientToSheet,
   saveCostToSheet,
@@ -33,7 +34,6 @@ import { generateLogisticsInsights } from './services/geminiService';
 import { useTheme } from './hooks/useTheme';
 import { useToast } from './hooks/useToast';
 import { useExchangeRate } from './hooks/useExchangeRate';
-import { checkAndExecuteScheduledCosts } from './utils/scheduledCosts';
 import { EXCHANGE_RATE_STORAGE_KEY } from './constants';
 import { sanitizeFileName } from './utils/formatters';
 import { collectAvailableMonthKeys } from './utils/analytics';
@@ -92,7 +92,6 @@ const App: React.FC = () => {
   const [offline, setOffline] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [insights, setInsights] = useState<AIInsight[]>([]);
-  const scheduledExecutionKeysRef = useRef(new Set<string>());
 
   const availableMonths = useMemo(
     () => collectAvailableMonthKeys(trips, costs),
@@ -108,6 +107,7 @@ const App: React.FC = () => {
     convertToDisplay,
     convertAggregateToDisplay,
     formatAmount,
+    formatAmountPrecise,
   } = useExchangeRate();
 
   useEffect(() => {
@@ -118,37 +118,24 @@ const App: React.FC = () => {
     setHydrated(true);
   }, []);
 
-  const loadData = useCallback(
-    async (currentUser: User | null) => {
-      try {
-        const data = await fetchLogisticsData();
-        let nextCosts = [...data.costs];
-        if (currentUser?.role === 'admin') {
-          const generated = await checkAndExecuteScheduledCosts(
-            data.scheduledCostDefinitions,
-            [...data.costs],
-            scheduledExecutionKeysRef.current
-          );
-          if (generated.length > 0) {
-            showToast(
-              `Se registraron ${generated.length} costo${generated.length > 1 ? 's' : ''} programado${generated.length > 1 ? 's' : ''} del mes.`,
-              'info'
-            );
-          }
-          nextCosts = [...generated, ...nextCosts];
-        }
-        setClients(data.clients);
-        setTrips(data.trips);
-        setCosts(nextCosts);
-        setScheduledCostDefinitions(data.scheduledCostDefinitions);
-        setOffline(lastLogisticsFetchWasMock());
-      } catch (error) {
-        console.error('[App] loadData error:', error);
-        setOffline(true);
+  const loadData = useCallback(async (currentUser: User | null) => {
+    try {
+      const data = await fetchLogisticsData();
+      setClients(data.clients);
+      setTrips(data.trips);
+      setCosts(data.costs);
+      setOffline(lastLogisticsFetchWasMock());
+      if (currentUser?.role === 'admin') {
+        const defs = await fetchScheduledCostDefinitions();
+        setScheduledCostDefinitions(defs);
+      } else {
+        setScheduledCostDefinitions([]);
       }
-    },
-    [showToast]
-  );
+    } catch (error) {
+      console.error('[App] loadData error:', error);
+      setOffline(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (!user || loading) {
@@ -222,7 +209,6 @@ const App: React.FC = () => {
     if (savedExchange) {
       localStorage.setItem(EXCHANGE_RATE_STORAGE_KEY, savedExchange);
     }
-    scheduledExecutionKeysRef.current.clear();
     setUser(null);
     setActiveTab('dashboard');
     setTrips([]);
@@ -563,6 +549,7 @@ const App: React.FC = () => {
             clients={clients}
             costs={costs}
             formatAmount={formatAmount}
+            formatAmountPrecise={formatAmountPrecise}
             convertAggregateToDisplay={convertAggregateToDisplay}
           />
         </AdminGuard>

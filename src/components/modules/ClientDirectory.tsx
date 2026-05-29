@@ -1,15 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import type { Client, Trip } from '../../types';
 import { Modal } from '../ui/Modal';
+import { tripRevenueUSD } from '../../utils/analytics';
 import { Search, MapPin, Phone, Mail, Hash, Truck, ArrowRight, Receipt } from 'lucide-react';
 
 interface ClientDirectoryProps {
   clients: Client[];
   trips: Trip[];
-}
-
-function tripRevenue(t: Trip): number {
-  return t.tarifa * (t.pesoKg / 1000);
 }
 
 export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips }) => {
@@ -22,7 +19,7 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
     trips.forEach((t) => {
       const cur = m.get(t.clientId) ?? { count: 0, revenue: 0 };
       cur.count += 1;
-      cur.revenue += tripRevenue(t);
+      cur.revenue += tripRevenueUSD(t);
       m.set(t.clientId, cur);
     });
     return m;
@@ -50,7 +47,7 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
   );
 
   const detailRevenue = useMemo(
-    () => clientTripsDetail.reduce((s, t) => s + tripRevenue(t), 0),
+    () => clientTripsDetail.reduce((s, t) => s + tripRevenueUSD(t), 0),
     [clientTripsDetail]
   );
   const detailKm = useMemo(
@@ -61,16 +58,16 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Directorio de clientes</h1>
-        <p className="text-sm text-slate-500">Buscá por nombre, departamento o localidad.</p>
+        <h1 className="text-2xl font-bold text-[var(--text-primary)]">Directorio de clientes</h1>
+        <p className="text-sm text-[var(--text-muted)]">Buscá por nombre, departamento o localidad.</p>
       </div>
 
       <div className="relative">
-        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+        <Search className="absolute left-3 top-2.5 h-4 w-4 text-[var(--text-muted)]" />
         <input
           type="text"
           placeholder="Nombre, departamento, localidad…"
-          className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-4 text-sm shadow-sm outline-none focus:border-blue-500"
+          className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] py-2.5 pl-10 pr-4 text-sm shadow-sm outline-none focus:border-blue-500"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
@@ -84,22 +81,22 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
               key={client.id}
               type="button"
               onClick={() => setDetailClient(client)}
-              className="rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md"
+              className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-5 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md"
             >
-              <h3 className="font-semibold text-slate-900">{client.nombreComercial}</h3>
+              <h3 className="font-semibold text-[var(--text-primary)]">{client.nombreComercial}</h3>
               {client.tieneFacturacionDiferente && (
                 <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-[var(--accent-amber)]">
                   <Receipt size={9} />
                   Facturación diferente: {client.facturacion?.razonSocial ?? 'Configurada'}
                 </span>
               )}
-              <p className="mt-2 flex items-center text-xs text-slate-500">
+              <p className="mt-2 flex items-center text-xs text-[var(--text-muted)]">
                 <MapPin className="mr-1 h-3 w-3 shrink-0" />
                 {client.localidad}, {client.departamento}
               </p>
-              <div className="mt-4 flex justify-between border-t border-slate-100 pt-3 text-xs">
-                <span className="text-slate-500">
-                  Viajes: <strong className="text-slate-800">{st.count}</strong>
+              <div className="mt-4 flex justify-between border-t border-[var(--border-subtle)] pt-3 text-xs">
+                <span className="text-[var(--text-muted)]">
+                  Viajes: <strong className="text-[var(--text-primary)]">{st.count}</strong>
                 </span>
                 <span className="font-medium text-emerald-700">
                   {st.revenue.toLocaleString('es-UY', { style: 'currency', currency: 'USD' })}
@@ -118,22 +115,22 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
               <button
                 type="button"
                 onClick={() => setDetailClient(client)}
-                className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm"
+                className="flex w-full items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 text-left shadow-sm"
               >
                 <div>
-                  <p className="font-semibold text-slate-900">{client.nombreComercial}</p>
+                  <p className="font-semibold text-[var(--text-primary)]">{client.nombreComercial}</p>
                   {client.tieneFacturacionDiferente && (
                     <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-[var(--accent-amber)]">
                       <Receipt size={9} />
                       Facturación diferente
                     </span>
                   )}
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
                     {client.localidad}, {client.departamento}
                   </p>
                 </div>
                 <div className="text-right text-xs">
-                  <p className="text-slate-500">{st.count} viajes</p>
+                  <p className="text-[var(--text-muted)]">{st.count} viajes</p>
                   <p className="font-medium text-emerald-700">
                     {st.revenue.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}
                   </p>
@@ -145,7 +142,7 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
       </ul>
 
       {filteredClients.length === 0 && (
-        <p className="py-12 text-center text-sm text-slate-500">No hay clientes que coincidan con la búsqueda.</p>
+        <p className="py-12 text-center text-sm text-[var(--text-muted)]">No hay clientes que coincidan con la búsqueda.</p>
       )}
 
       <Modal
@@ -155,49 +152,49 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
         size="lg"
       >
         {detailClient && (
-          <div className="space-y-4 text-sm text-slate-600">
+          <div className="space-y-4 text-sm text-[var(--text-secondary)]">
             <div className="grid gap-3 sm:grid-cols-2">
               <p className="flex items-center gap-2">
-                <Hash className="h-4 w-4 text-slate-400" />
-                <span className="font-mono text-slate-800">{detailClient.rut ?? '—'}</span>
+                <Hash className="h-4 w-4 text-[var(--text-muted)]" />
+                <span className="font-mono text-[var(--text-primary)]">{detailClient.rut ?? '—'}</span>
               </p>
               <p className="flex items-center gap-2">
-                <Mail className="h-4 w-4 text-slate-400" />
+                <Mail className="h-4 w-4 text-[var(--text-muted)]" />
                 {detailClient.email ?? '—'}
               </p>
               <p className="flex items-center gap-2">
-                <Phone className="h-4 w-4 text-slate-400" />
+                <Phone className="h-4 w-4 text-[var(--text-muted)]" />
                 {detailClient.telefono ?? '—'}
               </p>
               <p className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-slate-400" />
+                <MapPin className="h-4 w-4 text-[var(--text-muted)]" />
                 {detailClient.localidad}, {detailClient.departamento}
               </p>
               <p className="sm:col-span-2">
-                <span className="text-slate-500">Coordenadas:</span>{' '}
-                <span className="font-mono text-slate-800">
+                <span className="text-[var(--text-muted)]">Coordenadas:</span>{' '}
+                <span className="font-mono text-[var(--text-primary)]">
                   {detailClient.latitud}, {detailClient.longitud}
                 </span>
               </p>
             </div>
-            <div className="flex flex-wrap gap-4 rounded-lg bg-slate-50 p-4">
+            <div className="flex flex-wrap gap-4 rounded-lg bg-[var(--bg-elevated)] p-4">
               <div>
-                <p className="text-xs uppercase text-slate-500">Viajes</p>
-                <p className="text-lg font-bold text-slate-900">{clientTripsDetail.length}</p>
+                <p className="text-xs uppercase text-[var(--text-muted)]">Viajes</p>
+                <p className="text-lg font-bold text-[var(--text-primary)]">{clientTripsDetail.length}</p>
               </div>
               <div>
-                <p className="text-xs uppercase text-slate-500">Ingresos totales</p>
+                <p className="text-xs uppercase text-[var(--text-muted)]">Ingresos totales</p>
                 <p className="text-lg font-bold text-emerald-700">
                   {detailRevenue.toLocaleString('es-UY', { style: 'currency', currency: 'USD' })}
                 </p>
               </div>
               <div>
-                <p className="text-xs uppercase text-slate-500">KM acumulados</p>
-                <p className="text-lg font-bold text-slate-900">{detailKm.toLocaleString('es-UY')}</p>
+                <p className="text-xs uppercase text-[var(--text-muted)]">KM acumulados</p>
+                <p className="text-lg font-bold text-[var(--text-primary)]">{detailKm.toLocaleString('es-UY')}</p>
               </div>
             </div>
             <div>
-              <h4 className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+              <h4 className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">
                 <Truck className="h-4 w-4" />
                 Historial de viajes
               </h4>
@@ -235,7 +232,7 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
                           <span className="text-[var(--text-secondary)]">{trip.contenido}</span>
                         </td>
                         <td className="px-4 py-3 text-right font-medium text-[var(--text-primary)]">
-                          {tripRevenue(trip).toLocaleString('es-UY', {
+                          {tripRevenueUSD(trip).toLocaleString('es-UY', {
                             style: 'currency',
                             currency: 'USD',
                             maximumFractionDigits: 0,
@@ -246,7 +243,7 @@ export const ClientDirectory: React.FC<ClientDirectoryProps> = ({ clients, trips
                   </tbody>
                 </table>
                 {clientTripsDetail.length === 0 && (
-                  <p className="p-4 text-center text-slate-400">Sin viajes registrados.</p>
+                  <p className="p-4 text-center text-[var(--text-muted)]">Sin viajes registrados.</p>
                 )}
               </div>
             </div>

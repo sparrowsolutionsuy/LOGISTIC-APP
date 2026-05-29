@@ -1,60 +1,106 @@
 import type { Client, Cost, KPIData, MonthlyStats, Trip, TripWithMetrics } from '../types';
-import { DEFAULT_EXCHANGE_RATE } from '../constants';
 
-/** Monto del costo en USD (histórico). */
-export function costUsd(c: Cost): number {
-  if (c.montoUSD != null && Number.isFinite(c.montoUSD)) {
-    return c.montoUSD;
-  }
-  const mon = c.currency === 'UYU' || c.moneda === 'UYU' ? 'UYU' : 'USD';
-  const tcRaw = Number(c.tipoCambio) || DEFAULT_EXCHANGE_RATE;
-  const tc = mon === 'UYU' ? Math.max(tcRaw, 1) : tcRaw;
-  return mon === 'UYU' ? c.monto / tc : c.monto;
-}
+// ─── Revenue ────────────────────────────────────────────────────────────────
 
-/** Ingreso bruto del viaje en USD (tarifa × tonelada, con TC histórico si la tarifa está en UYU). */
-export function tripRevenueUsd(trip: Trip): number {
-  if (trip.moneda === 'UYU') {
-    const tc = trip.tipoCambio && trip.tipoCambio > 0 ? trip.tipoCambio : null;
-    if (!tc) {
-      console.warn(`[Analytics] Viaje ${trip.id} tiene moneda UYU pero sin tipoCambio`);
-      return 0;
-    }
-    return (trip.tarifa * (trip.pesoKg / 1000)) / tc;
-  }
+/** Ingreso en USD generado por un viaje (tarifa ya normalizada a USD) */
+export function tripRevenueUSD(trip: Trip): number {
   return trip.tarifa * (trip.pesoKg / 1000);
 }
 
-/** Ingreso contabilizado en KPIs: solo si el viaje está marcado como cobrado. */
+/** @deprecated Usar tripRevenueUSD */
+export const tripRevenueUsd = tripRevenueUSD;
+
+/** Determina si un viaje ya fue efectivamente cobrado */
+export function isCobrado(trip: Trip): boolean {
+  return trip.facturaCobrada === true;
+}
+
+/** Determina si un viaje está facturado pero pendiente de cobro */
+export function isPendienteCobro(trip: Trip): boolean {
+  return trip.facturaSolicitada === true && !isCobrado(trip);
+}
+
+/** Ingreso contabilizado solo si el viaje está cobrado. */
 export function tripRevenueRealized(trip: Trip): number {
-  return trip.facturaCobrada === true ? tripRevenueUsd(trip) : 0;
+  return isCobrado(trip) ? tripRevenueUSD(trip) : 0;
 }
 
-function isFinishedTrip(t: Trip): boolean {
-  return t.estado === 'Completado' || t.estado === 'Cerrado';
-}
-
-/** Mes YYYY-MM usado para atribuir ingreso realizado (cobro) al P&L mensual. */
+/** Mes YYYY-MM para atribuir ingreso cobrado al P&L mensual. */
 export function tripRealizedRevenueMonthKey(trip: Trip): string | null {
-  if (trip.facturaCobrada !== true) {
-    return null;
-  }
+  if (!isCobrado(trip)) return null;
   const raw = trip.facturaFechaCobro?.trim();
-  if (raw && raw.length >= 7) {
-    return raw.slice(0, 7);
-  }
+  if (raw && raw.length >= 7) return raw.split('T')[0].slice(0, 7);
   return trip.fecha.slice(0, 7);
 }
 
-function sumCostsForTrip(costs: Cost[], tripId: string): number {
-  return costs.filter((c) => c.tripId === tripId).reduce((acc, c) => acc + costUsd(c), 0);
+/** Monto del costo en USD (siempre usar montoUSD normalizado). */
+export function costUsd(c: Cost): number {
+  return c.montoUSD ?? 0;
 }
+
+// ─── Combustible por KM ──────────────────────────────────────────────────────
+
+/**
+ * Calcula el costo de combustible por km recorrido en viaje con carga.
+ * Se imputa el 70% del combustible total a viajes cargados.
+ * El denominador son los km de todos los viajes registrados.
+ */
+export function calcCombustiblePorKm(trips: Trip[], costs: Cost[]): number {
+  const totalCombustibleUSD = costs
+    .filter((c) => c.categoria === 'Combustible')
+    .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
+
+  const totalKmViajes = trips.reduce((s, t) => s + (t.kmRecorridos ?? 0), 0);
+
+  if (totalKmViajes === 0 || totalCombustibleUSD === 0) return 0;
+
+  // 70% del combustible corresponde a viajes con carga
+  return (totalCombustibleUSD * 0.7) / totalKmViajes;
+}
+
+// ─── Costos por viaje ────────────────────────────────────────────────────────
+
+/** Suma de costos NO-combustible directamente asociados a un viaje (montoUSD) */
+function directCostsForTrip(costs: Cost[], tripId: string): number {
+  return costs
+    .filter((c) => c.tripId === tripId && c.categoria !== 'Combustible')
+    .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
+}
+
+/** Costo estimado de combustible para un viaje según km recorridos */
+function estimatedFuelCostForTrip(trip: Trip, combustiblePorKm: number): number {
+  return (trip.kmRecorridos ?? 0) * combustiblePorKm;
+}
+
+// ─── enrich trips ────────────────────────────────────────────────────────────
+
+export function enrichTrips(trips: Trip[], clients: Client[], costs: Cost[]): TripWithMetrics[] {
+  const combustiblePorKm = calcCombustiblePorKm(trips, costs);
+
+  return trips.map((trip) => {
+    const client = clients.find((c) => c.id === trip.clientId);
+    const revenue = tripRevenueUSD(trip);
+    const directCosts = directCostsForTrip(costs, trip.id);
+    const fuelCost = estimatedFuelCostForTrip(trip, combustiblePorKm);
+    const totalCosts = directCosts + fuelCost;
+    const netMargin = revenue - totalCosts;
+    const marginPct = revenue > 0 ? (netMargin / revenue) * 100 : 0;
+
+    return {
+      ...trip,
+      clientName: client?.nombreComercial ?? 'Desconocido',
+      totalCosts,
+      netMargin,
+      marginPct,
+    };
+  });
+}
+
+// ─── Month helpers ───────────────────────────────────────────────────────────
 
 export function monthLabel(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
-  if (!y || !m) {
-    return ym;
-  }
+  if (!y || !m) return ym;
   const d = new Date(y, m - 1, 1);
   return d.toLocaleDateString('es-UY', { month: 'short', year: 'numeric' });
 }
@@ -65,64 +111,24 @@ export function formatMonthLongEs(ym: string): string {
   return new Date(y, m - 1, 1).toLocaleDateString('es-UY', { month: 'long', year: 'numeric' });
 }
 
-/** Mes calendario anterior YYYY-MM. */
-export function previousCalendarMonth(ym: string): string {
-  const [y, m] = ym.split('-').map(Number);
-  if (!y || !m) return ym;
-  let mo = m - 1;
-  let yr = y;
-  if (mo < 1) {
-    mo = 12;
-    yr -= 1;
-  }
-  return `${yr}-${String(mo).padStart(2, '0')}`;
-}
-
-/** Último mes YYYY-MM presente en viajes o costos (determinístico, sin reloj del sistema). */
 export function latestYearMonthKey(trips: Trip[], costs: Cost[]): string | null {
   let best: string | null = null;
   const consider = (fecha: string) => {
     const k = fecha.slice(0, 7);
-    if (/^\d{4}-\d{2}$/.test(k) && (!best || k > best)) {
-      best = k;
-    }
+    if (/^\d{4}-\d{2}$/.test(k) && (!best || k > best)) best = k;
   };
   trips.forEach((t) => consider(t.fecha));
   costs.forEach((c) => consider(c.fecha));
-  trips.forEach((t) => {
-    if (t.facturaFechaCobro) {
-      consider(t.facturaFechaCobro);
-    }
-  });
   return best;
 }
 
-/** Meses YYYY-MM únicos con al menos un viaje o costo (o fecha de cobro), más reciente primero. */
-export function collectAvailableMonthKeys(trips: Trip[], costs: Cost[]): string[] {
-  const s = new Set<string>();
-  trips.forEach((t) => {
-    considerMonthKey(s, t.fecha);
-    if (t.facturaFechaCobro) considerMonthKey(s, t.facturaFechaCobro);
-  });
-  costs.forEach((c) => considerMonthKey(s, c.fecha));
-  return Array.from(s).sort((a, b) => b.localeCompare(a));
-}
-
-function considerMonthKey(set: Set<string>, fecha: string | undefined) {
-  if (!fecha || fecha.length < 7) return;
-  const k = fecha.slice(0, 7);
-  if (/^\d{4}-\d{2}$/.test(k)) set.add(k);
-}
-
-function monthsEndingAtYearMonth(endKey: string, count: number): string[] {
+function monthsEndingAt(endKey: string, count: number): string[] {
   const [ys, ms] = endKey.split('-');
   let y = Number(ys);
   let mo = Number(ms);
-  if (!Number.isFinite(y) || !Number.isFinite(mo) || mo < 1 || mo > 12) {
-    return [];
-  }
+  if (!Number.isFinite(y) || !Number.isFinite(mo)) return [];
   const out: string[] = [];
-  for (let i = 0; i < count; i += 1) {
+  for (let i = 0; i < count; i++) {
     out.unshift(`${y}-${String(mo).padStart(2, '0')}`);
     mo -= 1;
     if (mo === 0) {
@@ -133,7 +139,6 @@ function monthsEndingAtYearMonth(endKey: string, count: number): string[] {
   return out;
 }
 
-/** Meses consecutivos desde startKey hasta endKey inclusive (YYYY-MM). */
 function monthsFromToAscending(startKey: string, endKey: string): string[] {
   if (!/^\d{4}-\d{2}$/.test(startKey) || !/^\d{4}-\d{2}$/.test(endKey) || startKey > endKey) {
     return [];
@@ -154,212 +159,143 @@ function monthsFromToAscending(startKey: string, endKey: string): string[] {
   return out;
 }
 
-function earliestYearMonthKey(trips: Trip[], costs: Cost[]): string | null {
-  const keys = collectAvailableMonthKeys(trips, costs);
-  return keys.length ? keys[keys.length - 1] : null;
-}
-
-function computeMonthlyStatRow(trips: Trip[], costs: Cost[], month: string): MonthlyStats {
-  const monthTrips = trips.filter((t) => t.fecha.startsWith(month));
-  const ids = new Set(monthTrips.map((t) => t.id));
-  const revenue = trips
-    .filter((t) => tripRealizedRevenueMonthKey(t) === month)
-    .reduce((acc, t) => acc + tripRevenueRealized(t), 0);
-
-  const pendingRevenue = monthTrips
-    .filter((t) => isFinishedTrip(t) && t.facturaCobrada !== true)
-    .reduce((acc, t) => acc + tripRevenueUsd(t), 0);
-
-  const costSum = costs
-    .filter((c) => c.fecha.startsWith(month) && (c.tripId === null || ids.has(c.tripId)))
-    .reduce((acc, c) => acc + costUsd(c), 0);
-  const margin = revenue - costSum;
-  const marginPct = revenue > 0 ? (margin / revenue) * 100 : 0;
-  const tonsTransported = monthTrips.reduce((acc, t) => acc + t.pesoKg / 1000, 0);
-
-  return {
-    month,
-    label: monthLabel(month),
-    revenue,
-    pendingRevenue,
-    costs: costSum,
-    margin,
-    marginPct,
-    tripCount: monthTrips.length,
-    tonsTransported,
-  };
-}
+// ─── buildMonthlyStats ───────────────────────────────────────────────────────
 
 export function buildMonthlyStats(
   trips: Trip[],
   costs: Cost[],
   months = 6,
-  centerMonth?: string | null,
+  filterMonth?: string | null,
   allTime?: boolean
 ): MonthlyStats[] {
   if (allTime) {
-    const minK = earliestYearMonthKey(trips, costs);
-    const maxK = latestYearMonthKey(trips, costs);
-    if (!minK || !maxK) {
-      return [];
-    }
-    const keys = monthsFromToAscending(minK, maxK);
-    return keys.map((month) => computeMonthlyStatRow(trips, costs, month));
+    const available = getAvailableMonths(trips, costs);
+    if (available.length === 0) return [];
+    const keys = monthsFromToAscending(available[available.length - 1], available[0]);
+    return keys.map((month) => buildMonthlyStats(trips, costs, 1, month)[0]).filter(Boolean);
   }
 
-  const endKey =
-    centerMonth && /^\d{4}-\d{2}$/.test(centerMonth)
-      ? centerMonth
-      : latestYearMonthKey(trips, costs);
-  if (!endKey) {
-    return [];
-  }
-  const keys = monthsEndingAtYearMonth(endKey, months);
-  return keys.map((month) => computeMonthlyStatRow(trips, costs, month));
-}
+  const endKey = filterMonth ?? latestYearMonthKey(trips, costs);
+  if (!endKey) return [];
+  const keys = filterMonth ? [filterMonth] : monthsEndingAt(endKey, months);
+  const combustiblePorKm = calcCombustiblePorKm(trips, costs);
 
-const EMPTY_KPI: KPIData = {
-  totalRevenueMTD: 0,
-  totalCostsMTD: 0,
-  netMarginMTD: 0,
-  marginPctMTD: 0,
-  activeTrips: 0,
-  pendingTrips: 0,
-  avgRevenuePerTrip: 0,
-  topClient: null,
-  pendingRevenue: 0,
-  realizedRevenue: 0,
-};
+  return keys.map((month) => {
+    const monthTrips = trips.filter((t) => t.fecha.startsWith(month));
 
-export function enrichTrips(trips: Trip[], clients: Client[], costs: Cost[]): TripWithMetrics[] {
-  return trips.map((trip) => {
-    const client = clients.find((c) => c.id === trip.clientId);
-    const revenueRealized = tripRevenueRealized(trip);
-    const totalCosts = sumCostsForTrip(costs, trip.id);
-    const netMargin = revenueRealized - totalCosts;
-    const marginPct = revenueRealized > 0 ? (netMargin / revenueRealized) * 100 : 0;
+    const totalGenerado = monthTrips.reduce((s, t) => s + tripRevenueUSD(t), 0);
+    const totalCobrado = monthTrips.filter(isCobrado).reduce((s, t) => s + tripRevenueUSD(t), 0);
+    const totalPendienteCobro = monthTrips
+      .filter(isPendienteCobro)
+      .reduce((s, t) => s + tripRevenueUSD(t), 0);
+
+    const directCostsMonth = costs
+      .filter((c) => c.fecha.startsWith(month) && c.categoria !== 'Combustible')
+      .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
+    const fuelCostMonth = monthTrips.reduce(
+      (s, t) => s + estimatedFuelCostForTrip(t, combustiblePorKm),
+      0
+    );
+    const totalCosts = directCostsMonth + fuelCostMonth;
+
+    const margin = totalGenerado - totalCosts;
+    const marginPct = totalGenerado > 0 ? (margin / totalGenerado) * 100 : 0;
+    const tonsTransported = monthTrips.reduce((s, t) => s + t.pesoKg / 1000, 0);
+    const kmRecorridos = monthTrips.reduce((s, t) => s + (t.kmRecorridos ?? 0), 0);
+
     return {
-      ...trip,
-      clientName: client?.nombreComercial ?? 'Desconocido',
-      totalCosts,
-      revenueRealized,
-      netMargin,
+      month,
+      label: monthLabel(month),
+      totalGenerado,
+      totalCobrado,
+      totalPendienteCobro,
+      costs: totalCosts,
+      margin,
       marginPct,
+      tripCount: monthTrips.length,
+      tonsTransported,
+      kmRecorridos,
     };
   });
 }
 
-/**
- * KPIs para un mes dado o histórico completo.
- * @param targetMonth `YYYY-MM` para P&L de ese mes; `'all'` totales históricos; `undefined` = último mes con datos.
- */
+// ─── buildKPIData ────────────────────────────────────────────────────────────
+
 export function buildKPIData(
   trips: Trip[],
   clients: Client[],
   costs: Cost[],
-  targetMonth?: string
+  filterMonth?: string
 ): KPIData {
-  if (targetMonth === 'all') {
-    const totalRevenueMTD = trips
-      .filter((t) => t.facturaCobrada === true)
-      .reduce((acc, t) => acc + tripRevenueRealized(t), 0);
-    const totalCostsMTD = costs.reduce((acc, c) => acc + costUsd(c), 0);
-    const cobradosAll = trips.filter((t) => t.facturaCobrada === true);
-    const pendingRevenue = trips
-      .filter((t) => isFinishedTrip(t) && t.facturaCobrada !== true)
-      .reduce((acc, t) => acc + tripRevenueUsd(t), 0);
-    const netMarginMTD = totalRevenueMTD - totalCostsMTD;
-    const marginPctMTD = totalRevenueMTD > 0 ? (netMarginMTD / totalRevenueMTD) * 100 : 0;
-    const activeTrips = trips.filter((t) => t.estado === 'En Tránsito').length;
-    const pendingTrips = trips.filter((t) => t.estado === 'Pendiente').length;
-    const avgRevenuePerTrip =
-      cobradosAll.length > 0 ? totalRevenueMTD / cobradosAll.length : 0;
-    const revenueByClient = new Map<string, number>();
-    cobradosAll.forEach((t) => {
-      const rev = tripRevenueRealized(t);
-      revenueByClient.set(t.clientId, (revenueByClient.get(t.clientId) ?? 0) + rev);
-    });
-    let topClient: { name: string; revenue: number } | null = null;
-    revenueByClient.forEach((revenue, clientId) => {
-      const name = clients.find((c) => c.id === clientId)?.nombreComercial ?? clientId;
-      if (!topClient || revenue > topClient.revenue) {
-        topClient = { name, revenue };
-      }
-    });
-    return {
-      totalRevenueMTD,
-      totalCostsMTD,
-      netMarginMTD,
-      marginPctMTD,
-      activeTrips,
-      pendingTrips,
-      avgRevenuePerTrip,
-      topClient,
-      pendingRevenue,
-      realizedRevenue: totalRevenueMTD,
-    };
-  }
+  const monthFilter =
+    filterMonth && filterMonth !== 'all' && /^\d{4}-\d{2}$/.test(filterMonth)
+      ? filterMonth
+      : undefined;
 
-  const mtdKey =
-    targetMonth && /^\d{4}-\d{2}$/.test(targetMonth)
-      ? targetMonth
-      : latestYearMonthKey(trips, costs);
-  if (!mtdKey) {
-    return { ...EMPTY_KPI };
-  }
+  const scopeTrips = monthFilter ? trips.filter((t) => t.fecha.startsWith(monthFilter)) : trips;
 
-  /** Viajes con fecha operativa en el mes (misma base que `computeMonthlyStatRow`). */
-  const monthTrips = trips.filter((t) => t.fecha.startsWith(mtdKey));
-  const tripIds = new Set(monthTrips.map((t) => t.id));
-  /** Costos del mes: misma regla que el gráfico mensual (incluye gastos sin viaje). */
-  const totalCostsMTD = costs
-    .filter((c) => c.fecha.startsWith(mtdKey) && (c.tripId === null || tripIds.has(c.tripId)))
-    .reduce((acc, c) => acc + costUsd(c), 0);
+  const scopeCosts = monthFilter ? costs.filter((c) => c.fecha.startsWith(monthFilter)) : costs;
 
-  const cobradosMtd = trips.filter((t) => tripRealizedRevenueMonthKey(t) === mtdKey);
-  const totalRevenueMTD = cobradosMtd.reduce((acc, t) => acc + tripRevenueRealized(t), 0);
-  const realizedRevenue = totalRevenueMTD;
+  const combustiblePorKm = calcCombustiblePorKm(trips, costs);
 
-  const pendingRevenue = monthTrips
-    .filter((t) => isFinishedTrip(t) && t.facturaCobrada !== true)
-    .reduce((acc, t) => acc + tripRevenueUsd(t), 0);
+  const totalGenerado = scopeTrips.reduce((s, t) => s + tripRevenueUSD(t), 0);
+  const totalCobrado = scopeTrips.filter(isCobrado).reduce((s, t) => s + tripRevenueUSD(t), 0);
+  const totalPendienteCobro = scopeTrips
+    .filter(isPendienteCobro)
+    .reduce((s, t) => s + tripRevenueUSD(t), 0);
 
-  const netMarginMTD = totalRevenueMTD - totalCostsMTD;
-  const marginPctMTD = totalRevenueMTD > 0 ? (netMarginMTD / totalRevenueMTD) * 100 : 0;
+  const directCosts = scopeCosts
+    .filter((c) => c.categoria !== 'Combustible')
+    .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
 
-  const activeTrips = trips.filter((t) => t.estado === 'En Tránsito').length;
-  const pendingTrips = trips.filter((t) => t.estado === 'Pendiente').length;
+  const fuelCostsInScope = scopeCosts
+    .filter((c) => c.categoria === 'Combustible')
+    .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
 
-  const avgRevenuePerTrip =
-    cobradosMtd.length > 0 ? totalRevenueMTD / cobradosMtd.length : 0;
+  const totalCombustibleAtribuible = monthFilter
+    ? fuelCostsInScope * 0.7
+    : scopeTrips.reduce((s, t) => s + estimatedFuelCostForTrip(t, combustiblePorKm), 0);
+
+  const totalCostos = directCosts + totalCombustibleAtribuible;
+  const margenNeto = totalGenerado - totalCostos;
+  const margenPct = totalGenerado > 0 ? (margenNeto / totalGenerado) * 100 : 0;
+
+  const viajesRealizados = scopeTrips.filter(
+    (t) => t.estado === 'Completado' || t.estado === 'Cerrado'
+  ).length;
+  const viajesActivos = trips.filter((t) => t.estado === 'En Tránsito').length;
+  const viajesPendientes = trips.filter((t) => t.estado === 'Pendiente').length;
+  const kmRecorridos = scopeTrips.reduce((s, t) => s + (t.kmRecorridos ?? 0), 0);
+  const toneladasTransportadas = scopeTrips.reduce((s, t) => s + t.pesoKg / 1000, 0);
 
   const revenueByClient = new Map<string, number>();
-  cobradosMtd.forEach((t) => {
-    const rev = tripRevenueRealized(t);
+  scopeTrips.forEach((t) => {
+    const rev = tripRevenueUSD(t);
     revenueByClient.set(t.clientId, (revenueByClient.get(t.clientId) ?? 0) + rev);
   });
-
-  let topClient: { name: string; revenue: number } | null = null;
+  let topCliente: { name: string; revenue: number } | null = null;
   revenueByClient.forEach((revenue, clientId) => {
     const name = clients.find((c) => c.id === clientId)?.nombreComercial ?? clientId;
-    if (!topClient || revenue > topClient.revenue) {
-      topClient = { name, revenue };
-    }
+    if (!topCliente || revenue > topCliente.revenue) topCliente = { name, revenue };
   });
 
   return {
-    totalRevenueMTD,
-    totalCostsMTD,
-    netMarginMTD,
-    marginPctMTD,
-    activeTrips,
-    pendingTrips,
-    avgRevenuePerTrip,
-    topClient,
-    pendingRevenue,
-    realizedRevenue,
+    totalGenerado,
+    totalCobrado,
+    totalPendienteCobro,
+    totalCostos,
+    margenNeto,
+    margenPct,
+    viajesRealizados,
+    viajesActivos,
+    viajesPendientes,
+    kmRecorridos,
+    toneladasTransportadas,
+    topCliente,
   };
 }
+
+// ─── Helpers para otros módulos ──────────────────────────────────────────────
 
 export function getTopRoutes(
   trips: Trip[],
@@ -368,7 +304,7 @@ export function getTopRoutes(
   const map = new Map<string, { count: number; revenue: number }>();
   trips.forEach((t) => {
     const route = `${t.origen} → ${t.destino}`;
-    const rev = tripRevenueRealized(t);
+    const rev = tripRevenueUSD(t);
     const cur = map.get(route) ?? { count: 0, revenue: 0 };
     map.set(route, { count: cur.count + 1, revenue: cur.revenue + rev });
   });
@@ -385,30 +321,53 @@ export function getCostsByCategory(
   let grand = 0;
   costs.forEach((c) => {
     const cat = c.categoria;
-    const u = costUsd(c);
-    totals.set(cat, (totals.get(cat) ?? 0) + u);
-    grand += u;
+    const usd = c.montoUSD ?? 0;
+    totals.set(cat, (totals.get(cat) ?? 0) + usd);
+    grand += usd;
   });
   return Array.from(totals.entries())
-    .map(([category, total]) => ({
-      category,
-      total,
-      pct: grand > 0 ? (total / grand) * 100 : 0,
-    }))
+    .map(([category, total]) => ({ category, total, pct: grand > 0 ? (total / grand) * 100 : 0 }))
     .sort((a, b) => b.total - a.total);
+}
+
+/** Genera lista de YYYY-MM disponibles en el dataset para usar en filtros */
+export function getAvailableMonths(trips: Trip[], costs: Cost[]): string[] {
+  const set = new Set<string>();
+  trips.forEach((t) => {
+    const k = t.fecha.slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(k)) set.add(k);
+  });
+  costs.forEach((c) => {
+    const k = c.fecha.slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(k)) set.add(k);
+  });
+  return Array.from(set).sort((a, b) => b.localeCompare(a));
+}
+
+/** @deprecated Usar getAvailableMonths */
+export const collectAvailableMonthKeys = getAvailableMonths;
+
+export function previousCalendarMonth(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  if (!y || !m) return ym;
+  let mo = m - 1;
+  let yr = y;
+  if (mo < 1) {
+    mo = 12;
+    yr -= 1;
+  }
+  return `${yr}-${String(mo).padStart(2, '0')}`;
 }
 
 export type WeeklyBucket = { label: string; ingresos: number; costos: number };
 
-/** Ingresos (cobrados en el mes) y costos por semana calendario dentro del mes YYYY-MM. */
+/** Ingresos generados y costos por semana calendario dentro del mes YYYY-MM. */
 export function buildWeeklyBucketsInMonth(
   trips: Trip[],
   costs: Cost[],
   monthKey: string
 ): WeeklyBucket[] {
-  if (!/^\d{4}-\d{2}$/.test(monthKey)) {
-    return [];
-  }
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) return [];
   const [y, m] = monthKey.split('-').map(Number);
   const lastDay = new Date(y, m, 0).getDate();
   const ranges: [number, number][] = [
@@ -417,25 +376,30 @@ export function buildWeeklyBucketsInMonth(
     [15, 21],
     [22, lastDay],
   ];
+  const combustiblePorKm = calcCombustiblePorKm(trips, costs);
+
   return ranges.map(([d0, d1], i) => {
-    const ingresos = trips
-      .filter((t) => {
-        if (!t.fecha.startsWith(monthKey)) return false;
-        const day = Number(t.fecha.slice(8, 10));
-        return day >= d0 && day <= d1 && tripRealizedRevenueMonthKey(t) === monthKey;
-      })
-      .reduce((s, t) => s + tripRevenueRealized(t), 0);
-    const costos = costs
+    const weekTrips = trips.filter((t) => {
+      if (!t.fecha.startsWith(monthKey)) return false;
+      const day = Number(t.fecha.slice(8, 10));
+      return day >= d0 && day <= d1;
+    });
+    const ingresos = weekTrips.reduce((s, t) => s + tripRevenueUSD(t), 0);
+    const directCosts = costs
       .filter((c) => {
-        if (!c.fecha.startsWith(monthKey)) return false;
+        if (!c.fecha.startsWith(monthKey) || c.categoria === 'Combustible') return false;
         const day = Number(c.fecha.slice(8, 10));
         return day >= d0 && day <= d1;
       })
-      .reduce((s, c) => s + costUsd(c), 0);
+      .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
+    const fuelCost = weekTrips.reduce(
+      (s, t) => s + estimatedFuelCostForTrip(t, combustiblePorKm),
+      0
+    );
     return {
       label: `Sem. ${i + 1} (${d0}–${Math.min(d1, lastDay)})`,
       ingresos,
-      costos,
+      costos: directCosts + fuelCost,
     };
   });
 }

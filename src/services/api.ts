@@ -1,5 +1,5 @@
 import type { BillingInfo, Client, Cost, ScheduledCostDefinition, Trip, TripStatus, User } from '../types';
-import { DEFAULT_EXCHANGE_RATE, MOCK_DATA } from '../constants';
+import { MOCK_DATA } from '../constants';
 
 const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
 const DRIVE_FOLDER_REMITOS = String(import.meta.env.VITE_DRIVE_FOLDER_REMITOS ?? '').trim();
@@ -63,46 +63,65 @@ async function fetchWithTimeout(
 /** Normaliza fila remota o parcial a `Trip` (sin `any` en la firma pública). */
 export function normalizeTrip(row: unknown): Trip {
   const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+
+  // Helper para parsear booleanos que vienen como 0/1/true/false/null
+  const parseBool = (v: unknown): boolean => {
+    if (v === null || v === undefined || v === '' || v === 'NaN') return false;
+    return Number(v) === 1 || v === true || v === 'true' || v === '1';
+  };
+
+  // Helper para parsear fecha (puede venir como Date, string ISO, o vacío)
+  const parseDate = (v: unknown): string | undefined => {
+    if (!v || v === 'NaN' || v === 'NaT') return undefined;
+    if (v instanceof Date) return v.toISOString().split('T')[0];
+    const s = String(v).trim();
+    if (!s || s === 'NaN' || s === 'NaT' || s === 'Invalid Date') return undefined;
+    // Si tiene formato ISO, tomar solo la parte de fecha
+    return s.split('T')[0];
+  };
+
+  const monedaRaw = r.moneda != null ? String(r.moneda).trim() : 'USD';
+  const moneda: 'USD' | 'UYU' = monedaRaw === 'UYU' ? 'UYU' : 'USD';
+  const tipoCambio = Number(r.tipoCambio) > 0 ? Number(r.tipoCambio) : 1;
+
+  // La tarifa siempre se normaliza a USD internamente
+  let tarifa = Number(r.tarifa) || 0;
+  if (moneda === 'UYU' && tipoCambio > 0) {
+    tarifa = tarifa / tipoCambio;
+  }
+
   return {
     id: String(r.id ?? ''),
-    fecha: String(r.fecha ?? ''),
+    fecha: String(r.fecha ?? '').split('T')[0],
     clientId: String(r.clientId ?? ''),
     estado: (r.estado as TripStatus) ?? 'Pendiente',
     contenido: String(r.contenido ?? ''),
     pesoKg: Number(r.pesoKg) || 0,
     kmRecorridos: Number(r.kmRecorridos) || 0,
-    tarifa: Number(r.tarifa) || 0,
+    tarifa, // siempre en USD
+    tarifaUYU: Number(r.tarifaUYU) || undefined,
+    moneda,
+    tipoCambio,
     origen: String(r.origen ?? ''),
     destino: String(r.destino ?? ''),
     facturaUrl: r.facturaUrl ? String(r.facturaUrl) : undefined,
     remitoUrl: r.remitoUrl ? String(r.remitoUrl) : undefined,
     asignadoA:
-      r.asignadoA != null && String(r.asignadoA).trim() !== ''
+      r.asignadoA != null && String(r.asignadoA).trim() !== '' && String(r.asignadoA).trim() !== 'NaN'
         ? String(r.asignadoA).trim()
         : undefined,
-    moneda: (r.moneda === 'UYU' ? 'UYU' : 'USD') as 'USD' | 'UYU',
-    tipoCambio:
-      r.tipoCambio && Number(r.tipoCambio) > 0 ? Number(r.tipoCambio) : undefined,
-    ...(Number(r.tarifaUYU) > 0 ? { tarifaUYU: Number(r.tarifaUYU) } : {}),
-    ...(normalizeBillingFlags(r) as Partial<Pick<Trip, 'facturaGenerada' | 'facturaSolicitada' | 'facturaCobrada'>>),
-    ...(r.facturaFechaSolicitud ? { facturaFechaSolicitud: String(r.facturaFechaSolicitud) } : {}),
-    ...(r.facturaFechaCobro ? { facturaFechaCobro: String(r.facturaFechaCobro) } : {}),
+    facturaGenerada: parseBool(r.facturaGenerada),
+    facturaSolicitada: parseBool(r.facturaSolicitada),
+    facturaFechaSolicitud: parseDate(r.facturaFechaSolicitud),
+    facturaCobrada: parseBool(r.facturaCobrada),
+    facturaFechaCobro: parseDate(r.facturaFechaCobro),
+    scheduledCostId:
+      r.scheduledCostId != null &&
+      String(r.scheduledCostId).trim() !== '' &&
+      String(r.scheduledCostId).trim() !== 'NaN'
+        ? String(r.scheduledCostId)
+        : undefined,
   };
-}
-
-function normalizeBillingFlags(row: Record<string, unknown>): Record<string, boolean> {
-  const out: Record<string, boolean> = {};
-  const truthy = (v: unknown) => v === true || String(v).toUpperCase() === 'TRUE';
-  if ('facturaGenerada' in row) {
-    out.facturaGenerada = truthy(row.facturaGenerada);
-  }
-  if ('facturaSolicitada' in row) {
-    out.facturaSolicitada = truthy(row.facturaSolicitada);
-  }
-  if ('facturaCobrada' in row) {
-    out.facturaCobrada = truthy(row.facturaCobrada);
-  }
-  return out;
 }
 
 export function normalizeClient(row: unknown): Client {
@@ -145,16 +164,25 @@ export function normalizeClient(row: unknown): Client {
 
 const COST_CATEGORIES: Cost['categoria'][] = [
   'Combustible',
+  'Sueldos',
+  'Alquiler',
+  'Cuota Banco',
+  'Service',
   'Mantenimiento',
-  'Peajes',
-  'Viáticos',
-  'Neumáticos',
-  'Seguros',
+  'AD Blue',
   'Otros',
 ];
 
 function normalizeCostCategory(value: unknown): Cost['categoria'] {
-  const s = String(value ?? '');
+  const s = String(value ?? '').trim();
+  // Mapeos de categorías legacy a las nuevas
+  const legacyMap: Record<string, Cost['categoria']> = {
+    Peajes: 'Otros',
+    Viáticos: 'Otros',
+    Neumáticos: 'Mantenimiento',
+    Seguros: 'Otros',
+  };
+  if (legacyMap[s]) return legacyMap[s];
   return COST_CATEGORIES.includes(s as Cost['categoria']) ? (s as Cost['categoria']) : 'Otros';
 }
 
@@ -217,70 +245,51 @@ export function normalizeCost(row: unknown): Cost {
   const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
   const tripIdRaw = r.tripId;
   const tripId =
-    tripIdRaw === null || tripIdRaw === undefined || String(tripIdRaw) === ''
+    tripIdRaw === null ||
+    tripIdRaw === undefined ||
+    String(tripIdRaw).trim() === '' ||
+    String(tripIdRaw).trim() === 'NaN'
       ? null
       : String(tripIdRaw);
 
-  const montoRaw = Number(r.monto) || 0;
-  const currency: 'USD' | 'UYU' =
-    r.currency === 'UYU' || r.moneda === 'UYU' ? 'UYU' : 'USD';
-  const moneda = currency;
-  const tipoCambio = Number(r.tipoCambio) || DEFAULT_EXCHANGE_RATE;
-  const montoUSD =
-    r.montoUSD != null && String(r.montoUSD).trim() !== ''
-      ? Number(r.montoUSD)
-      : moneda === 'UYU'
-        ? montoRaw / (tipoCambio > 0 ? tipoCambio : 1)
-        : montoRaw;
+  const monedaRaw = r.moneda ?? r.currency;
+  // Default a 'USD' (más seguro: en caso de duda no dividimos por tipo de cambio)
+  const moneda: 'USD' | 'UYU' = String(monedaRaw ?? 'USD').trim() === 'UYU' ? 'UYU' : 'USD';
+  const tipoCambio = Number(r.tipoCambio) > 0 ? Number(r.tipoCambio) : 40;
 
-  const scheduleIdCol =
-    r.scheduleId != null && String(r.scheduleId).trim() !== '' ? String(r.scheduleId).trim() : undefined;
-  const legacyScheduledId =
-    r.scheduledCostId != null && String(r.scheduledCostId).trim() !== ''
-      ? String(r.scheduledCostId).trim()
-      : undefined;
-  const desc = String(r.descripcion ?? '');
-  const explicitIsScheduled =
-    r.isScheduled === true || String(r.isScheduled).toUpperCase() === 'TRUE';
-  const explicitNotScheduled =
-    r.isScheduled === false || String(r.isScheduled).toUpperCase() === 'FALSE';
-  const migratedAuto =
-    !explicitNotScheduled &&
-    !explicitIsScheduled &&
-    legacyScheduledId !== undefined &&
-    desc.startsWith('[AUTO]');
-  const isScheduled = explicitNotScheduled ? false : explicitIsScheduled || migratedAuto;
-
-  const scheduleId =
-    scheduleIdCol ?? (isScheduled ? legacyScheduledId : undefined);
-
-  const scheduledDayRaw = Number(r.scheduledDay);
-  const scheduledDay =
-    Number.isFinite(scheduledDayRaw) && scheduledDayRaw >= 1 && scheduledDayRaw <= 28
-      ? Math.floor(scheduledDayRaw)
-      : undefined;
-
-  const scheduledMonths = parseScheduledMonths(r.scheduledMonths);
+  // montoUSD viene precalculado del backend; si no, calcularlo
+  let montoUSD: number;
+  if (Number(r.montoUSD) > 0) {
+    montoUSD = Number(r.montoUSD);
+  } else if (moneda === 'USD') {
+    montoUSD = Number(r.monto) || 0;
+  } else {
+    montoUSD = (Number(r.monto) || 0) / tipoCambio;
+  }
 
   return {
     id: String(r.id ?? ''),
-    fecha: String(r.fecha ?? ''),
+    fecha: String(r.fecha ?? '').split('T')[0],
     tripId,
     categoria: normalizeCostCategory(r.categoria),
-    descripcion: desc,
-    monto: montoRaw,
+    descripcion: String(r.descripcion ?? ''),
+    monto: Number(r.monto) || 0,
     moneda,
-    currency,
     tipoCambio,
     montoUSD,
-    isScheduled,
-    ...(scheduleId ? { scheduleId } : {}),
-    ...(legacyScheduledId ? { scheduledCostId: legacyScheduledId } : {}),
-    ...(scheduledDay !== undefined ? { scheduledDay } : {}),
-    ...(scheduledMonths !== undefined ? { scheduledMonths } : {}),
     comprobante:
-      r.comprobante !== undefined && r.comprobante !== null ? String(r.comprobante) : undefined,
+      r.comprobante !== undefined &&
+      r.comprobante !== null &&
+      String(r.comprobante).trim() !== '' &&
+      String(r.comprobante).trim() !== 'NaN'
+        ? String(r.comprobante)
+        : undefined,
     registradoPor: String(r.registradoPor ?? ''),
+    isScheduled: Boolean(r.isScheduled),
+    scheduleId:
+      r.scheduleId != null && String(r.scheduleId).trim() !== '' && String(r.scheduleId).trim() !== 'NaN'
+        ? String(r.scheduleId)
+        : undefined,
   };
 }
 
@@ -288,7 +297,6 @@ export interface LogisticsData {
   clients: Client[];
   trips: Trip[];
   costs: Cost[];
-  scheduledCostDefinitions: ScheduledCostDefinition[];
 }
 
 function cloneMockData(): LogisticsData {
@@ -296,7 +304,6 @@ function cloneMockData(): LogisticsData {
     clients: MOCK_DATA.clients.map((c) => normalizeClient(c)),
     trips: MOCK_DATA.trips.map((t) => normalizeTrip(t)),
     costs: MOCK_DATA.costs.map((c) => normalizeCost(c)),
-    scheduledCostDefinitions: getMockScheduledDefinitions().map((d) => ({ ...d })),
   };
 }
 
@@ -327,21 +334,22 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
       throw new Error('Apps Script devolvió HTML — re-deployar como "Cualquier persona"');
     }
 
-    const data = JSON.parse(text) as {
+    const record = JSON.parse(text) as {
       clients?: unknown;
       trips?: unknown;
       costs?: unknown;
       scheduledCostDefinitions?: unknown;
     };
+    // scheduledCostDefinitions se ignora intencionalmente en fetchLogisticsData
+    const clientsRaw = Array.isArray(record.clients) ? record.clients : [];
+    const tripsRaw = Array.isArray(record.trips) ? record.trips : [];
+    const costsRaw = Array.isArray(record.costs) ? record.costs : [];
 
     logisticsFetchUsedMock = false;
     return {
-      clients: Array.isArray(data.clients) ? data.clients.map(normalizeClient) : [],
-      trips: Array.isArray(data.trips) ? data.trips.map(normalizeTrip) : [],
-      costs: Array.isArray(data.costs) ? data.costs.map(normalizeCost) : [],
-      scheduledCostDefinitions: Array.isArray(data.scheduledCostDefinitions)
-        ? data.scheduledCostDefinitions.map(normalizeScheduledCostDefinition)
-        : [],
+      clients: clientsRaw.map((row) => normalizeClient(row)),
+      trips: tripsRaw.map((row) => normalizeTrip(row)),
+      costs: costsRaw.map((row) => normalizeCost(row)),
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
@@ -478,12 +486,26 @@ export async function loginUser(username: string, password: string): Promise<Use
   }
 }
 
+function tripPayloadForSheet(trip: Trip) {
+  return {
+    ...trip,
+    moneda: trip.moneda ?? 'USD',
+    tipoCambio: trip.tipoCambio ?? 1,
+    tarifaUYU: trip.tarifaUYU,
+    facturaGenerada: trip.facturaGenerada,
+    facturaSolicitada: trip.facturaSolicitada,
+    facturaFechaSolicitud: trip.facturaFechaSolicitud,
+    facturaCobrada: trip.facturaCobrada,
+    facturaFechaCobro: trip.facturaFechaCobro,
+  };
+}
+
 export async function saveTripToSheet(trip: Trip): Promise<boolean> {
-  return postSheet('trip', trip);
+  return postSheet('trip', tripPayloadForSheet(trip));
 }
 
 export async function updateTripInSheet(trip: Trip): Promise<boolean> {
-  return postSheet('updateTrip', trip);
+  return postSheet('updateTrip', tripPayloadForSheet(trip));
 }
 
 export async function deleteTripFromSheet(id: string): Promise<boolean> {
@@ -619,20 +641,72 @@ export async function saveClientToSheet(client: Client): Promise<void> {
 }
 
 export async function saveCostToSheet(cost: Cost): Promise<boolean> {
-  return postSheet('cost', cost);
+  return postSheet('cost', {
+    ...cost,
+    moneda: cost.moneda ?? 'USD',
+    tipoCambio: cost.tipoCambio ?? 1,
+    montoUSD: cost.montoUSD ?? cost.monto,
+  });
 }
 
 export async function updateCostInSheet(cost: Cost): Promise<boolean> {
-  return postSheet('updateCost', cost);
+  return postSheet('updateCost', {
+    ...cost,
+    moneda: cost.moneda ?? 'USD',
+    tipoCambio: cost.tipoCambio ?? 1,
+    montoUSD: cost.montoUSD ?? cost.monto,
+  });
 }
 
 export async function deleteCostFromSheet(id: string): Promise<boolean> {
   return postSheet('deleteCost', { id });
 }
 
+async function fetchRawLogisticsRecord(): Promise<{
+  clients?: unknown;
+  trips?: unknown;
+  costs?: unknown;
+  scheduledCostDefinitions?: unknown;
+}> {
+  const response = await fetchWithTimeout(
+    SHEET_URL,
+    { method: 'GET', cache: 'no-store' },
+    15000
+  );
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  const text = await response.text();
+
+  if (responseLooksLikeHtml(text)) {
+    throw new Error('Apps Script devolvió HTML — re-deployar como "Cualquier persona"');
+  }
+
+  return JSON.parse(text) as {
+    clients?: unknown;
+    trips?: unknown;
+    costs?: unknown;
+    scheduledCostDefinitions?: unknown;
+  };
+}
+
 export async function fetchScheduledCostDefinitions(): Promise<ScheduledCostDefinition[]> {
-  const d = await fetchLogisticsData();
-  return d.scheduledCostDefinitions;
+  if (IS_MOCK) {
+    return getMockScheduledDefinitions().map((d) => ({ ...d }));
+  }
+
+  try {
+    const record = await fetchRawLogisticsRecord();
+    const defsRaw = Array.isArray(record.scheduledCostDefinitions)
+      ? record.scheduledCostDefinitions
+      : [];
+    return defsRaw.map((row) => normalizeScheduledCostDefinition(row));
+  } catch (error) {
+    console.error('[GDC API] fetchScheduledCostDefinitions falló:', error);
+    return getMockScheduledDefinitions().map((d) => ({ ...d }));
+  }
 }
 
 export async function saveScheduledCostDefinition(def: ScheduledCostDefinition): Promise<void> {

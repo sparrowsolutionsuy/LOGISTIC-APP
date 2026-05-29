@@ -8,6 +8,7 @@ interface Props {
   direction: SortDirection;
   onClick: (col: string) => void;
   align?: 'left' | 'right' | 'center';
+  title?: string;
 }
 
 export default function SortableHeader({
@@ -17,12 +18,14 @@ export default function SortableHeader({
   direction,
   onClick,
   align = 'left',
+  title,
 }: Props) {
   const isActive = currentColumn === column;
 
   return (
     <th
       scope="col"
+      title={title}
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {

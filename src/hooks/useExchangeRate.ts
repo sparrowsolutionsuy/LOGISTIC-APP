@@ -97,6 +97,18 @@ export function useExchangeRate() {
     [context.displayCurrency]
   );
 
+  /** Igual que formatAmount pero con 2 decimales: útil para ratios por unidad (p. ej. costo/km). */
+  const formatAmountPrecise = useCallback(
+    (amount: number): string =>
+      amount.toLocaleString('es-UY', {
+        style: 'currency',
+        currency: context.displayCurrency === 'UYU' ? 'UYU' : 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+    [context.displayCurrency]
+  );
+
   return {
     displayCurrency: context.displayCurrency,
     currentRate: context.currentRate,
@@ -107,6 +119,7 @@ export function useExchangeRate() {
     convertToDisplay,
     convertAggregateToDisplay,
     formatAmount,
+    formatAmountPrecise,
     currencySymbol: context.displayCurrency === 'USD' ? 'USD' : '$',
   };
 }
