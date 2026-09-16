@@ -375,8 +375,12 @@ export async function generateReport(
     if (v.revenue > topProduct.revenue) topProduct = { name, revenue: v.revenue, tons: v.tons };
   });
 
-  // Mejor / peor margen
-  const enriched = enrichTrips(tripsR, clients, costs);
+  // Mejor / peor margen — rate from full fleet (policy A), enrich scoped trips only
+  const enriched = enrichTrips(tripsR, clients, costs, {
+    rateTrips: trips,
+    rateCosts: costs,
+    combustiblePorKm,
+  });
   let bestMarginTrip = { id: '—', client: '—', marginPct: 0 };
   let worstMarginTrip = { id: '—', client: '—', marginPct: 0 };
   let bestPct = -Infinity;

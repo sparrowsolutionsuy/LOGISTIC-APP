@@ -201,8 +201,12 @@ export const TripManager: React.FC<TripManagerProps> = ({
   }, [roleTrips, searchText, clientFilter, estadoFilter, startDate, endDate, clients]);
 
   const enrichedFiltered = useMemo(
-    () => enrichTrips(filteredTrips, clients, costs),
-    [filteredTrips, clients, costs]
+    () =>
+      enrichTrips(filteredTrips, clients, costs, {
+        rateTrips: trips,
+        rateCosts: costs,
+      }),
+    [filteredTrips, clients, costs, trips]
   );
 
   const marginEsEstimado = useMemo(

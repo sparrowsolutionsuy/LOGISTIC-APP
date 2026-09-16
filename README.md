@@ -120,12 +120,21 @@ src/
   components/             # UI por módulos (viajes, clientes, costos, etc.)
   services/api.ts         # fetch al Web App (Sheets, login, uploads, health)
   services/geminiService.ts  # insights opcionales con Gemini
+  utils/analytics.ts      # KPIs, márgenes, tasa combustible flota (política A)
 tests/
   fixtures/sheet-schema.json  # headers + filas fake (sin PII real)
   *.test.ts
 scripts/maintenance-smoke.mjs
 GOOGLE_APPS_SCRIPT.js     # referencia para pegar en Apps Script
 ```
+
+### Rentabilidad por viaje (combustible)
+
+Combustible se carga de a ratos (no por viaje). **Política A (tasa flota global):**
+
+`tasa = (Σ Combustible montoUSD × 0.7) / Σ km de todos los viajes`
+
+Al filtrar un mes, `enrichTrips` sigue usando esa tasa all-time (`rateTrips` / `rateCosts`); no dividir combustible histórico por km del mes. El margen es **estimado** (ingreso generado − directos con `tripId` − `km × tasa`).
 
 ---
 
