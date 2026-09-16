@@ -4,7 +4,58 @@
 // 2. Uploads: la app envía folderId (VITE_DRIVE_FOLDER_*); si falla, se usa carpeta por nombre.
 // 3. DEPLOY as Web App -> Execute as: Me -> Access: Anyone (Cualquier persona).
 // 4. URL del Web App en VITE_SHEET_URL (.env.local / GitHub Secrets).
+// 5. After deploy / schema upgrades: hit GET ?migrate=1 once (or POST/GET health).
+// Pure dump helpers mirrored in src/gas/dumpHelpers.ts — keep in sync.
 // -------------------------------------------------------------------------
+
+/** Phase B: dump cache TTL (seconds). Writes bump epoch to invalidate. */
+var DUMP_CACHE_TTL_SEC = 45;
+var DUMP_CACHE_PREFIX = 'gdc_dump_v1';
+var DUMP_CACHE_EPOCH_KEY = 'gdc_dump_epoch';
+var DUMP_KEYS = ['clients', 'trips', 'costs', 'scheduledCostDefinitions'];
+var DUMP_SHEET_BY_KEY = {
+  clients: 'DB_Clientes',
+  trips: 'DB_Viajes',
+  costs: 'DB_Costos',
+  scheduledCostDefinitions: 'DB_CostosProgramados',
+};
+
+/** Parse ?include= (comma-separated). Empty/missing → all four keys. */
+function parseIncludeParam(raw) {
+  if (raw == null || String(raw).trim() === '') {
+    return DUMP_KEYS.slice();
+  }
+  var allowed = {};
+  for (var i = 0; i < DUMP_KEYS.length; i++) {
+    allowed[DUMP_KEYS[i]] = true;
+  }
+  var parts = String(raw)
+    .split(',')
+    .map(function (s) {
+      return s.trim();
+    })
+    .filter(function (s) {
+      return s.length > 0 && allowed[s];
+    });
+  return parts.length > 0 ? parts : DUMP_KEYS.slice();
+}
+
+function getDumpCacheEpoch() {
+  var cache = CacheService.getScriptCache();
+  var epoch = cache.get(DUMP_CACHE_EPOCH_KEY);
+  return epoch || '0';
+}
+
+function buildDumpCacheKey(epoch, includeKeys) {
+  var sorted = includeKeys.slice().sort();
+  return DUMP_CACHE_PREFIX + ':' + (epoch || '0') + ':' + sorted.join(',');
+}
+
+/** Invalidate all dump cache entries by bumping epoch (old keys expire naturally). */
+function invalidateDumpCache() {
+  var cache = CacheService.getScriptCache();
+  cache.put(DUMP_CACHE_EPOCH_KEY, String(Date.now()), 21600);
+}
 
 function getFolderByName(ss, folderName) {
   var parents = DriveApp.getFileById(ss.getId()).getParents();
@@ -135,6 +186,7 @@ function uploadFile(data, folderNameFallback, updateSheetFn, sheetName) {
       }
     }
 
+    invalidateDumpCache();
     return ContentService.createTextOutput(JSON.stringify({ status: 'success', url: fileUrl }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
@@ -198,31 +250,22 @@ function buildHealthPayload(folderIds) {
   };
 }
 
-function doGet(e) {
-  var params = e && e.parameter ? e.parameter : {};
-  if (String(params.health || '') === '1') {
-    var getFolderIds = {};
-    if (params.remitosFolderId) getFolderIds.remitosFolderId = params.remitosFolderId;
-    if (params.facturasFolderId) getFolderIds.facturasFolderId = params.facturasFolderId;
-    return ContentService.createTextOutput(JSON.stringify(buildHealthPayload(getFolderIds))).setMimeType(
-      ContentService.MimeType.JSON
-    );
-  }
+/**
+ * Create missing sheets / headers / seed users. Not on hot dump GET.
+ * Call via ?migrate=1, health, or write paths that already ensure headers.
+ */
+function ensureSchema() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  
-  // Ensure DB_Usuarios (Auth)
-  let userSheet = ss.getSheetByName('DB_Usuarios');
+  var userSheet = ss.getSheetByName('DB_Usuarios');
   if (!userSheet) {
     userSheet = ss.insertSheet('DB_Usuarios');
     userSheet.appendRow(['usuario', 'password', 'nombre', 'rol']);
-    // Default Admin User for first time setup
     userSheet.appendRow(['admin', 'admin123', 'Administrador General', 'admin']);
     userSheet.appendRow(['operativo', 'op123', 'Chofer Operativo', 'operativo']);
   }
 
-  // Ensure Clients Sheet with NEW Columns
-  let clientSheet = ss.getSheetByName('DB_Clientes');
+  var clientSheet = ss.getSheetByName('DB_Clientes');
   if (!clientSheet) {
     clientSheet = ss.insertSheet('DB_Clientes');
     clientSheet.appendRow([
@@ -239,17 +282,18 @@ function doGet(e) {
       'facturacion',
     ]);
   } else {
-      const headers = clientSheet.getRange(1, 1, 1, clientSheet.getLastColumn()).getValues()[0];
-      if (!headers.includes('rut')) clientSheet.getRange(1, headers.length + 1).setValue('rut');
-      if (!headers.includes('email')) clientSheet.getRange(1, headers.length + 2).setValue('email');
-      if (!headers.includes('telefono')) clientSheet.getRange(1, headers.length + 3).setValue('telefono');
-      if (!headers.includes('tieneFacturacionDiferente')) clientSheet.getRange(1, clientSheet.getLastColumn() + 1).setValue('tieneFacturacionDiferente');
-      if (!headers.includes('facturacion')) clientSheet.getRange(1, clientSheet.getLastColumn() + 1).setValue('facturacion');
+    var clientLastCol = Math.max(1, clientSheet.getLastColumn());
+    var headers = clientSheet.getRange(1, 1, 1, clientLastCol).getValues()[0];
+    var clientCols = ['rut', 'email', 'telefono', 'tieneFacturacionDiferente', 'facturacion'];
+    for (var ci = 0; ci < clientCols.length; ci++) {
+      if (headers.indexOf(clientCols[ci]) === -1) {
+        clientSheet.getRange(1, clientSheet.getLastColumn() + 1).setValue(clientCols[ci]);
+        headers.push(clientCols[ci]);
+      }
+    }
   }
-  const clients = getSheetData('DB_Clientes');
 
-  // Ensure Trips Sheet
-  let tripSheet = ss.getSheetByName('DB_Viajes');
+  var tripSheet = ss.getSheetByName('DB_Viajes');
   if (!tripSheet) {
     tripSheet = ss.insertSheet('DB_Viajes');
     tripSheet.appendRow([
@@ -277,31 +321,10 @@ function doGet(e) {
       'scheduledCostId',
     ]);
   } else {
-    var requiredTripCols = [
-      'facturaGenerada',
-      'facturaSolicitada',
-      'facturaFechaSolicitud',
-      'facturaCobrada',
-      'facturaFechaCobro',
-      'moneda',
-      'tipoCambio',
-      'tarifaUYU',
-      'scheduledCostId',
-    ];
-    var tripHeaders = tripSheet.getRange(1, 1, 1, tripSheet.getLastColumn()).getValues()[0];
-    requiredTripCols.forEach(function (col) {
-      if (tripHeaders.indexOf(col) === -1) {
-        tripSheet.getRange(1, tripHeaders.length + 1).setValue(col);
-        tripHeaders.push(col);
-      }
-    });
+    ensureTripSheetHeaders(tripSheet);
   }
-  ensureTripSheetHeaders(tripSheet);
 
-  const trips = getSheetData('DB_Viajes');
-
-  // Asegurar DB_Costos
-  let costSheet = ss.getSheetByName('DB_Costos');
+  var costSheet = ss.getSheetByName('DB_Costos');
   if (!costSheet) {
     costSheet = ss.insertSheet('DB_Costos');
     costSheet.appendRow([
@@ -321,10 +344,8 @@ function doGet(e) {
     ]);
   }
   ensureCostSheetHeaders(costSheet);
-  const costs = getSheetData('DB_Costos');
 
-  // Ensure DB_CostosProgramados + include definitions in GET payload
-  let scheduledSheet = ss.getSheetByName('DB_CostosProgramados');
+  var scheduledSheet = ss.getSheetByName('DB_CostosProgramados');
   if (!scheduledSheet) {
     scheduledSheet = ss.insertSheet('DB_CostosProgramados');
     scheduledSheet.appendRow([
@@ -341,11 +362,59 @@ function doGet(e) {
     ]);
   }
   ensureScheduledDefinitionSheetHeaders(scheduledSheet);
-  const scheduledCostDefinitions = getSheetData('DB_CostosProgramados');
+}
 
-  return ContentService.createTextOutput(
-    JSON.stringify({ clients, trips, costs, scheduledCostDefinitions })
-  ).setMimeType(ContentService.MimeType.JSON);
+/** Build dump object for selected include keys (read-only; missing sheet → []). */
+function buildDumpPayload(includeKeys) {
+  var payload = {};
+  for (var i = 0; i < includeKeys.length; i++) {
+    var key = includeKeys[i];
+    var sheetName = DUMP_SHEET_BY_KEY[key];
+    payload[key] = sheetName ? getSheetData(sheetName) : [];
+  }
+  // Keep stable shape for clients that expect all keys when default include is used.
+  if (includeKeys.length === DUMP_KEYS.length) {
+    return {
+      clients: payload.clients || [],
+      trips: payload.trips || [],
+      costs: payload.costs || [],
+      scheduledCostDefinitions: payload.scheduledCostDefinitions || [],
+    };
+  }
+  return payload;
+}
+
+function doGet(e) {
+  var params = e && e.parameter ? e.parameter : {};
+
+  if (String(params.health || '') === '1') {
+    ensureSchema();
+    var getFolderIds = {};
+    if (params.remitosFolderId) getFolderIds.remitosFolderId = params.remitosFolderId;
+    if (params.facturasFolderId) getFolderIds.facturasFolderId = params.facturasFolderId;
+    // Health is never stored as dump cache.
+    return ContentService.createTextOutput(JSON.stringify(buildHealthPayload(getFolderIds))).setMimeType(
+      ContentService.MimeType.JSON
+    );
+  }
+
+  if (String(params.migrate || '') === '1') {
+    ensureSchema();
+  }
+
+  var includeKeys = parseIncludeParam(params.include);
+  var cache = CacheService.getScriptCache();
+  var cacheKey = buildDumpCacheKey(getDumpCacheEpoch(), includeKeys);
+  var cached = cache.get(cacheKey);
+  if (cached) {
+    return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var payload = buildDumpPayload(includeKeys);
+  var json = JSON.stringify(payload);
+  // Never cache errors (this path only builds successful dumps).
+  cache.put(cacheKey, json, DUMP_CACHE_TTL_SEC);
+  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
 
 function doPost(e) {
@@ -356,6 +425,7 @@ function doPost(e) {
   const data = body.data;
 
   if (type === 'health') {
+    ensureSchema();
     return ContentService.createTextOutput(JSON.stringify(buildHealthPayload(data || {}))).setMimeType(
       ContentService.MimeType.JSON
     );
@@ -649,6 +719,7 @@ function doPost(e) {
       return createErrorResponse('Unknown type: ' + String(type));
     }
 
+    invalidateDumpCache();
     return ContentService.createTextOutput(JSON.stringify({ status: 'success' }))
       .setMimeType(ContentService.MimeType.JSON);
 
@@ -863,17 +934,23 @@ function createErrorResponse(msg) {
 function getSheetData(sheetName) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
   if (!sheet) return [];
-  
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return []; // No data
+
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  // Empty sheet or header-only: no data rows.
+  if (lastRow < 2 || lastCol < 1) return [];
+
+  const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  if (data.length <= 1) return [];
 
   const headers = data[0];
   const rows = data.slice(1);
 
-  return rows.map(row => {
-    let obj = {};
-    headers.forEach((header, index) => {
-      let value = row[index];
+  return rows.map(function (row) {
+    var obj = {};
+    headers.forEach(function (header, index) {
+      if (header == null || header === '') return;
+      var value = row[index];
       if (value instanceof Date) {
         value = value.toISOString().split('T')[0];
       }

@@ -84,7 +84,7 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 
 **Remitos / facturas (Drive):** el cliente reintenta subidas 2–3 veces ante HTTP 404, HTML, red o JSON inválido; comprime fotos de remito (máx. ~1600px, JPEG ~0.8) antes de enviar. Los errores del script se muestran en toast/alerta.
 
-**Health:** POST `{ type: "health", data: { remitosFolderId?, facturasFolderId? } }` o GET `?health=1` — tabs, row counts, probe Drive (`DriveApp.getFolderById` only; no crea archivos).
+**Health:** POST `{ type: "health", data: { remitosFolderId?, facturasFolderId? } }` or GET `?health=1` — runs `ensureSchema()` once, then reports tabs, row counts, probe Drive (`DriveApp.getFolderById` only; no crea archivos). Health responses are **not** dump-cached.
 
 **Costos programados:** definiciones en `DB_CostosProgramados`; el GET las expone como `scheduledCostDefinitions`. Tras **Phase A** (latencia), el login admin hace **un solo GET** y reutiliza esas defs — no un segundo dump completo.
 
@@ -95,10 +95,20 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 | Target p50 / p95 GET dump | &lt;4s / &lt;8s (medido con smoke / DevTools) |
 | Smoke warn / fail | `SMOKE_LATENCY_WARN_MS` default **8000** / `SMOKE_LATENCY_MS` default **15000** |
 | Front GET timeout | **30s** + 1–2 reintentos cortos ante 404/HTML/red |
+| Dump ScriptCache TTL | **45s** (`gdc_dump_v1` + epoch); writes invalidan el cache |
+| Schema migration | **Off** hot GET — `ensureSchema()` vía `?migrate=1` o health |
 
-Plan completo (fases B+): `sparrow-harness/thoughts/shared/plans/2026-09-17-logistic-app-latency.md`.
+**Phase B (Apps Script):** hot dump GET only reads existing sheets (missing sheet → `[]`). Optional `?include=clients,trips,costs,scheduledCostDefinitions` (comma-separated; default = all four). Second GET within TTL should be faster (cache hit); first GET after a write is cold.
 
-> Tras cambiar `GOOGLE_APPS_SCRIPT.js` en el repo, un humano debe **redeployar** la Web App (Manage deployments → New version). Hasta entonces producción sigue con el script viejo. **HITL obligatorio** tras merge si este PR tocó Apps Script.
+After deploy / if schema might be old:
+
+1. Redeploy Apps Script Web App (**new version**).
+2. Hit once: `GET …/exec?migrate=1` **or** `GET …/exec?health=1` / POST `{ type: "health" }`.
+3. Smoke: `npm run maintenance:smoke` (optional second GET within 45s to observe cache).
+
+Plan completo: `sparrow-harness/thoughts/shared/plans/2026-09-17-logistic-app-latency.md`.
+
+> Tras cambiar `GOOGLE_APPS_SCRIPT.js` en el repo, un humano debe **redeployar** la Web App (Manage deployments → New version). Hasta entonces producción sigue con el script viejo. **HITL obligatorio** tras merge si este PR tocó Apps Script. **Phase B requiere redeploy + migrate/health.**
 
 ---
 
