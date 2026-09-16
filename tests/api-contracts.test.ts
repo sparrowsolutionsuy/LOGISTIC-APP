@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchLogisticsDataFromUrl,
   isMockEnvironment,
+  isRetryableLogisticsGetFailure,
   isUnknownTypeErrorResponse,
   isValidHealthResponse,
   lastLogisticsFetchWasMock,
+  LOGISTICS_GET_TIMEOUT_MS,
   parseAppsScriptStatusResponse,
   shouldCloneMockOnFetchFailure,
+  type LogisticsGetAttemptFailure,
 } from '../src/services/api';
 import { MOCK_DATA } from '../src/constants';
 
@@ -44,13 +47,45 @@ describe('shouldCloneMockOnFetchFailure', () => {
   });
 });
 
+describe('logistics GET retry classification', () => {
+  it('retries http 404 and 5xx, not other 4xx', () => {
+    expect(
+      isRetryableLogisticsGetFailure({ kind: 'http', message: 'HTTP 404', httpStatus: 404 })
+    ).toBe(true);
+    expect(
+      isRetryableLogisticsGetFailure({ kind: 'http', message: 'HTTP 503', httpStatus: 503 })
+    ).toBe(true);
+    expect(
+      isRetryableLogisticsGetFailure({ kind: 'http', message: 'HTTP 403', httpStatus: 403 })
+    ).toBe(false);
+  });
+
+  it('retries html, network, timeout, invalid_json', () => {
+    const kinds: LogisticsGetAttemptFailure['kind'][] = [
+      'html',
+      'network',
+      'timeout',
+      'invalid_json',
+    ];
+    for (const kind of kinds) {
+      expect(isRetryableLogisticsGetFailure({ kind, message: 'x' })).toBe(true);
+    }
+  });
+
+  it('exports 30s GET timeout constant', () => {
+    expect(LOGISTICS_GET_TIMEOUT_MS).toBe(30_000);
+  });
+});
+
 describe('fetchLogisticsDataFromUrl with configured URL', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('throws on failed fetch and does not return mock clients/trips/costs (PROD + VITE_ALLOW_MOCK)', async () => {
+    vi.useFakeTimers();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -62,13 +97,14 @@ describe('fetchLogisticsDataFromUrl with configured URL', () => {
     );
 
     let result: unknown = null;
-    await expect(
-      (async () => {
-        result = await fetchLogisticsDataFromUrl('https://example.invalid/macros/s/regression/exec', {
-          treatAsProd: true,
-        });
-      })()
-    ).rejects.toThrow(/HTTP 503/);
+    const pending = (async () => {
+      result = await fetchLogisticsDataFromUrl('https://example.invalid/macros/s/regression/exec', {
+        treatAsProd: true,
+      });
+    })();
+    const expectation = expect(pending).rejects.toThrow(/HTTP 503/);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expectation;
 
     expect(result).toBeNull();
     expect(lastLogisticsFetchWasMock()).toBe(false);
@@ -80,6 +116,101 @@ describe('fetchLogisticsDataFromUrl with configured URL', () => {
         ]),
       })
     );
+  });
+
+  it('parses scheduledCostDefinitions from the same GET payload', async () => {
+    const payload = {
+      clients: [{ id: 'c1', nombre: 'Acme', rut: '', contacto: '', telefono: '', email: '' }],
+      trips: [],
+      costs: [],
+      scheduledCostDefinitions: [
+        {
+          id: 'sc1',
+          categoria: 'Fijo',
+          descripcion: 'Alquiler',
+          monto: 100,
+          dayOfMonth: 1,
+          active: true,
+          creadoPor: 'admin',
+          creadoEn: '2026-01-01',
+          currency: 'USD',
+        },
+      ],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => JSON.stringify(payload),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchLogisticsDataFromUrl(
+      'https://example.invalid/macros/s/phase-a/exec',
+      { treatAsProd: true }
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.clients).toHaveLength(1);
+    expect(result.clients[0]?.id).toBe('c1');
+    expect(result.scheduledCostDefinitions).toHaveLength(1);
+    expect(result.scheduledCostDefinitions[0]?.id).toBe('sc1');
+    expect(result.scheduledCostDefinitions[0]?.descripcion).toBe('Alquiler');
+    expect(lastLogisticsFetchWasMock()).toBe(false);
+  });
+
+  it('retries once on HTTP 404 then succeeds', async () => {
+    vi.useFakeTimers();
+    const payload = {
+      clients: [],
+      trips: [],
+      costs: [],
+      scheduledCostDefinitions: [{ id: 'sc-ok', categoria: 'Fijo', descripcion: 'x', monto: 1 }],
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: async () => 'missing',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => JSON.stringify(payload),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = fetchLogisticsDataFromUrl('https://example.invalid/macros/s/retry/exec', {
+      treatAsProd: true,
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await pending;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.scheduledCostDefinitions[0]?.id).toBe('sc-ok');
+  });
+
+  it('does not retry forever on persistent 404', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: async () => 'missing',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = fetchLogisticsDataFromUrl('https://example.invalid/macros/s/flake/exec', {
+      treatAsProd: true,
+    });
+    const expectation = expect(pending).rejects.toThrow(/HTTP 404/);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expectation;
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(3);
   });
 });
 

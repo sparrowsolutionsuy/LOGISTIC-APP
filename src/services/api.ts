@@ -320,6 +320,35 @@ export interface LogisticsData {
   clients: Client[];
   trips: Trip[];
   costs: Cost[];
+  /** Present on the same GET dump as clients/trips/costs (Apps Script already sends the key). */
+  scheduledCostDefinitions: ScheduledCostDefinition[];
+}
+
+/** GET dump timeout — aligned to observed Apps Script p95 (often 8–22s). */
+export const LOGISTICS_GET_TIMEOUT_MS = 30_000;
+const LOGISTICS_GET_MAX_ATTEMPTS = 3;
+const LOGISTICS_GET_RETRY_BACKOFF_MS = [400, 1000] as const;
+
+export type LogisticsGetFailureKind = 'http' | 'html' | 'invalid_json' | 'network' | 'timeout';
+
+export interface LogisticsGetAttemptFailure {
+  kind: LogisticsGetFailureKind;
+  message: string;
+  httpStatus?: number;
+}
+
+/** Whether a classified logistics GET failure should be retried (404 / HTML / network flakes). */
+export function isRetryableLogisticsGetFailure(failure: LogisticsGetAttemptFailure): boolean {
+  if (failure.kind === 'http') {
+    const status = failure.httpStatus;
+    return status === 404 || (typeof status === 'number' && status >= 500);
+  }
+  return (
+    failure.kind === 'html' ||
+    failure.kind === 'network' ||
+    failure.kind === 'timeout' ||
+    failure.kind === 'invalid_json'
+  );
 }
 
 function cloneMockData(): LogisticsData {
@@ -327,12 +356,103 @@ function cloneMockData(): LogisticsData {
     clients: MOCK_DATA.clients.map((c) => normalizeClient(c)),
     trips: MOCK_DATA.trips.map((t) => normalizeTrip(t)),
     costs: MOCK_DATA.costs.map((c) => normalizeCost(c)),
+    scheduledCostDefinitions: getMockScheduledDefinitions().map((d) => ({ ...d })),
   };
+}
+
+function mapLogisticsRecord(record: {
+  clients?: unknown;
+  trips?: unknown;
+  costs?: unknown;
+  scheduledCostDefinitions?: unknown;
+}): LogisticsData {
+  const clientsRaw = Array.isArray(record.clients) ? record.clients : [];
+  const tripsRaw = Array.isArray(record.trips) ? record.trips : [];
+  const costsRaw = Array.isArray(record.costs) ? record.costs : [];
+  const defsRaw = Array.isArray(record.scheduledCostDefinitions)
+    ? record.scheduledCostDefinitions
+    : [];
+  return {
+    clients: clientsRaw.map((row) => normalizeClient(row)),
+    trips: tripsRaw.map((row) => normalizeTrip(row)),
+    costs: costsRaw.map((row) => normalizeCost(row)),
+    scheduledCostDefinitions: defsRaw.map((row) => normalizeScheduledCostDefinition(row)),
+  };
+}
+
+async function attemptLogisticsGet(
+  url: string
+): Promise<{ ok: true; data: LogisticsData } | { ok: false; failure: LogisticsGetAttemptFailure }> {
+  try {
+    const response = await fetchWithTimeout(
+      url,
+      { method: 'GET', cache: 'no-store' },
+      LOGISTICS_GET_TIMEOUT_MS
+    );
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        failure: {
+          kind: 'http',
+          message: `HTTP ${response.status}: ${response.statusText}`,
+          httpStatus: response.status,
+        },
+      };
+    }
+
+    const text = await response.text();
+
+    if (responseLooksLikeHtml(text)) {
+      return {
+        ok: false,
+        failure: {
+          kind: 'html',
+          message: 'Apps Script devolvió HTML — re-deployar como "Cualquier persona"',
+        },
+      };
+    }
+
+    let record: {
+      clients?: unknown;
+      trips?: unknown;
+      costs?: unknown;
+      scheduledCostDefinitions?: unknown;
+    };
+    try {
+      record = JSON.parse(text) as typeof record;
+    } catch {
+      return {
+        ok: false,
+        failure: { kind: 'invalid_json', message: 'Respuesta GET no es JSON' },
+      };
+    }
+
+    return { ok: true, data: mapLogisticsRecord(record) };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        ok: false,
+        failure: {
+          kind: 'timeout',
+          message: `Timeout al conectar con Google Sheets (${LOGISTICS_GET_TIMEOUT_MS / 1000}s)`,
+        },
+      };
+    }
+    return {
+      ok: false,
+      failure: {
+        kind: 'network',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
 }
 
 /**
  * Core GET loader. Prefer `fetchLogisticsData()` in app code.
  * Exported for regression tests (configured URL + failure must not return mock rows).
+ * Includes scheduledCostDefinitions from the same payload (no second GET).
  */
 export async function fetchLogisticsDataFromUrl(
   sheetUrl: string,
@@ -351,49 +471,38 @@ export async function fetchLogisticsDataFromUrl(
     return cloneMockData();
   }
 
-  try {
-    const response = await fetchWithTimeout(url, { method: 'GET', cache: 'no-store' }, 15000);
+  let lastFailure: LogisticsGetAttemptFailure | null = null;
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  for (let attempt = 1; attempt <= LOGISTICS_GET_MAX_ATTEMPTS; attempt++) {
+    const result = await attemptLogisticsGet(url);
+    if (result.ok) {
+      logisticsFetchUsedMock = false;
+      return result.data;
     }
 
-    const text = await response.text();
+    lastFailure = result.failure;
+    const retryable = isRetryableLogisticsGetFailure(result.failure);
+    const canRetry = retryable && attempt < LOGISTICS_GET_MAX_ATTEMPTS;
 
-    if (responseLooksLikeHtml(text)) {
-      console.error(
-        '[GDC API] Apps Script devolvió HTML en lugar de JSON — verificar permisos de deploy'
-      );
-      throw new Error('Apps Script devolvió HTML — re-deployar como "Cualquier persona"');
+    console.error('[GDC API] fetchLogisticsData intento falló:', {
+      attempt,
+      kind: result.failure.kind,
+      httpStatus: result.failure.httpStatus,
+      message: result.failure.message.slice(0, 200),
+      retrying: canRetry,
+    });
+
+    if (!canRetry) {
+      break;
     }
 
-    const record = JSON.parse(text) as {
-      clients?: unknown;
-      trips?: unknown;
-      costs?: unknown;
-      scheduledCostDefinitions?: unknown;
-    };
-    const clientsRaw = Array.isArray(record.clients) ? record.clients : [];
-    const tripsRaw = Array.isArray(record.trips) ? record.trips : [];
-    const costsRaw = Array.isArray(record.costs) ? record.costs : [];
-
-    logisticsFetchUsedMock = false;
-    return {
-      clients: clientsRaw.map((row) => normalizeClient(row)),
-      trips: tripsRaw.map((row) => normalizeTrip(row)),
-      costs: costsRaw.map((row) => normalizeCost(row)),
-    };
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      console.error('[GDC API] Timeout al conectar con Google Sheets (15s)');
-    } else {
-      console.error('[GDC API] fetchLogisticsData falló:', error);
-    }
-    // Real backend URL configured: never substitute cloneMockData()
-    // (including production builds and VITE_ALLOW_MOCK=true).
-    logisticsFetchUsedMock = false;
-    throw error instanceof Error ? error : new Error(String(error));
+    const backoff = LOGISTICS_GET_RETRY_BACKOFF_MS[attempt - 1] ?? 1000;
+    await delay(backoff);
   }
+
+  // Real backend URL configured: never substitute cloneMockData()
+  logisticsFetchUsedMock = false;
+  throw new Error(lastFailure?.message ?? 'fetchLogisticsData falló');
 }
 
 export async function fetchLogisticsData(): Promise<LogisticsData> {
@@ -900,47 +1009,15 @@ export async function deleteCostFromSheet(id: string): Promise<boolean> {
   return postSheet('deleteCost', { id });
 }
 
-async function fetchRawLogisticsRecord(): Promise<{
-  clients?: unknown;
-  trips?: unknown;
-  costs?: unknown;
-  scheduledCostDefinitions?: unknown;
-}> {
-  const response = await fetchWithTimeout(
-    SHEET_URL,
-    { method: 'GET', cache: 'no-store' },
-    15000
-  );
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
-
-  const text = await response.text();
-
-  if (responseLooksLikeHtml(text)) {
-    throw new Error('Apps Script devolvió HTML — re-deployar como "Cualquier persona"');
-  }
-
-  return JSON.parse(text) as {
-    clients?: unknown;
-    trips?: unknown;
-    costs?: unknown;
-    scheduledCostDefinitions?: unknown;
-  };
-}
-
+/** Prefer defs from `fetchLogisticsData()` when already loaded; this helper keeps a standalone path for other callers. */
 export async function fetchScheduledCostDefinitions(): Promise<ScheduledCostDefinition[]> {
   if (IS_MOCK) {
     return getMockScheduledDefinitions().map((d) => ({ ...d }));
   }
 
   try {
-    const record = await fetchRawLogisticsRecord();
-    const defsRaw = Array.isArray(record.scheduledCostDefinitions)
-      ? record.scheduledCostDefinitions
-      : [];
-    return defsRaw.map((row) => normalizeScheduledCostDefinition(row));
+    const data = await fetchLogisticsData();
+    return data.scheduledCostDefinitions;
   } catch (error) {
     console.error('[GDC API] fetchScheduledCostDefinitions falló:', error);
     // Same rule as fetchLogisticsData: no silent mock when talking to a real backend.

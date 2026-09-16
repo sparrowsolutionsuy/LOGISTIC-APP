@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
-const LATENCY_BUDGET_MS = Number(process.env.SMOKE_LATENCY_MS || 12000);
+const LATENCY_BUDGET_MS = Number(process.env.SMOKE_LATENCY_MS || 15000);
 const LATENCY_WARN_MS = Number(process.env.SMOKE_LATENCY_WARN_MS || 8000);
 
 function loadEnvFile(name) {
@@ -94,6 +94,10 @@ async function main() {
   }
   console.log(`VITE_SHEET_URL length: ${SHEET_URL.length} chars (value redacted)`);
   console.log(`Drive remitos id set: ${Boolean(REMITOS)}; facturas id set: ${Boolean(FACTURAS)}`);
+  console.log(
+    `Latency budget: warn >${LATENCY_WARN_MS}ms, fail >${LATENCY_BUDGET_MS}ms ` +
+      `(override with SMOKE_LATENCY_WARN_MS / SMOKE_LATENCY_MS)`
+  );
 
   const t0 = Date.now();
   let res;
@@ -122,12 +126,19 @@ async function main() {
     return;
   }
 
+  console.log(`GET latencyMs=${latencyMs}`);
   if (latencyMs > LATENCY_BUDGET_MS) {
-    fail(`Latency ${latencyMs}ms exceeds budget ${LATENCY_BUDGET_MS}ms`);
+    fail(
+      `Latency ${latencyMs}ms exceeds fail budget ${LATENCY_BUDGET_MS}ms ` +
+        `(target p95 <8s; front timeout 30s)`
+    );
   } else if (latencyMs > LATENCY_WARN_MS) {
-    warn(`Latency ${latencyMs}ms > warn threshold ${LATENCY_WARN_MS}ms`);
+    warn(
+      `Latency ${latencyMs}ms > warn threshold ${LATENCY_WARN_MS}ms ` +
+        `(fail budget ${LATENCY_BUDGET_MS}ms)`
+    );
   } else {
-    ok(`Latency ${latencyMs}ms within budget`);
+    ok(`Latency ${latencyMs}ms within warn/fail budgets (${LATENCY_WARN_MS}/${LATENCY_BUDGET_MS}ms)`);
   }
 
   const keys = Object.keys(data || {});
