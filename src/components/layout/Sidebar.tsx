@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { ActiveTab, User, UserRole } from '../../types';
 import { ROUTE_NAMES } from '../../constants';
+import { IS_MOCK } from '../../services/api';
 
 export interface SidebarProps {
   user: User;
@@ -229,7 +230,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 offline ? 'bg-[var(--accent-amber)]' : 'bg-[var(--accent-emerald)]'
               }`}
             />
-            {offline ? 'Modo demo' : 'Conectado a Sheets'}
+            {offline
+              ? IS_MOCK
+                ? 'Modo demo'
+                : 'Sin conexión a Sheets'
+              : 'Conectado a Sheets'}
           </div>
         ) : null}
 

@@ -4,9 +4,12 @@ import { MOCK_DATA } from '../constants';
 const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
 const DRIVE_FOLDER_REMITOS = String(import.meta.env.VITE_DRIVE_FOLDER_REMITOS ?? '').trim();
 const DRIVE_FOLDER_FACTURAS = String(import.meta.env.VITE_DRIVE_FOLDER_FACTURAS ?? '').trim();
+const ALLOW_MOCK =
+  import.meta.env.VITE_ALLOW_MOCK === 'true' ||
+  (Boolean(import.meta.env.DEV) && !SHEET_URL);
 
-/** Sin URL de Web App en el build → modo mock local. */
-export const IS_MOCK = !SHEET_URL;
+/** Sin URL de Web App (solo en DEV / VITE_ALLOW_MOCK) → modo mock local. */
+export const IS_MOCK = !SHEET_URL && ALLOW_MOCK;
 
 if (import.meta.env.DEV) {
   console.info('[GDC API] SHEET_URL configurada:', SHEET_URL ? '✅ SÍ' : '❌ NO (modo mock)');
@@ -305,7 +308,11 @@ function cloneMockData(): LogisticsData {
 }
 
 export async function fetchLogisticsData(): Promise<LogisticsData> {
-  if (IS_MOCK) {
+  if (!SHEET_URL) {
+    if (import.meta.env.PROD && !ALLOW_MOCK) {
+      logisticsFetchUsedMock = false;
+      throw new Error('VITE_SHEET_URL no configurada en producción');
+    }
     logisticsFetchUsedMock = true;
     console.info('[GDC API] Modo mock activo — VITE_SHEET_URL no configurada');
     return cloneMockData();
@@ -353,6 +360,11 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
       console.error('[GDC API] Timeout al conectar con Google Sheets (15s)');
     } else {
       console.error('[GDC API] fetchLogisticsData falló:', error);
+    }
+    // Producción: no sustituir con mock (evita "Modo demo" silencioso con datos falsos).
+    if (import.meta.env.PROD && !ALLOW_MOCK) {
+      logisticsFetchUsedMock = false;
+      throw error instanceof Error ? error : new Error(String(error));
     }
     logisticsFetchUsedMock = true;
     return cloneMockData();
@@ -770,8 +782,73 @@ export async function fetchScheduledCostDefinitions(): Promise<ScheduledCostDefi
     return defsRaw.map((row) => normalizeScheduledCostDefinition(row));
   } catch (error) {
     console.error('[GDC API] fetchScheduledCostDefinitions falló:', error);
+    if (import.meta.env.PROD && !ALLOW_MOCK) {
+      throw error instanceof Error ? error : new Error(String(error));
+    }
     return getMockScheduledDefinitions().map((d) => ({ ...d }));
   }
+}
+
+export interface HealthSheetStatus {
+  exists: boolean;
+  rows: number;
+}
+
+export interface HealthDriveStatus {
+  ok: boolean;
+  error?: string;
+}
+
+export interface HealthResponse {
+  status: 'success' | 'error';
+  sheets: Record<string, HealthSheetStatus>;
+  drive: {
+    remitos?: HealthDriveStatus;
+    facturas?: HealthDriveStatus;
+  };
+  latencyMs?: number;
+  message?: string;
+}
+
+/** Probe Sheets tabs + Drive folder ACLs via Apps Script `type: health`. */
+export async function fetchHealth(): Promise<HealthResponse> {
+  if (!SHEET_URL) {
+    throw new Error('VITE_SHEET_URL no configurada');
+  }
+  const data: Record<string, string> = {};
+  if (DRIVE_FOLDER_REMITOS) data.remitosFolderId = DRIVE_FOLDER_REMITOS;
+  if (DRIVE_FOLDER_FACTURAS) data.facturasFolderId = DRIVE_FOLDER_FACTURAS;
+
+  const response = await fetchWithTimeout(
+    SHEET_URL,
+    {
+      method: 'POST',
+      headers: APPS_SCRIPT_PLAIN_HEADERS,
+      body: JSON.stringify({ type: 'health', data }),
+    },
+    20000
+  );
+
+  if (!response.ok) {
+    throw new Error(`Health HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  const text = await response.text();
+  if (responseLooksLikeHtml(text)) {
+    throw new Error('Health devolvió HTML — re-deployar Apps Script');
+  }
+
+  const parsed = JSON.parse(text) as HealthResponse;
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Health: respuesta inválida');
+  }
+  return {
+    status: parsed.status === 'error' ? 'error' : 'success',
+    sheets: parsed.sheets && typeof parsed.sheets === 'object' ? parsed.sheets : {},
+    drive: parsed.drive && typeof parsed.drive === 'object' ? parsed.drive : {},
+    latencyMs: typeof parsed.latencyMs === 'number' ? parsed.latencyMs : undefined,
+    message: parsed.message,
+  };
 }
 
 export async function saveScheduledCostDefinition(def: ScheduledCostDefinition): Promise<void> {
