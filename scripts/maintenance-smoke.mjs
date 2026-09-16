@@ -141,6 +141,33 @@ async function main() {
     ok(`Latency ${latencyMs}ms within warn/fail budgets (${LATENCY_WARN_MS}/${LATENCY_BUDGET_MS}ms)`);
   }
 
+  // Phase B: optional second GET within ScriptCache TTL (45s). Informational only —
+  // Apps Script variance means we never fail hard if the second call is not faster.
+  try {
+    const t1 = Date.now();
+    const res2 = await fetch(SHEET_URL, { method: 'GET', cache: 'no-store', redirect: 'follow' });
+    const text2 = await res2.text();
+    const latencyMs2 = Date.now() - t1;
+    if (!res2.ok || responseLooksLikeHtml(text2)) {
+      warn(`Second GET skipped comparison (HTTP ${res2.status} / HTML)`);
+    } else {
+      JSON.parse(text2);
+      console.log(
+        `GET latencyMs(2nd)=${latencyMs2} (cache hit expected within 45s TTL after Phase B redeploy; ` +
+          `cold=${latencyMs}ms — informational, not a hard fail)`
+      );
+      if (latencyMs2 < latencyMs) {
+        ok(`Second GET faster than first (${latencyMs2}ms < ${latencyMs}ms)`);
+      } else {
+        warn(
+          `Second GET not faster (${latencyMs2}ms vs ${latencyMs}ms) — OK if GAS cold/variance or Phase B not redeployed`
+        );
+      }
+    }
+  } catch (err) {
+    warn(`Second GET error (ignored): ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const keys = Object.keys(data || {});
   console.log(`Top-level keys: ${keys.join(', ')}`);
   for (const expected of schema.expectedGetKeys) {
