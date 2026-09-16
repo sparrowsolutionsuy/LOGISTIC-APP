@@ -48,12 +48,17 @@ export function costUsd(c: Cost): number {
   return c.montoUSD ?? 0;
 }
 
-// ─── Combustible por KM ──────────────────────────────────────────────────────
+// ─── Combustible por KM (política A — tasa flota global) ─────────────────────
+//
+// Fuel is loaded periodically (not per trip). Policy A:
+//   tasa = (Σ Combustible montoUSD × 0.7) / Σ km de TODOS los viajes
+// Always use the same all-time universe for the rate, even when enriching a
+// filtered month subset. Do NOT divide all-time fuel by month-only km.
 
 /**
- * Calcula el costo de combustible por km recorrido en viaje con carga.
- * Se imputa el 70% del combustible total a viajes cargados.
- * El denominador son los km de todos los viajes registrados.
+ * Fleet fuel rate (USD/km): 70% of Combustible costs ÷ km of the given trips.
+ * Callers that enrich a filtered trip list must pass the full trip+cost
+ * universe here (or via enrichTrips options), not the filtered subset alone.
  */
 export function calcCombustiblePorKm(trips: Trip[], costs: Cost[]): number {
   const totalCombustibleUSD = costs
@@ -82,23 +87,47 @@ function estimatedFuelCostForTrip(trip: Trip, combustiblePorKm: number): number 
   return (trip.kmRecorridos ?? 0) * combustiblePorKm;
 }
 
+/** Options for enrichTrips — rate universe must match policy A when scope is filtered. */
+export type EnrichTripsOptions = {
+  /** Trips used to compute fleet fuel rate. Defaults to `trips` (scope). Prefer all-time. */
+  rateTrips?: Trip[];
+  /** Costs used to compute fleet fuel rate. Defaults to `costs`. Prefer all-time Combustible. */
+  rateCosts?: Cost[];
+  /** Precomputed rate; if set, skips calcCombustiblePorKm. */
+  combustiblePorKm?: number;
+};
+
 // ─── enrich trips ────────────────────────────────────────────────────────────
 
-export function enrichTrips(trips: Trip[], clients: Client[], costs: Cost[]): TripWithMetrics[] {
-  const combustiblePorKm = calcCombustiblePorKm(trips, costs);
+/**
+ * Enriches each trip in `trips` with estimated margin.
+ * Fuel rate uses policy A: pass `rateTrips`/`rateCosts` (full fleet) when `trips`
+ * is a filtered subset (e.g. one month), otherwise rate = allFuel/monthKm (bug).
+ */
+export function enrichTrips(
+  trips: Trip[],
+  clients: Client[],
+  costs: Cost[],
+  options?: EnrichTripsOptions
+): TripWithMetrics[] {
+  const combustiblePorKm =
+    options?.combustiblePorKm ??
+    calcCombustiblePorKm(options?.rateTrips ?? trips, options?.rateCosts ?? costs);
 
   return trips.map((trip) => {
     const client = clients.find((c) => c.id === trip.clientId);
     const revenue = tripRevenueUSD(trip);
     const directCosts = directCostsForTrip(costs, trip.id);
-    const fuelCost = estimatedFuelCostForTrip(trip, combustiblePorKm);
-    const totalCosts = directCosts + fuelCost;
+    const fuelCostEst = estimatedFuelCostForTrip(trip, combustiblePorKm);
+    const totalCosts = directCosts + fuelCostEst;
     const netMargin = revenue - totalCosts;
     const marginPct = revenue > 0 ? (netMargin / revenue) * 100 : 0;
 
     return {
       ...trip,
       clientName: client?.nombreComercial ?? 'Desconocido',
+      fuelCostEst,
+      directCosts,
       totalCosts,
       netMargin,
       marginPct,
@@ -258,13 +287,14 @@ export function buildKPIData(
     .filter((c) => c.categoria !== 'Combustible')
     .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
 
-  const fuelCostsInScope = scopeCosts
-    .filter((c) => c.categoria === 'Combustible')
-    .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
-
-  const totalCombustibleAtribuible = monthFilter
-    ? fuelCostsInScope * 0.7
-    : scopeTrips.reduce((s, t) => s + estimatedFuelCostForTrip(t, combustiblePorKm), 0);
+  // Fuel attributed to period trips = Σ (km × global rate). Same rate as enrichTrips
+  // (policy A). Period KPI still includes non-fuel costs dated in the month (overhead),
+  // so KPI totalCostos can diverge from Σ trip totalCosts (which only has trip-linked
+  // directos + fuel_est).
+  const totalCombustibleAtribuible = scopeTrips.reduce(
+    (s, t) => s + estimatedFuelCostForTrip(t, combustiblePorKm),
+    0
+  );
 
   const totalCostos = directCosts + totalCombustibleAtribuible;
   const margenNeto = totalGenerado - totalCostos;

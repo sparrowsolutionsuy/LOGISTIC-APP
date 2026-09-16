@@ -168,7 +168,10 @@ export async function generateMonthlyReport(
     if (v.revenue > topProduct.revenue) topProduct = { name, revenue: v.revenue, tons: v.tons };
   });
 
-  const enriched = enrichTrips(tripsInMonth, clients, costs);
+  const enriched = enrichTrips(tripsInMonth, clients, costs, {
+    rateTrips: trips,
+    rateCosts: costs,
+  });
   let worstMarginTrip = { id: '—', client: '—', marginPct: 0 };
   let bestMarginTrip = { id: '—', client: '—', marginPct: 0 };
   let bestPct = -Infinity;

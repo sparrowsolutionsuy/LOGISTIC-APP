@@ -207,8 +207,12 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
   );
 
   const enriched = useMemo(
-    () => enrichTrips(scopeTrips, clients, costs),
-    [scopeTrips, clients, costs]
+    () =>
+      enrichTrips(scopeTrips, clients, costs, {
+        rateTrips: trips,
+        rateCosts: costs,
+      }),
+    [scopeTrips, clients, costs, trips]
   );
 
   const periodEmpty =
@@ -513,13 +517,17 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
             </ResponsiveContainer>
           </ChartBox>
           <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
-            <div className="border-b border-[var(--border)] px-4 py-3">
+            <div className="border-b border-[var(--border)] px-4 py-3 space-y-2">
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">
                 Rentabilidad por viaje — {periodSub}
               </h3>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                Margen estimado. Combustible = proxy por km (tasa flota global, no ticket por viaje). No
+                incluye overhead (sueldos, alquiler, cuota) salvo que estén vinculados al viaje.
+              </p>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] text-sm">
+              <table className="w-full min-w-[980px] text-sm">
                 <thead>
                   <tr style={{ backgroundColor: 'var(--bg-elevated)' }}>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
@@ -535,13 +543,19 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                       Estado Cobro
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                      Costos
+                      Comb. est.
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                      Margen
+                      Directos
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                      Margen %
+                      Total costos
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Margen est.
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+                      Margen % est.
                     </th>
                   </tr>
                 </thead>
@@ -562,6 +576,12 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
                         <td className="px-4 py-3 text-right text-[var(--text-primary)]">{fmtMoney(rev)}</td>
                         <td className="px-4 py-3 text-center">
                           <CobradoStatusCell trip={row} />
+                        </td>
+                        <td className="px-4 py-3 text-right text-[var(--text-primary)]">
+                          {fmtMoney(row.fuelCostEst)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-[var(--text-primary)]">
+                          {fmtMoney(row.directCosts)}
                         </td>
                         <td className="px-4 py-3 text-right text-[var(--text-primary)]">
                           {fmtMoney(row.totalCosts)}
@@ -749,8 +769,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       {tab === 'costos' && (
         <div className="space-y-6">
           <p className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3 text-sm text-[var(--text-secondary)]">
-            Los costos de combustible se imputan proporcionalmente a los viajes según km recorridos (70% de
-            carga, 30% sin carga). Los márgenes por viaje son estimados.
+            Los costos de combustible se estiman con la tasa flota global (70% del combustible
+            histórico ÷ km de todos los viajes), aplicada a los km de cada viaje. Los márgenes por
+            viaje son estimados y no incluyen overhead sin tripId.
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Kpi title="Costos totales" value={fmtMoney(totalCostsAll)} sub={periodSub} />

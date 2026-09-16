@@ -127,6 +127,11 @@ export interface TripRevenueUSD {
 
 export interface TripWithMetrics extends Trip {
   clientName: string;
+  /** Combustible estimado = km × tasa flota (política A). */
+  fuelCostEst: number;
+  /** Costos no-combustible con tripId === viaje. */
+  directCosts: number;
+  /** fuelCostEst + directCosts */
   totalCosts: number;
   netMargin: number;
   marginPct: number;
