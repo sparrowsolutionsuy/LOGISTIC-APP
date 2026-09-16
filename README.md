@@ -82,11 +82,13 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 
 **Operaciones soportadas (POST `type`):** `login`, `trip`, `client`, `updateTrip`, `deleteTrip`, `cost`, `updateCost`, `deleteCost`, `saveScheduledCost`, `updateScheduledCost`, `deleteScheduledCost`, `uploadInvoice`, `uploadRemito`, `sendReportEmail`, `health`. Tipos desconocidos responden `status: error`.
 
+**Remitos / facturas (Drive):** el cliente reintenta subidas 2–3 veces ante HTTP 404, HTML, red o JSON inválido; comprime fotos de remito (máx. ~1600px, JPEG ~0.8) antes de enviar. Los errores del script se muestran en toast/alerta.
+
 **Health:** POST `{ type: "health", data: { remitosFolderId?, facturasFolderId? } }` o GET `?health=1` — tabs, row counts, probe Drive (`DriveApp.getFolderById` only; no crea archivos).
 
 **Costos programados:** definiciones en `DB_CostosProgramados`; el GET las expone como `scheduledCostDefinitions`.
 
-> Tras cambiar `GOOGLE_APPS_SCRIPT.js` en el repo, un humano debe **redeployar** la Web App (Manage deployments → New version). Hasta entonces producción sigue con el script viejo.
+> Tras cambiar `GOOGLE_APPS_SCRIPT.js` en el repo, un humano debe **redeployar** la Web App (Manage deployments → New version). Hasta entonces producción sigue con el script viejo. **HITL obligatorio** tras merge si este PR tocó Apps Script.
 
 ---
 

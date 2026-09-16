@@ -550,128 +550,260 @@ export async function deleteTripFromSheet(id: string): Promise<boolean> {
   return postSheet('deleteTrip', { id });
 }
 
+/** Result of a Drive upload (remito / invoice) via Apps Script. */
+export interface DriveUploadResult {
+  ok: boolean;
+  url?: string;
+  message?: string;
+}
+
+const UPLOAD_MAX_ATTEMPTS = 3;
+const UPLOAD_RETRY_BACKOFF_MS = [500, 1200] as const;
+
+export type DriveUploadFailureKind =
+  | 'http'
+  | 'html'
+  | 'invalid_json'
+  | 'empty_url'
+  | 'server_error'
+  | 'network';
+
+export interface DriveUploadAttemptFailure {
+  kind: DriveUploadFailureKind;
+  message: string;
+  httpStatus?: number;
+  serverMessage?: string;
+}
+
+/** True when Apps Script `status:error` message looks transient (safe to retry). */
+export function isTransientAppsScriptErrorMessage(message?: string): boolean {
+  if (!message) return false;
+  return /timeout|temporar|unavailable|try again|reintent|503|502|429|rate.?limit|service error|internal error|network/i.test(
+    message
+  );
+}
+
+/** Whether a classified upload failure should be retried. */
+export function isRetryableUploadFailure(failure: DriveUploadAttemptFailure): boolean {
+  if (failure.kind === 'server_error') {
+    return isTransientAppsScriptErrorMessage(failure.serverMessage ?? failure.message);
+  }
+  if (failure.kind === 'http') {
+    const status = failure.httpStatus;
+    // Intermittent Apps Script 404s are the main flake; also retry 5xx.
+    return status === 404 || (typeof status === 'number' && status >= 500);
+  }
+  return (
+    failure.kind === 'html' ||
+    failure.kind === 'invalid_json' ||
+    failure.kind === 'empty_url' ||
+    failure.kind === 'network'
+  );
+}
+
+/** Parse Apps Script upload JSON into success URL or failure (unit-testable). */
+export function parseDriveUploadResponse(text: string):
+  | { ok: true; url: string }
+  | { ok: false; failure: DriveUploadAttemptFailure } {
+  if (responseLooksLikeHtml(text)) {
+    return {
+      ok: false,
+      failure: {
+        kind: 'html',
+        message: 'Apps Script devolvió HTML en lugar de JSON',
+      },
+    };
+  }
+  let result: { status?: string; url?: string; message?: string };
+  try {
+    result = JSON.parse(text) as { status?: string; url?: string; message?: string };
+  } catch {
+    return {
+      ok: false,
+      failure: {
+        kind: 'invalid_json',
+        message: 'Respuesta no es JSON',
+      },
+    };
+  }
+  if (result.status === 'error') {
+    const serverMessage = result.message ? String(result.message) : 'Error del servidor';
+    return {
+      ok: false,
+      failure: {
+        kind: 'server_error',
+        message: serverMessage,
+        serverMessage,
+      },
+    };
+  }
+  if (result.status === 'success' && result.url) {
+    return { ok: true, url: String(result.url) };
+  }
+  return {
+    ok: false,
+    failure: {
+      kind: 'empty_url',
+      message: 'Respuesta sin URL de archivo',
+      serverMessage: result.message ? String(result.message) : undefined,
+    },
+  };
+}
+
+function logUploadDiag(
+  label: string,
+  attempt: number,
+  detail: { httpStatus?: number; kind?: string; message?: string }
+): void {
+  // Never log folder IDs or file bytes — only status / attempt / redacted message.
+  console.error(`[GDC API] ${label}`, {
+    attempt,
+    httpStatus: detail.httpStatus,
+    kind: detail.kind,
+    message: detail.message ? String(detail.message).slice(0, 200) : undefined,
+  });
+}
+
+async function postDriveUpload(options: {
+  label: string;
+  type: 'uploadInvoice' | 'uploadRemito';
+  tripId: string;
+  fileData: string;
+  fileName: string;
+  mimeType: string;
+  folderId: string;
+}): Promise<DriveUploadResult> {
+  let lastMessage = 'No se pudo subir el archivo';
+
+  for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetchWithTimeout(
+        SHEET_URL,
+        {
+          method: 'POST',
+          headers: APPS_SCRIPT_PLAIN_HEADERS,
+          body: JSON.stringify({
+            type: options.type,
+            data: {
+              tripId: options.tripId,
+              fileData: options.fileData,
+              fileName: options.fileName,
+              mimeType: options.mimeType,
+              folderId: options.folderId,
+            },
+          }),
+        },
+        UPLOAD_FETCH_TIMEOUT_MS
+      );
+
+      if (!response.ok) {
+        const failure: DriveUploadAttemptFailure = {
+          kind: 'http',
+          message: `HTTP ${response.status}`,
+          httpStatus: response.status,
+        };
+        lastMessage = failure.message;
+        logUploadDiag(options.label, attempt, {
+          httpStatus: response.status,
+          kind: failure.kind,
+          message: failure.message,
+        });
+        if (attempt < UPLOAD_MAX_ATTEMPTS && isRetryableUploadFailure(failure)) {
+          await delay(UPLOAD_RETRY_BACKOFF_MS[attempt - 1] ?? 1500);
+          continue;
+        }
+        return { ok: false, message: lastMessage };
+      }
+
+      const text = await response.text();
+      const parsed = parseDriveUploadResponse(text);
+      if (parsed.ok) {
+        return { ok: true, url: parsed.url };
+      }
+
+      lastMessage = parsed.failure.message;
+      logUploadDiag(options.label, attempt, {
+        httpStatus: response.status,
+        kind: parsed.failure.kind,
+        message: parsed.failure.message,
+      });
+
+      if (attempt < UPLOAD_MAX_ATTEMPTS && isRetryableUploadFailure(parsed.failure)) {
+        await delay(UPLOAD_RETRY_BACKOFF_MS[attempt - 1] ?? 1500);
+        continue;
+      }
+      return { ok: false, message: lastMessage };
+    } catch (error) {
+      const isAbort = error instanceof Error && error.name === 'AbortError';
+      const failure: DriveUploadAttemptFailure = {
+        kind: 'network',
+        message: isAbort
+          ? 'Tiempo de espera agotado al subir'
+          : error instanceof Error
+            ? error.message || 'Error de red'
+            : 'Error de red',
+      };
+      lastMessage = failure.message;
+      logUploadDiag(options.label, attempt, { kind: failure.kind, message: failure.message });
+      if (attempt < UPLOAD_MAX_ATTEMPTS && isRetryableUploadFailure(failure)) {
+        await delay(UPLOAD_RETRY_BACKOFF_MS[attempt - 1] ?? 1500);
+        continue;
+      }
+      return { ok: false, message: lastMessage };
+    }
+  }
+
+  return { ok: false, message: lastMessage };
+}
+
 export async function uploadInvoice(
   tripId: string,
   fileData: string,
   fileName: string,
   mimeType: string
-): Promise<string> {
+): Promise<DriveUploadResult> {
   if (IS_MOCK) {
     await delay(MOCK_DELAY_MS);
-    return `https://mock-invoice.local/${encodeURIComponent(tripId)}/${encodeURIComponent(fileName)}`;
+    return {
+      ok: true,
+      url: `https://mock-invoice.local/${encodeURIComponent(tripId)}/${encodeURIComponent(fileName)}`,
+    };
   }
-  try {
-    const response = await fetchWithTimeout(
-      SHEET_URL,
-      {
-        method: 'POST',
-        headers: APPS_SCRIPT_PLAIN_HEADERS,
-        body: JSON.stringify({
-          type: 'uploadInvoice',
-          data: {
-            tripId,
-            fileData,
-            fileName,
-            mimeType,
-            folderId: DRIVE_FOLDER_FACTURAS,
-          },
-        }),
-      },
-      UPLOAD_FETCH_TIMEOUT_MS
-    );
-    if (!response.ok) {
-      console.error('[GDC API] uploadInvoice — HTTP', response.status, response.statusText);
-      return '';
-    }
-    const text = await response.text();
-    if (responseLooksLikeHtml(text)) {
-      console.error('[GDC API] uploadInvoice — Apps Script devolvió HTML');
-      return '';
-    }
-    let result: { status?: string; url?: string; message?: string };
-    try {
-      result = JSON.parse(text) as { status?: string; url?: string; message?: string };
-    } catch {
-      console.error('[GDC API] uploadInvoice — respuesta no es JSON');
-      return '';
-    }
-    if (result.status === 'error') {
-      console.error('[GDC API] uploadInvoice — servidor:', result.message);
-      return '';
-    }
-    if (result.status === 'success' && result.url) {
-      return String(result.url);
-    }
-    return '';
-  } catch (error) {
-    if (error instanceof Error && error.name !== 'AbortError') {
-      console.error('[GDC API] uploadInvoice error:', error);
-    }
-    return '';
-  }
+  return postDriveUpload({
+    label: 'uploadInvoice',
+    type: 'uploadInvoice',
+    tripId,
+    fileData,
+    fileName,
+    mimeType,
+    folderId: DRIVE_FOLDER_FACTURAS,
+  });
 }
 
-/** Sube imagen de remito a Drive vía Apps Script (`type: uploadRemito`) y devuelve la URL pública. */
+/** Sube imagen de remito a Drive vía Apps Script (`type: uploadRemito`). */
 export async function uploadRemitoImage(
   tripId: string,
   fileData: string,
   fileName: string,
   mimeType: string
-): Promise<string> {
+): Promise<DriveUploadResult> {
   if (IS_MOCK) {
     await delay(MOCK_DELAY_MS);
     console.info('[GDC API] Mock uploadRemitoImage:', fileName);
-    return `https://drive.google.com/mock-remito/${encodeURIComponent(tripId)}/${encodeURIComponent(fileName)}`;
+    return {
+      ok: true,
+      url: `https://drive.google.com/mock-remito/${encodeURIComponent(tripId)}/${encodeURIComponent(fileName)}`,
+    };
   }
-  try {
-    const response = await fetchWithTimeout(
-      SHEET_URL,
-      {
-        method: 'POST',
-        headers: APPS_SCRIPT_PLAIN_HEADERS,
-        body: JSON.stringify({
-          type: 'uploadRemito',
-          data: {
-            tripId,
-            fileData,
-            fileName,
-            mimeType,
-            folderId: DRIVE_FOLDER_REMITOS,
-          },
-        }),
-      },
-      UPLOAD_FETCH_TIMEOUT_MS
-    );
-    if (!response.ok) {
-      console.error('[GDC API] uploadRemitoImage — HTTP', response.status, response.statusText);
-      return '';
-    }
-    const text = await response.text();
-    if (responseLooksLikeHtml(text)) {
-      console.error('[GDC API] uploadRemitoImage — Apps Script devolvió HTML');
-      return '';
-    }
-    let result: { status?: string; url?: string; message?: string };
-    try {
-      result = JSON.parse(text) as { status?: string; url?: string; message?: string };
-    } catch {
-      console.error('[GDC API] uploadRemitoImage — respuesta no es JSON');
-      return '';
-    }
-    if (result.status === 'error') {
-      console.error('[GDC API] uploadRemitoImage — servidor:', result.message);
-      return '';
-    }
-    if (result.status === 'success' && result.url) {
-      return String(result.url);
-    }
-    return '';
-  } catch (error) {
-    if (error instanceof Error && error.name !== 'AbortError') {
-      console.error('[GDC API] uploadRemitoImage error:', error);
-    }
-    return '';
-  }
+  return postDriveUpload({
+    label: 'uploadRemitoImage',
+    type: 'uploadRemito',
+    tripId,
+    fileData,
+    fileName,
+    mimeType,
+    folderId: DRIVE_FOLDER_REMITOS,
+  });
 }
 
 export interface SendReportEmailParams {
