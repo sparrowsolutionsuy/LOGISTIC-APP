@@ -79,7 +79,73 @@ function uploadFile(data, folderNameFallback, updateSheetFn, sheetName) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+/**
+ * Health probe: sheet tab presence/row counts + optional Drive folder ACL check.
+ * Never creates files; never returns PII/passwords.
+ */
+function probeDriveFolder(folderId) {
+  if (!folderId || String(folderId).trim() === '') {
+    return { ok: false, error: 'missing folderId' };
+  }
+  try {
+    DriveApp.getFolderById(String(folderId).trim());
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+function buildHealthPayload(folderIds) {
+  var started = Date.now();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var names = ['DB_Viajes', 'DB_Clientes', 'DB_Costos', 'DB_CostosProgramados', 'DB_Usuarios'];
+  var sheets = {};
+  for (var i = 0; i < names.length; i++) {
+    var name = names[i];
+    var sh = ss.getSheetByName(name);
+    if (!sh) {
+      sheets[name] = { exists: false, rows: 0 };
+    } else {
+      sheets[name] = { exists: true, rows: Math.max(0, sh.getLastRow() - 1) };
+    }
+  }
+  var drive = {};
+  var ids = folderIds && typeof folderIds === 'object' ? folderIds : {};
+  var remitosId =
+    ids.remitosFolderId ||
+    (ids.folderIds && ids.folderIds.remitos) ||
+    ids.remitos ||
+    '';
+  var facturasId =
+    ids.facturasFolderId ||
+    (ids.folderIds && ids.folderIds.facturas) ||
+    ids.facturas ||
+    '';
+  if (remitosId) {
+    drive.remitos = probeDriveFolder(remitosId);
+  }
+  if (facturasId) {
+    drive.facturas = probeDriveFolder(facturasId);
+  }
+  return {
+    status: 'success',
+    sheets: sheets,
+    drive: drive,
+    latencyMs: Date.now() - started,
+  };
+}
+
 function doGet(e) {
+  var params = e && e.parameter ? e.parameter : {};
+  if (String(params.health || '') === '1') {
+    var getFolderIds = {};
+    if (params.remitosFolderId) getFolderIds.remitosFolderId = params.remitosFolderId;
+    if (params.facturasFolderId) getFolderIds.facturasFolderId = params.facturasFolderId;
+    return ContentService.createTextOutput(JSON.stringify(buildHealthPayload(getFolderIds))).setMimeType(
+      ContentService.MimeType.JSON
+    );
+  }
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   
   // Ensure DB_Usuarios (Auth)
@@ -145,6 +211,7 @@ function doGet(e) {
       'facturaFechaSolicitud',
       'facturaCobrada',
       'facturaFechaCobro',
+      'scheduledCostId',
     ]);
   } else {
     var requiredTripCols = [
@@ -156,6 +223,7 @@ function doGet(e) {
       'moneda',
       'tipoCambio',
       'tarifaUYU',
+      'scheduledCostId',
     ];
     var tripHeaders = tripSheet.getRange(1, 1, 1, tripSheet.getLastColumn()).getValues()[0];
     requiredTripCols.forEach(function (col) {
@@ -192,9 +260,29 @@ function doGet(e) {
   ensureCostSheetHeaders(costSheet);
   const costs = getSheetData('DB_Costos');
 
-  return ContentService.createTextOutput(JSON.stringify({ clients, trips, costs })).setMimeType(
-    ContentService.MimeType.JSON
-  );
+  // Asegurar DB_CostosProgramados y devolver definiciones al front
+  let scheduledDefSheet = ss.getSheetByName('DB_CostosProgramados');
+  if (!scheduledDefSheet) {
+    scheduledDefSheet = ss.insertSheet('DB_CostosProgramados');
+    scheduledDefSheet.appendRow([
+      'id',
+      'categoria',
+      'descripcion',
+      'monto',
+      'currency',
+      'dayOfMonth',
+      'active',
+      'creadoPor',
+      'creadoEn',
+      'tripId',
+    ]);
+  }
+  ensureScheduledDefinitionSheetHeaders(scheduledDefSheet);
+  const scheduledCostDefinitions = getSheetData('DB_CostosProgramados');
+
+  return ContentService.createTextOutput(
+    JSON.stringify({ clients, trips, costs, scheduledCostDefinitions })
+  ).setMimeType(ContentService.MimeType.JSON);
 }
 
 function doPost(e) {
@@ -208,6 +296,21 @@ function doPost(e) {
   lock.tryLock(10000);
 
   try {
+    if (type === 'health') {
+      var healthData = data && typeof data === 'object' ? data : {};
+      var folderIds = healthData.folderIds && typeof healthData.folderIds === 'object'
+        ? healthData.folderIds
+        : healthData;
+      return ContentService.createTextOutput(
+        JSON.stringify(
+          buildHealthPayload({
+            remitosFolderId: folderIds.remitosFolderId || folderIds.remitos || '',
+            facturasFolderId: folderIds.facturasFolderId || folderIds.facturas || '',
+          })
+        )
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
     if (type === 'login') {
       const userSheet = ss.getSheetByName('DB_Usuarios');
       if (!userSheet) return createErrorResponse('Users DB missing');
@@ -490,8 +593,7 @@ function doPost(e) {
       }, 'DB_Viajes');
     }
 
-    return ContentService.createTextOutput(JSON.stringify({ status: 'success' }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return createErrorResponse('Unknown type: ' + String(type));
 
   } catch (err) {
     return createErrorResponse(err.toString());
@@ -523,6 +625,7 @@ function ensureTripSheetHeaders(sheet) {
     'facturaFechaSolicitud',
     'facturaCobrada',
     'facturaFechaCobro',
+    'scheduledCostId',
   ];
   var lastCol = Math.max(1, sheet.getLastColumn());
   var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
@@ -570,6 +673,7 @@ function tripRowFromPayload(data, headers) {
     if (h === 'facturaCobrada') return data.facturaCobrada ? 1 : 0;
     if (h === 'facturaFechaCobro') return data.facturaFechaCobro || '';
     if (h === 'tipoCambio') return data.tipoCambio != null && data.tipoCambio !== '' ? data.tipoCambio : 1;
+    if (h === 'scheduledCostId') return data.scheduledCostId || '';
     // Preserva columnas extra/legadas sin romper el orden actual de la hoja.
     return data[h] != null ? data[h] : '';
   });

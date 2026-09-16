@@ -1,0 +1,187 @@
+{
+  "expectedGetKeys": ["clients", "trips", "costs", "scheduledCostDefinitions"],
+  "sheets": {
+    "DB_Viajes": {
+      "headers": [
+        "id",
+        "fecha",
+        "clientId",
+        "estado",
+        "contenido",
+        "pesoKg",
+        "kmRecorridos",
+        "tarifa",
+        "origen",
+        "destino",
+        "facturaUrl",
+        "remitoUrl",
+        "asignadoA",
+        "moneda",
+        "tipoCambio",
+        "facturaGenerada",
+        "facturaSolicitada",
+        "facturaFechaSolicitud",
+        "facturaCobrada",
+        "facturaFechaCobro",
+        "scheduledCostId",
+        "tarifaUYU"
+      ],
+      "sampleRows": [
+        {
+          "id": "trip-fixture-1",
+          "fecha": "2026-01-15",
+          "clientId": "client-fixture-1",
+          "estado": "Completado",
+          "contenido": "Carga de prueba",
+          "pesoKg": 1200,
+          "kmRecorridos": 85,
+          "tarifa": 150,
+          "origen": "Montevideo",
+          "destino": "Canelones",
+          "facturaUrl": "",
+          "remitoUrl": "",
+          "asignadoA": "operativo",
+          "moneda": "USD",
+          "tipoCambio": 40,
+          "facturaGenerada": 0,
+          "facturaSolicitada": 0,
+          "facturaFechaSolicitud": "",
+          "facturaCobrada": 0,
+          "facturaFechaCobro": "",
+          "scheduledCostId": "",
+          "tarifaUYU": 6000
+        }
+      ]
+    },
+    "DB_Clientes": {
+      "headers": [
+        "id",
+        "nombreComercial",
+        "departamento",
+        "localidad",
+        "latitud",
+        "longitud",
+        "rut",
+        "email",
+        "telefono",
+        "tieneFacturacionDiferente",
+        "facturacion"
+      ],
+      "sampleRows": [
+        {
+          "id": "client-fixture-1",
+          "nombreComercial": "Cliente Fixture SA",
+          "departamento": "Montevideo",
+          "localidad": "Centro",
+          "latitud": -34.9011,
+          "longitud": -56.1645,
+          "rut": "000000000000",
+          "email": "fixture@example.test",
+          "telefono": "090000000",
+          "tieneFacturacionDiferente": false,
+          "facturacion": ""
+        }
+      ]
+    },
+    "DB_Costos": {
+      "headers": [
+        "id",
+        "fecha",
+        "tripId",
+        "categoria",
+        "descripcion",
+        "monto",
+        "moneda",
+        "tipoCambio",
+        "montoUSD",
+        "comprobante",
+        "registradoPor",
+        "scheduledCostId",
+        "isScheduled",
+        "scheduleId",
+        "scheduledDay",
+        "scheduledMonths",
+        "currency"
+      ],
+      "sampleRows": [
+        {
+          "id": "cost-fixture-1",
+          "fecha": "2026-01-15",
+          "tripId": "trip-fixture-1",
+          "categoria": "Combustible",
+          "descripcion": "Tanque fixture",
+          "monto": 80,
+          "moneda": "USD",
+          "tipoCambio": 40,
+          "montoUSD": 80,
+          "comprobante": "",
+          "registradoPor": "admin",
+          "scheduledCostId": "",
+          "isScheduled": 0,
+          "scheduleId": "",
+          "scheduledDay": "",
+          "scheduledMonths": "",
+          "currency": "USD"
+        },
+        {
+          "id": "cost-fixture-2",
+          "fecha": "2026-01-01",
+          "tripId": "",
+          "categoria": "Alquiler",
+          "descripcion": "Alquiler mensual fixture",
+          "monto": 1600,
+          "moneda": "UYU",
+          "tipoCambio": 40,
+          "montoUSD": 40,
+          "comprobante": "",
+          "registradoPor": "admin",
+          "scheduledCostId": "sched-fixture-1",
+          "isScheduled": 1,
+          "scheduleId": "sched-fixture-1",
+          "scheduledDay": 1,
+          "scheduledMonths": "[\"2026-01\"]",
+          "currency": "UYU"
+        }
+      ]
+    },
+    "DB_CostosProgramados": {
+      "headers": [
+        "id",
+        "categoria",
+        "descripcion",
+        "monto",
+        "dayOfMonth",
+        "active",
+        "creadoPor",
+        "creadoEn",
+        "tripId",
+        "currency"
+      ],
+      "sampleRows": [
+        {
+          "id": "sched-fixture-1",
+          "categoria": "Alquiler",
+          "descripcion": "Definición fixture",
+          "monto": 1600,
+          "dayOfMonth": 1,
+          "active": true,
+          "creadoPor": "admin",
+          "creadoEn": "2026-01-01",
+          "tripId": "",
+          "currency": "UYU"
+        }
+      ]
+    },
+    "DB_Usuarios": {
+      "headers": ["usuario", "password", "nombre", "rol"],
+      "sampleRows": [
+        {
+          "usuario": "fixture-user",
+          "password": "REDACTED",
+          "nombre": "Usuario Fixture",
+          "rol": "operativo"
+        }
+      ]
+    }
+  }
+}
