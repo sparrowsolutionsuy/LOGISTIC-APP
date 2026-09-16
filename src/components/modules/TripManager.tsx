@@ -8,6 +8,7 @@ import { Modal } from '../ui/Modal';
 import { useToast } from '../../hooks/useToast';
 import { uploadInvoice, uploadRemitoImage } from '../../services/api';
 import { sanitizeFileName } from '../../utils/formatters';
+import { compressRemitoImage } from '../../utils/imageCompress';
 import {
   Plus,
   Calendar,
@@ -134,20 +135,28 @@ export const TripManager: React.FC<TripManagerProps> = ({
         return;
       }
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         const dataUrl = reader.result as string;
         const base64 = dataUrl.split(',')[1];
         if (!base64) {
           alert('No se pudo leer la imagen.');
           return;
         }
-        setPendingRemito({
-          base64,
-          name: file.name,
-          mime: file.type || 'image/jpeg',
-        });
-        setShowRemitoUploader(false);
-        showInfo('Remito adjunto: al guardar el viaje se subirá a Drive.');
+        try {
+          const compressed = await compressRemitoImage(base64, file.type || 'image/jpeg');
+          const baseName = file.name.includes('.')
+            ? file.name.replace(/\.[^.]+$/, '')
+            : file.name;
+          setPendingRemito({
+            base64: compressed.base64,
+            name: `${baseName}.${compressed.ext}`,
+            mime: compressed.mime,
+          });
+          setShowRemitoUploader(false);
+          showInfo('Remito adjunto: al guardar el viaje se subirá a Drive.');
+        } catch {
+          alert('No se pudo procesar la imagen.');
+        }
       };
       reader.onerror = () => alert('No se pudo leer el archivo.');
       reader.readAsDataURL(file);
@@ -373,14 +382,19 @@ export const TripManager: React.FC<TripManagerProps> = ({
           const ext = pendingRemito.name.includes('.') ? pendingRemito.name.split('.').pop() : 'jpg';
           const fileName = `REMITO_${clientName}_${fecha}.${ext ?? 'jpg'}`;
           try {
-            const uploadedUrl = await uploadRemitoImage(
+            const uploaded = await uploadRemitoImage(
               editingId,
               pendingRemito.base64,
               fileName,
               pendingRemito.mime
             );
-            if (uploadedUrl) {
-              remitoUrl = uploadedUrl;
+            if (uploaded.ok && uploaded.url) {
+              remitoUrl = uploaded.url;
+            } else {
+              const detail = uploaded.message ? ` (${uploaded.message})` : '';
+              showInfo(
+                `El remito no se pudo subir${detail}, pero el viaje se guardará.`
+              );
             }
           } catch (uploadErr) {
             console.error('Error subiendo remito:', uploadErr);
@@ -457,11 +471,12 @@ export const TripManager: React.FC<TripManagerProps> = ({
           alert('No se pudo obtener el contenido del archivo.');
           return;
         }
-        const url = await uploadInvoice(trip.id, fileData, fileName, mimeType);
-        if (url) {
-          onInvoiceUploaded(trip.id, url);
+        const result = await uploadInvoice(trip.id, fileData, fileName, mimeType);
+        if (result.ok && result.url) {
+          onInvoiceUploaded(trip.id, result.url);
         } else {
-          alert('No se recibió URL de la factura. Reintentá o verificá la configuración.');
+          const detail = result.message ? ` ${result.message}` : '';
+          alert(`No se recibió URL de la factura.${detail} Reintentá o verificá la configuración.`);
         }
       } catch (err) {
         console.error(err);

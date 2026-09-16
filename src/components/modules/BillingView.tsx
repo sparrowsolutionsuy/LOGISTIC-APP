@@ -390,13 +390,14 @@ export const BillingView: React.FC<BillingViewProps> = ({
             showToast('No se pudo obtener el contenido del archivo.', 'warning');
             return;
           }
-          const url = await uploadInvoice(trip.id, fileData, fileName, mimeType);
-          if (url) {
-            onInvoiceUploaded(trip.id, url);
+          const result = await uploadInvoice(trip.id, fileData, fileName, mimeType);
+          if (result.ok && result.url) {
+            onInvoiceUploaded(trip.id, result.url);
             setUploadTarget(null);
             showToast('Factura adjuntada correctamente.', 'success');
           } else {
-            showToast('No se recibió URL de factura.', 'warning');
+            const detail = result.message ? ` ${result.message}` : '';
+            showToast(`No se recibió URL de factura.${detail}`, 'warning');
           }
         } catch (e) {
           console.error(e);

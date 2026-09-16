@@ -7,9 +7,26 @@
 // -------------------------------------------------------------------------
 
 function getFolderByName(ss, folderName) {
-  const parentFolder = DriveApp.getFileById(ss.getId()).getParents().next();
-  const folders = parentFolder.getFoldersByName(folderName);
+  var parents = DriveApp.getFileById(ss.getId()).getParents();
+  if (!parents.hasNext()) {
+    throw new Error(
+      'La hoja no tiene carpeta padre en Drive; configurá VITE_DRIVE_FOLDER_* o mové la hoja a una carpeta.'
+    );
+  }
+  var parentFolder = parents.next();
+  var folders = parentFolder.getFoldersByName(folderName);
   return folders.hasNext() ? folders.next() : parentFolder.createFolder(folderName);
+}
+
+/** Strip optional `data:*;base64,` prefix from client payloads. */
+function stripBase64Prefix(fileData) {
+  var s = String(fileData || '');
+  var marker = 'base64,';
+  var idx = s.indexOf(marker);
+  if (s.indexOf('data:') === 0 && idx !== -1) {
+    return s.substring(idx + marker.length);
+  }
+  return s;
 }
 
 /** Envía un reporte PDF (base64) por email con adjunto. */
@@ -43,40 +60,86 @@ function sendReportEmail(data) {
 }
 
 function uploadFile(data, folderNameFallback, updateSheetFn, sheetName) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const contentType = data.mimeType || 'application/pdf';
-  const decoded = Utilities.base64Decode(data.fileData);
-  const blob = Utilities.newBlob(decoded, contentType, data.fileName);
+  try {
+    if (!data || !data.fileData) {
+      return createErrorResponse('Faltan datos del archivo (fileData).');
+    }
 
-  var folder;
-  if (data.folderId && data.folderId !== '') {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const contentType = data.mimeType || 'application/pdf';
+    var rawBase64 = stripBase64Prefix(data.fileData);
+    var decoded;
     try {
-      folder = DriveApp.getFolderById(data.folderId);
-    } catch (e) {
-      folder = getFolderByName(ss, folderNameFallback);
+      decoded = Utilities.base64Decode(rawBase64);
+    } catch (decodeErr) {
+      return createErrorResponse('No se pudo decodificar el archivo (base64 inválido).');
     }
-  } else {
-    folder = getFolderByName(ss, folderNameFallback);
-  }
+    const blob = Utilities.newBlob(decoded, contentType, data.fileName || 'upload.bin');
 
-  const file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  const fileUrl = file.getUrl();
-
-  const sheet = ss.getSheetByName(sheetName);
-  const values = sheet.getDataRange().getValues();
-  const headers = values[0];
-  const idIdx = headers.indexOf('id');
-
-  for (var i = 1; i < values.length; i++) {
-    if (String(values[i][idIdx]) === String(data.tripId)) {
-      updateSheetFn(sheet, i + 1, headers, fileUrl);
-      break;
+    var folder;
+    if (data.folderId && data.folderId !== '') {
+      try {
+        folder = DriveApp.getFolderById(data.folderId);
+      } catch (e) {
+        try {
+          folder = getFolderByName(ss, folderNameFallback);
+        } catch (fallbackErr) {
+          return createErrorResponse(
+            'No se pudo abrir la carpeta Drive (folderId inválido) ni crear "' +
+              folderNameFallback +
+              '": ' +
+              String(fallbackErr)
+          );
+        }
+      }
+    } else {
+      try {
+        folder = getFolderByName(ss, folderNameFallback);
+      } catch (fallbackErr) {
+        return createErrorResponse(
+          'Sin folderId y no se pudo resolver carpeta "' +
+            folderNameFallback +
+            '": ' +
+            String(fallbackErr) +
+            '. Configurá VITE_DRIVE_FOLDER_*.'
+        );
+      }
     }
-  }
 
-  return ContentService.createTextOutput(JSON.stringify({ status: 'success', url: fileUrl }))
-    .setMimeType(ContentService.MimeType.JSON);
+    var file;
+    try {
+      file = folder.createFile(blob);
+    } catch (createErr) {
+      return createErrorResponse('No se pudo crear el archivo en Drive: ' + String(createErr));
+    }
+
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      // Sharing policy may block ANYONE_WITH_LINK; file URL is still returned for owners/editors.
+    }
+    const fileUrl = file.getUrl();
+
+    const sheet = ss.getSheetByName(sheetName);
+    if (sheet) {
+      const values = sheet.getDataRange().getValues();
+      const headers = values[0];
+      const idIdx = headers.indexOf('id');
+      if (idIdx >= 0) {
+        for (var i = 1; i < values.length; i++) {
+          if (String(values[i][idIdx]) === String(data.tripId)) {
+            updateSheetFn(sheet, i + 1, headers, fileUrl);
+            break;
+          }
+        }
+      }
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success', url: fileUrl }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return createErrorResponse('Error al subir archivo: ' + String(err));
+  }
 }
 
 /**
@@ -260,11 +323,11 @@ function doGet(e) {
   ensureCostSheetHeaders(costSheet);
   const costs = getSheetData('DB_Costos');
 
-  // Asegurar DB_CostosProgramados y devolver definiciones al front
-  let scheduledDefSheet = ss.getSheetByName('DB_CostosProgramados');
-  if (!scheduledDefSheet) {
-    scheduledDefSheet = ss.insertSheet('DB_CostosProgramados');
-    scheduledDefSheet.appendRow([
+  // Ensure DB_CostosProgramados + include definitions in GET payload
+  let scheduledSheet = ss.getSheetByName('DB_CostosProgramados');
+  if (!scheduledSheet) {
+    scheduledSheet = ss.insertSheet('DB_CostosProgramados');
+    scheduledSheet.appendRow([
       'id',
       'categoria',
       'descripcion',
@@ -277,7 +340,7 @@ function doGet(e) {
       'tripId',
     ]);
   }
-  ensureScheduledDefinitionSheetHeaders(scheduledDefSheet);
+  ensureScheduledDefinitionSheetHeaders(scheduledSheet);
   const scheduledCostDefinitions = getSheetData('DB_CostosProgramados');
 
   return ContentService.createTextOutput(
@@ -292,25 +355,16 @@ function doPost(e) {
   const type = body.type;
   const data = body.data;
 
+  if (type === 'health') {
+    return ContentService.createTextOutput(JSON.stringify(buildHealthPayload(data || {}))).setMimeType(
+      ContentService.MimeType.JSON
+    );
+  }
+
   const lock = LockService.getScriptLock();
   lock.tryLock(10000);
 
   try {
-    if (type === 'health') {
-      var healthData = data && typeof data === 'object' ? data : {};
-      var folderIds = healthData.folderIds && typeof healthData.folderIds === 'object'
-        ? healthData.folderIds
-        : healthData;
-      return ContentService.createTextOutput(
-        JSON.stringify(
-          buildHealthPayload({
-            remitosFolderId: folderIds.remitosFolderId || folderIds.remitos || '',
-            facturasFolderId: folderIds.facturasFolderId || folderIds.facturas || '',
-          })
-        )
-      ).setMimeType(ContentService.MimeType.JSON);
-    }
-
     if (type === 'login') {
       const userSheet = ss.getSheetByName('DB_Usuarios');
       if (!userSheet) return createErrorResponse('Users DB missing');
@@ -591,9 +645,12 @@ function doPost(e) {
         }
         sheet.getRange(rowNum, remitoUrlIdx + 1).setValue(fileUrl);
       }, 'DB_Viajes');
+    } else {
+      return createErrorResponse('Unknown type: ' + String(type));
     }
 
-    return createErrorResponse('Unknown type: ' + String(type));
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success' }))
+      .setMimeType(ContentService.MimeType.JSON);
 
   } catch (err) {
     return createErrorResponse(err.toString());
@@ -673,7 +730,6 @@ function tripRowFromPayload(data, headers) {
     if (h === 'facturaCobrada') return data.facturaCobrada ? 1 : 0;
     if (h === 'facturaFechaCobro') return data.facturaFechaCobro || '';
     if (h === 'tipoCambio') return data.tipoCambio != null && data.tipoCambio !== '' ? data.tipoCambio : 1;
-    if (h === 'scheduledCostId') return data.scheduledCostId || '';
     // Preserva columnas extra/legadas sin romper el orden actual de la hoja.
     return data[h] != null ? data[h] : '';
   });

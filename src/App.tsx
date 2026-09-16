@@ -233,19 +233,20 @@ const App: React.FC = () => {
           const clientName = sanitizeFileName(client?.nombreComercial ?? 'Cliente');
           const ext = remitoImage.name.includes('.') ? remitoImage.name.split('.').pop() : 'jpg';
           const fileName = `REMITO_${clientName}_${trip.fecha}.${ext ?? 'jpg'}`;
-          const remitoUrl = await uploadRemitoImage(
+          const remitoResult = await uploadRemitoImage(
             trip.id,
             remitoImage.base64,
             fileName,
             remitoImage.mime
           );
-          if (remitoUrl) {
-            const updated: Trip = { ...trip, remitoUrl };
+          if (remitoResult.ok && remitoResult.url) {
+            const updated: Trip = { ...trip, remitoUrl: remitoResult.url };
             setTrips((prev) => prev.map((t) => (t.id === trip.id ? updated : t)));
             await updateTripInSheet(updated);
           } else {
+            const detail = remitoResult.message ? ` Detalle: ${remitoResult.message}` : '';
             showToast(
-              'El viaje quedó guardado, pero no se obtuvo URL del remito (revisá carpeta Drive y permisos del script).',
+              `El viaje quedó guardado, pero no se obtuvo URL del remito.${detail}`,
               'warning'
             );
           }
