@@ -86,7 +86,17 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 
 **Health:** POST `{ type: "health", data: { remitosFolderId?, facturasFolderId? } }` o GET `?health=1` — tabs, row counts, probe Drive (`DriveApp.getFolderById` only; no crea archivos).
 
-**Costos programados:** definiciones en `DB_CostosProgramados`; el GET las expone como `scheduledCostDefinitions`.
+**Costos programados:** definiciones en `DB_CostosProgramados`; el GET las expone como `scheduledCostDefinitions`. Tras **Phase A** (latencia), el login admin hace **un solo GET** y reutiliza esas defs — no un segundo dump completo.
+
+### Latencia (carga inicial)
+
+| Señal | Valor |
+|-------|--------|
+| Target p50 / p95 GET dump | &lt;4s / &lt;8s (medido con smoke / DevTools) |
+| Smoke warn / fail | `SMOKE_LATENCY_WARN_MS` default **8000** / `SMOKE_LATENCY_MS` default **15000** |
+| Front GET timeout | **30s** + 1–2 reintentos cortos ante 404/HTML/red |
+
+Plan completo (fases B+): `sparrow-harness/thoughts/shared/plans/2026-09-17-logistic-app-latency.md`.
 
 > Tras cambiar `GOOGLE_APPS_SCRIPT.js` en el repo, un humano debe **redeployar** la Web App (Manage deployments → New version). Hasta entonces producción sigue con el script viejo. **HITL obligatorio** tras merge si este PR tocó Apps Script.
 

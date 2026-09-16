@@ -19,7 +19,6 @@ import {
   deleteScheduledCostDefinition,
   deleteTripFromSheet,
   fetchLogisticsData,
-  fetchScheduledCostDefinitions,
   lastLogisticsFetchWasMock,
   saveClientToSheet,
   saveCostToSheet,
@@ -120,14 +119,14 @@ const App: React.FC = () => {
 
   const loadData = useCallback(async (currentUser: User | null) => {
     try {
+      // Single GET dump — scheduledCostDefinitions come in the same payload (Phase A).
       const data = await fetchLogisticsData();
       setClients(data.clients);
       setTrips(data.trips);
       setCosts(data.costs);
       setOffline(lastLogisticsFetchWasMock());
       if (currentUser?.role === 'admin') {
-        const defs = await fetchScheduledCostDefinitions();
-        setScheduledCostDefinitions(defs);
+        setScheduledCostDefinitions(data.scheduledCostDefinitions);
       } else {
         setScheduledCostDefinitions([]);
       }
