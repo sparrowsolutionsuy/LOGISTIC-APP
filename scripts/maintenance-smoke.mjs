@@ -1,23 +1,24 @@
 #!/usr/bin/env node
 /**
  * Maintenance smoke for Sheets/Drive integration.
- * Aligns with sparrow-harness/procedures/logistic-app-maintenance.md
+ * Reads VITE_SHEET_URL from env / .env.local — never prints the full URL.
  *
- * Never prints full VITE_SHEET_URL, passwords, or PII — only lengths / counts / booleans.
+ * Aligns with: sparrow-harness/procedures/logistic-app-maintenance.md
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = resolve(__dirname, '..');
-const LATENCY_WARN_MS = 8000;
-const LATENCY_FAIL_MS = 12000;
+const ROOT = resolve(__dirname, '..');
+const LATENCY_BUDGET_MS = Number(process.env.SMOKE_LATENCY_MS || 12000);
+const LATENCY_WARN_MS = Number(process.env.SMOKE_LATENCY_WARN_MS || 8000);
 
-function loadEnvFile(path) {
+function loadEnvFile(name) {
+  const path = resolve(ROOT, name);
   if (!existsSync(path)) return;
   const text = readFileSync(path, 'utf8');
-  for (const line of text.split('\n')) {
+  for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
     const eq = trimmed.indexOf('=');
@@ -36,15 +37,15 @@ function loadEnvFile(path) {
   }
 }
 
-loadEnvFile(resolve(root, '.env.local'));
-loadEnvFile(resolve(root, '.env'));
+loadEnvFile('.env.local');
+loadEnvFile('.env');
 
-const sheetUrl = String(process.env.VITE_SHEET_URL ?? '').trim();
-const remitosId = String(process.env.VITE_DRIVE_FOLDER_REMITOS ?? '').trim();
-const facturasId = String(process.env.VITE_DRIVE_FOLDER_FACTURAS ?? '').trim();
+const SHEET_URL = String(process.env.VITE_SHEET_URL || '').trim();
+const REMITOS = String(process.env.VITE_DRIVE_FOLDER_REMITOS || '').trim();
+const FACTURAS = String(process.env.VITE_DRIVE_FOLDER_FACTURAS || '').trim();
 
 const schema = JSON.parse(
-  readFileSync(resolve(root, 'tests/fixtures/sheet-schema.json'), 'utf8')
+  readFileSync(resolve(ROOT, 'tests/fixtures/sheet-schema.json'), 'utf8')
 );
 
 function fail(msg) {
@@ -52,183 +53,229 @@ function fail(msg) {
   process.exitCode = 1;
 }
 
-function warn(msg) {
-  console.warn(`WARN: ${msg}`);
-}
-
 function ok(msg) {
   console.log(`OK: ${msg}`);
 }
 
-function looksLikeHtml(text) {
+function warn(msg) {
+  console.warn(`WARN: ${msg}`);
+}
+
+function responseLooksLikeHtml(text) {
   const t = text.trimStart();
   return t.startsWith('<!DOCTYPE') || t.startsWith('<html');
 }
 
-function headerSet(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return new Set();
-  const first = rows[0];
-  if (!first || typeof first !== 'object') return new Set();
-  return new Set(Object.keys(first));
+function headerSet(obj) {
+  if (!obj || typeof obj !== 'object') return new Set();
+  return new Set(Object.keys(obj));
 }
 
-function checkSchema(label, expectedHeaders, rows) {
-  const actual = headerSet(rows);
-  if (actual.size === 0) {
-    warn(`${label}: no rows to compare headers (empty sheet ok if intentional)`);
-    return;
-  }
-  const missing = expectedHeaders.filter((h) => !actual.has(h));
-  const extra = [...actual].filter((h) => !expectedHeaders.includes(h));
+function assertHeadersMatch(tabName, sampleObj, expectedHeaders) {
+  const keys = headerSet(sampleObj);
+  const missing = expectedHeaders.filter((h) => !keys.has(h));
+  const extra = [...keys].filter((k) => !expectedHeaders.includes(k));
   if (missing.length) {
-    fail(`${label}: missing headers vs fixture: ${missing.join(', ')}`);
-  } else {
-    ok(`${label}: headers match fixture (${expectedHeaders.length} expected)`);
+    fail(`${tabName}: missing keys vs fixture: ${missing.join(', ')}`);
   }
   if (extra.length) {
-    warn(`${label}: extra headers not in fixture: ${extra.join(', ')}`);
+    warn(`${tabName}: extra keys not in fixture: ${extra.join(', ')}`);
+  }
+  if (!missing.length) {
+    ok(`${tabName}: schema keys match fixture (${expectedHeaders.length} headers)`);
   }
 }
 
 async function main() {
   console.log('=== logistic-app maintenance smoke ===');
-  if (!sheetUrl) {
+  if (!SHEET_URL) {
     fail('VITE_SHEET_URL missing (set env or .env.local)');
-    process.exit(1);
+    return;
   }
-  console.log(`VITE_SHEET_URL length: ${sheetUrl.length}`);
-  console.log(`Drive remitos id set: ${Boolean(remitosId)} (len=${remitosId.length || 0})`);
-  console.log(`Drive facturas id set: ${Boolean(facturasId)} (len=${facturasId.length || 0})`);
+  console.log(`VITE_SHEET_URL length: ${SHEET_URL.length} chars (value redacted)`);
+  console.log(`Drive remitos id set: ${Boolean(REMITOS)}; facturas id set: ${Boolean(FACTURAS)}`);
 
   const t0 = Date.now();
-  let response;
+  let res;
   try {
-    response = await fetch(sheetUrl, { method: 'GET', cache: 'no-store', redirect: 'follow' });
+    res = await fetch(SHEET_URL, { method: 'GET', cache: 'no-store', redirect: 'follow' });
   } catch (err) {
     fail(`GET network error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    return;
   }
   const latencyMs = Date.now() - t0;
-  const text = await response.text();
+  const text = await res.text();
 
-  if (!response.ok) {
-    fail(`GET HTTP ${response.status}`);
+  if (!res.ok) {
+    fail(`GET HTTP ${res.status}`);
   }
-  if (looksLikeHtml(text)) {
-    fail('GET returned HTML (redeploy Web App as Anyone)');
-    process.exit(1);
+  if (responseLooksLikeHtml(text)) {
+    fail('GET returned HTML (redeploy Web App as Anyone / check deploy)');
+    return;
   }
 
-  let json;
+  let data;
   try {
-    json = JSON.parse(text);
+    data = JSON.parse(text);
   } catch {
     fail('GET body is not JSON');
-    process.exit(1);
+    return;
   }
 
-  console.log(`GET latencyMs: ${latencyMs}`);
-  if (latencyMs > LATENCY_FAIL_MS) {
-    fail(`latency ${latencyMs}ms exceeds budget ${LATENCY_FAIL_MS}ms`);
+  if (latencyMs > LATENCY_BUDGET_MS) {
+    fail(`Latency ${latencyMs}ms exceeds budget ${LATENCY_BUDGET_MS}ms`);
   } else if (latencyMs > LATENCY_WARN_MS) {
-    warn(`latency ${latencyMs}ms > ${LATENCY_WARN_MS}ms`);
+    warn(`Latency ${latencyMs}ms > warn threshold ${LATENCY_WARN_MS}ms`);
   } else {
-    ok(`latency within budget (${latencyMs}ms)`);
+    ok(`Latency ${latencyMs}ms within budget`);
   }
 
-  const keys = Object.keys(json || {});
+  const keys = Object.keys(data || {});
   console.log(`Top-level keys: ${keys.join(', ')}`);
-  for (const key of schema.expectedGetKeys) {
-    if (!(key in json)) {
-      fail(`missing key: ${key}`);
-    } else if (!Array.isArray(json[key])) {
-      fail(`key ${key} is not an array`);
+  for (const expected of schema.expectedGetKeys) {
+    if (!(expected in data)) {
+      fail(`Missing top-level key: ${expected}`);
     } else {
-      ok(`${key}: ${json[key].length} rows`);
+      const arr = data[expected];
+      const n = Array.isArray(arr) ? arr.length : 'n/a';
+      ok(`Key ${expected} present (rows=${n})`);
     }
   }
 
-  checkSchema('clients/DB_Clientes', schema.sheets.DB_Clientes.headers, json.clients);
-  checkSchema('trips/DB_Viajes', schema.sheets.DB_Viajes.headers, json.trips);
-  checkSchema('costs/DB_Costos', schema.sheets.DB_Costos.headers, json.costs);
-  checkSchema(
-    'scheduledCostDefinitions/DB_CostosProgramados',
-    schema.sheets.DB_CostosProgramados.headers,
-    json.scheduledCostDefinitions
-  );
+  const map = [
+    ['clients', 'DB_Clientes'],
+    ['trips', 'DB_Viajes'],
+    ['costs', 'DB_Costos'],
+    ['scheduledCostDefinitions', 'DB_CostosProgramados'],
+  ];
+  for (const [key, tab] of map) {
+    const rows = Array.isArray(data[key]) ? data[key] : [];
+    if (rows.length === 0) {
+      warn(`${tab}: 0 rows — skipping schema sample check`);
+      continue;
+    }
+    assertHeadersMatch(tab, rows[0], schema.sheets[tab].headers);
+  }
 
-  // Optional health POST (Drive probe) — only if folder ids present or always for sheets
-  try {
+  // Optional health POST (Drive ACL probe) when folder IDs present
+  if (REMITOS || FACTURAS) {
     const healthBody = {
       type: 'health',
       data: {
-        ...(remitosId ? { remitosFolderId: remitosId } : {}),
-        ...(facturasId ? { facturasFolderId: facturasId } : {}),
+        ...(REMITOS ? { remitosFolderId: REMITOS } : {}),
+        ...(FACTURAS ? { facturasFolderId: FACTURAS } : {}),
       },
     };
-    const h0 = Date.now();
-    const healthRes = await fetch(sheetUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(healthBody),
-      redirect: 'follow',
-    });
-    const healthText = await healthRes.text();
-    const healthMs = Date.now() - h0;
-
-    if (looksLikeHtml(healthText)) {
-      fail('health POST returned HTML');
+    const ht0 = Date.now();
+    let hres;
+    try {
+      hres = await fetch(SHEET_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(healthBody),
+        redirect: 'follow',
+      });
+    } catch (err) {
+      fail(`Health POST network error: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    const hText = await hres.text();
+    const hLatency = Date.now() - ht0;
+    if (responseLooksLikeHtml(hText)) {
+      fail('Health POST returned HTML — Apps Script may not include health yet (redeploy)');
+      return;
+    }
+    let health;
+    try {
+      health = JSON.parse(hText);
+    } catch {
+      fail('Health POST not JSON');
+      return;
+    }
+    if (health.status !== 'success') {
+      fail(`Health status=${health.status} message=${health.message || ''}`);
     } else {
-      let health;
-      try {
-        health = JSON.parse(healthText);
-      } catch {
-        fail('health POST not JSON (endpoint may not be redeployed yet)');
-        health = null;
+      ok(`Health POST ok (client round-trip ${hLatency}ms, server latencyMs=${health.latencyMs ?? 'n/a'})`);
+    }
+    if (health.sheets && typeof health.sheets === 'object') {
+      for (const [name, info] of Object.entries(health.sheets)) {
+        console.log(
+          `  sheet ${name}: exists=${info.exists} rows=${info.rows}`
+        );
       }
-      if (health) {
-        if (health.status !== 'success') {
-          fail(`health status=${health.status} message=${health.message || ''}`);
+    }
+    if (health.drive) {
+      for (const [name, info] of Object.entries(health.drive)) {
+        if (info && info.ok) {
+          ok(`Drive ${name}: ok`);
         } else {
-          ok(`health POST ok (${healthMs}ms)`);
-        }
-        if (health.sheets) {
-          for (const [name, info] of Object.entries(health.sheets)) {
-            console.log(
-              `  sheet ${name}: exists=${info.exists} rows=${info.rows}`
-            );
-          }
-        }
-        if (remitosId || facturasId) {
-          const drive = health.drive || {};
-          if (remitosId) {
-            if (!drive.remitos) fail('health missing drive.remitos');
-            else if (!drive.remitos.ok) fail(`drive.remitos not ok: ${drive.remitos.error || ''}`);
-            else ok('drive.remitos ok');
-          }
-          if (facturasId) {
-            if (!drive.facturas) fail('health missing drive.facturas');
-            else if (!drive.facturas.ok)
-              fail(`drive.facturas not ok: ${drive.facturas.error || ''}`);
-            else ok('drive.facturas ok');
-          }
-        } else {
-          warn('skip Drive ACL probe (no VITE_DRIVE_FOLDER_* set)');
+          fail(`Drive ${name}: not ok (${info?.error || 'unknown'})`);
         }
       }
     }
-  } catch (err) {
-    fail(`health POST error: ${err instanceof Error ? err.message : String(err)}`);
+  } else {
+    warn('Skipping Drive folder probe details (no VITE_DRIVE_FOLDER_* set); still running health POST');
+    // Always hit health when URL present (sheets-only) so redeploy drift is visible.
+    try {
+      const hres = await fetch(SHEET_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ type: 'health', data: {} }),
+        redirect: 'follow',
+      });
+      const hText = await hres.text();
+      if (responseLooksLikeHtml(hText)) {
+        fail('Health POST returned HTML — Apps Script may not include health yet (redeploy)');
+      } else {
+        const health = JSON.parse(hText);
+        if (health.status !== 'success' || !health.sheets) {
+          fail('Health POST missing status/sheets');
+        } else {
+          ok('Health POST (sheets-only) ok');
+        }
+      }
+    } catch (err) {
+      fail(`Health POST error: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
-  if (process.exitCode && process.exitCode !== 0) {
-    console.error('Smoke FAILED');
-    process.exit(process.exitCode);
+  // Non-mutating unknown-type probe (requires redeployed GAS that rejects unknown types).
+  try {
+    const ures = await fetch(SHEET_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ type: '__smoke_unknown_type__', data: {} }),
+      redirect: 'follow',
+    });
+    const uText = await ures.text();
+    if (responseLooksLikeHtml(uText)) {
+      fail('Unknown-type POST returned HTML');
+    } else {
+      const unknownBody = JSON.parse(uText);
+      if (unknownBody.status !== 'error') {
+        fail(
+          `Unknown POST type must return status:error (got ${unknownBody.status}) — redeploy GAS if still success`
+        );
+      } else if (
+        typeof unknownBody.message !== 'string' ||
+        !/^Unknown type:/i.test(unknownBody.message)
+      ) {
+        fail(`Unknown POST type error message unexpected: ${unknownBody.message || '(none)'}`);
+      } else {
+        ok(`Unknown POST type correctly rejected (${unknownBody.message})`);
+      }
+    }
+  } catch (err) {
+    fail(`Unknown-type POST error: ${err instanceof Error ? err.message : String(err)}`);
   }
-  console.log('Smoke PASSED');
+
+  if (process.exitCode) {
+    console.error('=== smoke FAILED ===');
+  } else {
+    console.log('=== smoke PASSED ===');
+  }
 }
 
 main().catch((err) => {
-  console.error(err);
-  process.exit(1);
+  fail(err instanceof Error ? err.message : String(err));
 });

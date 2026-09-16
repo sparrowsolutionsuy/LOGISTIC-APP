@@ -29,7 +29,7 @@ Creá un archivo **`.env.local`** en la raíz (no se sube a git) con al menos:
 | `VITE_GEMINI_API_KEY` | Opcional; si falta, los insights del dashboard usan texto fijo local |
 | `VITE_DRIVE_FOLDER_REMITOS` | ID de carpeta de Drive para remitos (subida vía script) |
 | `VITE_DRIVE_FOLDER_FACTURAS` | ID de carpeta de Drive para facturas |
-| `VITE_ALLOW_MOCK` | Opcional (`true`): permite mock en builds donde normalmente no hay fallback |
+| `VITE_ALLOW_MOCK` | **Ignored in production builds.** Local DEV/test mock is automatic when `VITE_SHEET_URL` is unset; a configured URL never falls back to mock data on failure. |
 
 ```bash
 npm run dev

@@ -4,12 +4,22 @@ import { MOCK_DATA } from '../constants';
 const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
 const DRIVE_FOLDER_REMITOS = String(import.meta.env.VITE_DRIVE_FOLDER_REMITOS ?? '').trim();
 const DRIVE_FOLDER_FACTURAS = String(import.meta.env.VITE_DRIVE_FOLDER_FACTURAS ?? '').trim();
-const ALLOW_MOCK =
-  import.meta.env.VITE_ALLOW_MOCK === 'true' ||
-  (Boolean(import.meta.env.DEV) && !SHEET_URL);
 
-/** Sin URL de Web App (solo en DEV / VITE_ALLOW_MOCK) → modo mock local. */
-export const IS_MOCK = !SHEET_URL && ALLOW_MOCK;
+/**
+ * Mock data is allowed only in development or Vitest — never in production builds.
+ * `VITE_ALLOW_MOCK` is intentionally ignored in PROD (and does not unlock mock when a Sheet URL is set).
+ */
+export function isMockEnvironment(env: {
+  DEV?: boolean;
+  PROD?: boolean;
+  MODE?: string;
+} = import.meta.env): boolean {
+  if (env.PROD) return false;
+  return Boolean(env.DEV) || env.MODE === 'test';
+}
+
+/** Sin URL de Web App y entorno DEV/test → modo mock local. Nunca en PROD. */
+export const IS_MOCK = !SHEET_URL && isMockEnvironment();
 
 if (import.meta.env.DEV) {
   console.info('[GDC API] SHEET_URL configurada:', SHEET_URL ? '✅ SÍ' : '❌ NO (modo mock)');
@@ -32,7 +42,7 @@ let mockScheduledCostDefinitionsCache: ScheduledCostDefinition[] | null = null;
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
+    globalThis.setTimeout(resolve, ms);
   });
 
 const APPS_SCRIPT_PLAIN_HEADERS = { 'Content-Type': 'text/plain' } as const;
@@ -51,7 +61,7 @@ async function fetchWithTimeout(
   timeoutMs: number
 ): Promise<Response> {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
       ...init,
@@ -59,8 +69,21 @@ async function fetchWithTimeout(
       redirect: 'follow',
     });
   } finally {
-    window.clearTimeout(timeoutId);
+    globalThis.clearTimeout(timeoutId);
   }
+}
+
+/** Decision helper for tests / ops: never mock when PROD or when a Sheet URL is configured. */
+export function shouldCloneMockOnFetchFailure(options: {
+  prod: boolean;
+  sheetUrl: string;
+  /** Ignored when prod=true or sheetUrl is set. */
+  viteAllowMock?: boolean;
+}): boolean {
+  if (options.prod) return false;
+  if (String(options.sheetUrl ?? '').trim()) return false;
+  // No URL + non-prod: initial IS_MOCK path uses mock; failure path should not be reached.
+  return false;
 }
 
 /** Normaliza fila remota o parcial a `Trip` (sin `any` en la firma pública). */
@@ -307,9 +330,19 @@ function cloneMockData(): LogisticsData {
   };
 }
 
-export async function fetchLogisticsData(): Promise<LogisticsData> {
-  if (!SHEET_URL) {
-    if (import.meta.env.PROD && !ALLOW_MOCK) {
+/**
+ * Core GET loader. Prefer `fetchLogisticsData()` in app code.
+ * Exported for regression tests (configured URL + failure must not return mock rows).
+ */
+export async function fetchLogisticsDataFromUrl(
+  sheetUrl: string,
+  options?: { treatAsProd?: boolean }
+): Promise<LogisticsData> {
+  const url = String(sheetUrl ?? '').trim();
+  const treatAsProd = options?.treatAsProd ?? Boolean(import.meta.env.PROD);
+
+  if (!url) {
+    if (treatAsProd || !isMockEnvironment()) {
       logisticsFetchUsedMock = false;
       throw new Error('VITE_SHEET_URL no configurada en producción');
     }
@@ -319,11 +352,7 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
   }
 
   try {
-    const response = await fetchWithTimeout(
-      SHEET_URL,
-      { method: 'GET', cache: 'no-store' },
-      15000
-    );
+    const response = await fetchWithTimeout(url, { method: 'GET', cache: 'no-store' }, 15000);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -344,7 +373,6 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
       costs?: unknown;
       scheduledCostDefinitions?: unknown;
     };
-    // scheduledCostDefinitions se ignora intencionalmente en fetchLogisticsData
     const clientsRaw = Array.isArray(record.clients) ? record.clients : [];
     const tripsRaw = Array.isArray(record.trips) ? record.trips : [];
     const costsRaw = Array.isArray(record.costs) ? record.costs : [];
@@ -361,14 +389,15 @@ export async function fetchLogisticsData(): Promise<LogisticsData> {
     } else {
       console.error('[GDC API] fetchLogisticsData falló:', error);
     }
-    // Producción: no sustituir con mock (evita "Modo demo" silencioso con datos falsos).
-    if (import.meta.env.PROD && !ALLOW_MOCK) {
-      logisticsFetchUsedMock = false;
-      throw error instanceof Error ? error : new Error(String(error));
-    }
-    logisticsFetchUsedMock = true;
-    return cloneMockData();
+    // Real backend URL configured: never substitute cloneMockData()
+    // (including production builds and VITE_ALLOW_MOCK=true).
+    logisticsFetchUsedMock = false;
+    throw error instanceof Error ? error : new Error(String(error));
   }
+}
+
+export async function fetchLogisticsData(): Promise<LogisticsData> {
+  return fetchLogisticsDataFromUrl(SHEET_URL);
 }
 
 async function postSheet(type: string, data: unknown): Promise<boolean> {
@@ -782,10 +811,8 @@ export async function fetchScheduledCostDefinitions(): Promise<ScheduledCostDefi
     return defsRaw.map((row) => normalizeScheduledCostDefinition(row));
   } catch (error) {
     console.error('[GDC API] fetchScheduledCostDefinitions falló:', error);
-    if (import.meta.env.PROD && !ALLOW_MOCK) {
-      throw error instanceof Error ? error : new Error(String(error));
-    }
-    return getMockScheduledDefinitions().map((d) => ({ ...d }));
+    // Same rule as fetchLogisticsData: no silent mock when talking to a real backend.
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
@@ -808,6 +835,55 @@ export interface HealthResponse {
   };
   latencyMs?: number;
   message?: string;
+}
+
+/** Parse Apps Script POST JSON `{ status, message? }` (unknown-type contract). */
+export function parseAppsScriptStatusResponse(body: unknown): {
+  status: string;
+  message?: string;
+  isError: boolean;
+} {
+  if (!body || typeof body !== 'object') {
+    return { status: 'error', message: 'invalid response', isError: true };
+  }
+  const rec = body as Record<string, unknown>;
+  const status = String(rec.status ?? '');
+  const message = rec.message != null ? String(rec.message) : undefined;
+  return { status, message, isError: status !== 'success' };
+}
+
+/** True when body matches unknown-type error contract from GAS doPost. */
+export function isUnknownTypeErrorResponse(body: unknown): boolean {
+  const parsed = parseAppsScriptStatusResponse(body);
+  return (
+    parsed.isError &&
+    typeof parsed.message === 'string' &&
+    /^Unknown type:/i.test(parsed.message)
+  );
+}
+
+/** Contract check for health probe JSON (unit-testable; no live GAS). */
+export function isValidHealthResponse(value: unknown): value is HealthResponse {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  if (v.status !== 'success' && v.status !== 'error') return false;
+  if (!v.sheets || typeof v.sheets !== 'object' || Array.isArray(v.sheets)) return false;
+  for (const info of Object.values(v.sheets as Record<string, unknown>)) {
+    if (!info || typeof info !== 'object') return false;
+    const row = info as Record<string, unknown>;
+    if (typeof row.exists !== 'boolean') return false;
+    if (typeof row.rows !== 'number') return false;
+  }
+  if (v.drive != null) {
+    if (typeof v.drive !== 'object' || Array.isArray(v.drive)) return false;
+    for (const info of Object.values(v.drive as Record<string, unknown>)) {
+      if (info == null) continue;
+      if (typeof info !== 'object') return false;
+      if (typeof (info as Record<string, unknown>).ok !== 'boolean') return false;
+    }
+  }
+  if (v.latencyMs != null && typeof v.latencyMs !== 'number') return false;
+  return true;
 }
 
 /** Probe Sheets tabs + Drive folder ACLs via Apps Script `type: health`. */

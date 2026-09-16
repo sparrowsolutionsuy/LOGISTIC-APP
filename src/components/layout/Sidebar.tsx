@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import type { ActiveTab, User, UserRole } from '../../types';
 import { ROUTE_NAMES } from '../../constants';
-import { IS_MOCK } from '../../services/api';
+import { lastLogisticsFetchWasMock } from '../../services/api';
 
 export interface SidebarProps {
   user: User;
@@ -231,7 +231,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }`}
             />
             {offline
-              ? IS_MOCK
+              ? lastLogisticsFetchWasMock()
                 ? 'Modo demo'
                 : 'Sin conexión a Sheets'
               : 'Conectado a Sheets'}
