@@ -137,6 +137,158 @@ function sendReportEmail(data) {
   }
 }
 
+/** Resolve tripIds[] and/or singular tripId into a de-duplicated list. */
+function resolveInvoiceTripIds(data) {
+  var ids = [];
+  var seen = {};
+  function pushId(raw) {
+    var id = String(raw == null ? '' : raw).trim();
+    if (!id || seen[id]) return;
+    seen[id] = true;
+    ids.push(id);
+  }
+  if (data && data.tripIds && data.tripIds.length) {
+    for (var i = 0; i < data.tripIds.length; i++) {
+      pushId(data.tripIds[i]);
+    }
+  }
+  if (data && data.tripId != null && String(data.tripId).trim() !== '') {
+    pushId(data.tripId);
+  }
+  return ids;
+}
+
+/** Stamp facturaUrl + facturaGenerada + estado Cerrado on a DB_Viajes row. */
+function stampInvoiceOnTripRow(sheet, rowNum, headers, fileUrl) {
+  var statusIndex = headers.indexOf('estado');
+  var urlIndex = headers.indexOf('facturaUrl');
+  var genIndex = headers.indexOf('facturaGenerada');
+  if (statusIndex > -1) {
+    sheet.getRange(rowNum, statusIndex + 1).setValue('Cerrado');
+  }
+  if (urlIndex > -1) {
+    sheet.getRange(rowNum, urlIndex + 1).setValue(fileUrl);
+  }
+  if (genIndex > -1) {
+    sheet.getRange(rowNum, genIndex + 1).setValue(true);
+  }
+}
+
+/**
+ * Upload one invoice PDF to Drive Facturas and stamp the same URL on N trips.
+ * Accepts tripIds: string[] and/or tripId (compat = one-element list).
+ * Returns { status, url, updatedIds, missingIds }.
+ */
+function uploadInvoiceFile(data) {
+  try {
+    if (!data || !data.fileData) {
+      return createErrorResponse('Faltan datos del archivo (fileData).');
+    }
+    var tripIds = resolveInvoiceTripIds(data);
+    if (!tripIds.length) {
+      return createErrorResponse('Falta tripId o tripIds.');
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const contentType = data.mimeType || 'application/pdf';
+    var rawBase64 = stripBase64Prefix(data.fileData);
+    var decoded;
+    try {
+      decoded = Utilities.base64Decode(rawBase64);
+    } catch (decodeErr) {
+      return createErrorResponse('No se pudo decodificar el archivo (base64 inválido).');
+    }
+    const blob = Utilities.newBlob(decoded, contentType, data.fileName || 'upload.bin');
+
+    var folder;
+    if (data.folderId && data.folderId !== '') {
+      try {
+        folder = DriveApp.getFolderById(data.folderId);
+      } catch (e) {
+        try {
+          folder = getFolderByName(ss, 'Facturas');
+        } catch (fallbackErr) {
+          return createErrorResponse(
+            'No se pudo abrir la carpeta Drive (folderId inválido) ni crear "Facturas": ' +
+              String(fallbackErr)
+          );
+        }
+      }
+    } else {
+      try {
+        folder = getFolderByName(ss, 'Facturas');
+      } catch (fallbackErr) {
+        return createErrorResponse(
+          'Sin folderId y no se pudo resolver carpeta "Facturas": ' +
+            String(fallbackErr) +
+            '. Configurá VITE_DRIVE_FOLDER_*.'
+        );
+      }
+    }
+
+    var file;
+    try {
+      file = folder.createFile(blob);
+    } catch (createErr) {
+      return createErrorResponse('No se pudo crear el archivo en Drive: ' + String(createErr));
+    }
+
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      // Sharing policy may block ANYONE_WITH_LINK; file URL is still returned for owners/editors.
+    }
+    const fileUrl = file.getUrl();
+
+    var updatedIds = [];
+    var missingIds = [];
+    var wanted = {};
+    for (var w = 0; w < tripIds.length; w++) {
+      wanted[tripIds[w]] = true;
+    }
+
+    const sheet = ss.getSheetByName('DB_Viajes');
+    if (sheet) {
+      const values = sheet.getDataRange().getValues();
+      const headers = values[0];
+      const idIdx = headers.indexOf('id');
+      if (idIdx >= 0) {
+        for (var i = 1; i < values.length; i++) {
+          var rowId = String(values[i][idIdx]);
+          if (wanted[rowId]) {
+            stampInvoiceOnTripRow(sheet, i + 1, headers, fileUrl);
+            updatedIds.push(rowId);
+            delete wanted[rowId];
+          }
+        }
+      }
+    }
+    for (var m = 0; m < tripIds.length; m++) {
+      if (wanted[tripIds[m]]) {
+        missingIds.push(tripIds[m]);
+      }
+    }
+
+    if (!updatedIds.length) {
+      return createErrorResponse(
+        'Ningún viaje encontrado para estampar factura: ' + tripIds.join(', ')
+      );
+    }
+
+    invalidateDumpCache();
+    return ContentService.createTextOutput(
+      JSON.stringify({
+        status: 'success',
+        url: fileUrl,
+        updatedIds: updatedIds,
+        missingIds: missingIds,
+      })
+    ).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return createErrorResponse('Error al subir factura: ' + String(err));
+  }
+}
+
 function uploadFile(data, folderNameFallback, updateSheetFn, sheetName) {
   try {
     if (!data || !data.fileData) {
@@ -785,14 +937,7 @@ function doPost(e) {
         return createErrorResponse('Definición no encontrada: ' + data.id);
       }
     } else if (type === 'uploadInvoice') {
-      return uploadFile(data, 'Facturas', function (sheet, rowNum, headers, fileUrl) {
-        const statusIndex = headers.indexOf('estado');
-        const urlIndex = headers.indexOf('facturaUrl');
-        sheet.getRange(rowNum, statusIndex + 1).setValue('Cerrado');
-        if (urlIndex > -1) {
-          sheet.getRange(rowNum, urlIndex + 1).setValue(fileUrl);
-        }
-      }, 'DB_Viajes');
+      return uploadInvoiceFile(data);
 
     } else if (type === 'sendReportEmail') {
       return sendReportEmail(data);

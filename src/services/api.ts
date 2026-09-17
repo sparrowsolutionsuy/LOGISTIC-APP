@@ -11,6 +11,10 @@ import type {
 } from '../types';
 import { MOCK_DATA } from '../constants';
 import { normalizeDocumentCategory } from '../utils/documents';
+import {
+  buildUploadInvoiceData,
+  normalizeInvoiceTripIds,
+} from '../utils/invoiceMultiStamp';
 import { MAX_REPORT_EMAILS, normalizeReportEmail } from '../utils/reportEmails';
 
 const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
@@ -815,6 +819,10 @@ export interface DriveUploadResult {
   ok: boolean;
   url?: string;
   message?: string;
+  /** Trips stamped on multi-invoice upload (Fase 1). */
+  updatedIds?: string[];
+  /** Requested trip ids not found in DB_Viajes. */
+  missingIds?: string[];
 }
 
 const UPLOAD_MAX_ATTEMPTS = 3;
@@ -863,7 +871,7 @@ export function isRetryableUploadFailure(failure: DriveUploadAttemptFailure): bo
 
 /** Parse Apps Script upload JSON into success URL or failure (unit-testable). */
 export function parseDriveUploadResponse(text: string):
-  | { ok: true; url: string }
+  | { ok: true; url: string; updatedIds?: string[]; missingIds?: string[] }
   | { ok: false; failure: DriveUploadAttemptFailure } {
   if (responseLooksLikeHtml(text)) {
     return {
@@ -874,9 +882,23 @@ export function parseDriveUploadResponse(text: string):
       },
     };
   }
-  let result: { status?: string; url?: string; message?: string };
+  let result: {
+    status?: string;
+    url?: string;
+    message?: string;
+    updatedIds?: unknown;
+    missingIds?: unknown;
+    tripId?: unknown;
+  };
   try {
-    result = JSON.parse(text) as { status?: string; url?: string; message?: string };
+    result = JSON.parse(text) as {
+      status?: string;
+      url?: string;
+      message?: string;
+      updatedIds?: unknown;
+      missingIds?: unknown;
+      tripId?: unknown;
+    };
   } catch {
     return {
       ok: false,
@@ -898,7 +920,18 @@ export function parseDriveUploadResponse(text: string):
     };
   }
   if (result.status === 'success' && result.url) {
-    return { ok: true, url: String(result.url) };
+    const updatedIds = Array.isArray(result.updatedIds)
+      ? result.updatedIds.map((id) => String(id)).filter(Boolean)
+      : undefined;
+    const missingIds = Array.isArray(result.missingIds)
+      ? result.missingIds.map((id) => String(id)).filter(Boolean)
+      : undefined;
+    return {
+      ok: true,
+      url: String(result.url),
+      ...(updatedIds ? { updatedIds } : {}),
+      ...(missingIds ? { missingIds } : {}),
+    };
   }
   return {
     ok: false,
@@ -930,6 +963,8 @@ async function postDriveUpload(options: {
   /** tripId for remito/invoice; documentId for documents. */
   entityId: string;
   idField: 'tripId' | 'documentId';
+  /** When set (invoice multi-stamp), sent as tripIds[] (+ singular tripId if length 1). */
+  tripIds?: string[];
   fileData: string;
   fileName: string;
   mimeType: string;
@@ -939,10 +974,24 @@ async function postDriveUpload(options: {
 
   for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
     try {
-      const idPayload =
-        options.idField === 'documentId'
-          ? { documentId: options.entityId }
-          : { tripId: options.entityId };
+      let idPayload: Record<string, unknown>;
+      if (options.idField === 'documentId') {
+        idPayload = { documentId: options.entityId };
+      } else if (options.tripIds && options.tripIds.length > 0) {
+        const built = buildUploadInvoiceData({
+          tripIds: options.tripIds,
+          fileData: options.fileData,
+          fileName: options.fileName,
+          mimeType: options.mimeType,
+          folderId: options.folderId,
+        });
+        idPayload = {
+          tripIds: built.tripIds,
+          ...(built.tripId != null ? { tripId: built.tripId } : {}),
+        };
+      } else {
+        idPayload = { tripId: options.entityId };
+      }
       const response = await fetchWithTimeout(
         SHEET_URL,
         {
@@ -984,7 +1033,12 @@ async function postDriveUpload(options: {
       const text = await response.text();
       const parsed = parseDriveUploadResponse(text);
       if (parsed.ok) {
-        return { ok: true, url: parsed.url };
+        return {
+          ok: true,
+          url: parsed.url,
+          ...(parsed.updatedIds ? { updatedIds: parsed.updatedIds } : {}),
+          ...(parsed.missingIds ? { missingIds: parsed.missingIds } : {}),
+        };
       }
 
       lastMessage = parsed.failure.message;
@@ -1023,23 +1077,32 @@ async function postDriveUpload(options: {
 }
 
 export async function uploadInvoice(
-  tripId: string,
+  tripIdOrIds: string | string[],
   fileData: string,
   fileName: string,
   mimeType: string
 ): Promise<DriveUploadResult> {
+  const tripIds = Array.isArray(tripIdOrIds)
+    ? normalizeInvoiceTripIds(undefined, tripIdOrIds)
+    : normalizeInvoiceTripIds(tripIdOrIds);
+  if (!tripIds.length) {
+    return { ok: false, message: 'Falta tripId o tripIds.' };
+  }
   if (IS_MOCK) {
     await delay(MOCK_DELAY_MS);
     return {
       ok: true,
-      url: `https://mock-invoice.local/${encodeURIComponent(tripId)}/${encodeURIComponent(fileName)}`,
+      url: `https://mock-invoice.local/${encodeURIComponent(tripIds.join(','))}/${encodeURIComponent(fileName)}`,
+      updatedIds: tripIds,
+      missingIds: [],
     };
   }
   return postDriveUpload({
     label: 'uploadInvoice',
     type: 'uploadInvoice',
-    entityId: tripId,
+    entityId: tripIds[0],
     idField: 'tripId',
+    tripIds,
     fileData,
     fileName,
     mimeType,

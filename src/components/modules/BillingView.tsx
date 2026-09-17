@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { BillingStatus, Client, Trip } from '../../types';
 import { uploadInvoice } from '../../services/api';
 import { useSortableTable } from '../../hooks/useSortableTable';
@@ -21,12 +21,13 @@ import {
   tripSubtotalNativo,
   tripSubtotalUsd,
 } from '../../utils/billing';
+import { validateInvoiceSelection } from '../../utils/invoiceMultiStamp';
 import { Check, FileText, Loader2, Receipt, UploadCloud } from 'lucide-react';
 
 export interface BillingViewProps {
   trips: Trip[];
   clients: Client[];
-  onInvoiceUploaded: (tripId: string, url: string) => void;
+  onInvoiceUploaded: (tripIdOrIds: string | string[], url: string) => void;
   onUpdateTrip: (trip: Trip) => Promise<void>;
   formatAmount?: (n: number) => string;
   convertAggregateToDisplay?: (amountUSD: number) => number;
@@ -181,6 +182,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [uploadTarget, setUploadTarget] = useState<Trip | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadLabel, setUploadLabel] = useState('');
+  const multiFileInputRef = useRef<HTMLInputElement>(null);
 
   const currentMonthPrefix = useMemo(() => todayIso().slice(0, 7), []);
 
@@ -416,6 +418,89 @@ export const BillingView: React.FC<BillingViewProps> = ({
     },
     [clients, onInvoiceUploaded, showToast]
   );
+
+  const runMultiUpload = useCallback(
+    (selectedTrips: Trip[], file: File) => {
+      const validation = validateInvoiceSelection(selectedTrips);
+      if (!validation.ok) {
+        showToast(validation.message, 'warning');
+        return;
+      }
+      if (file.size > MAX_BYTES) {
+        showToast('El archivo supera 5 MB.', 'warning');
+        return;
+      }
+      const clientName = getClientName(clients, validation.clientId).replace(/\s+/g, '');
+      const ext = file.name.includes('.') ? file.name.split('.').pop() : 'pdf';
+      const n = validation.tripIds.length;
+      const fileName =
+        n === 1
+          ? `Factura_${validation.tripIds[0]}_${clientName}.${ext ?? 'pdf'}`
+          : `Factura_multi_${n}_${clientName}_${Date.now()}.${ext ?? 'pdf'}`;
+      const mimeType = file.type || 'application/octet-stream';
+      setUploadLabel(`Subiendo 1 archivo… vinculando ${n} viaje(s)`);
+      setUploading(true);
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        try {
+          const raw = reader.result;
+          if (typeof raw !== 'string') {
+            showToast('No se pudo leer el archivo.', 'warning');
+            return;
+          }
+          const parts = raw.split(',');
+          const fileData = parts.length > 1 ? parts[1] : '';
+          if (!fileData) {
+            showToast('No se pudo obtener el contenido del archivo.', 'warning');
+            return;
+          }
+          const result = await uploadInvoice(validation.tripIds, fileData, fileName, mimeType);
+          if (result.ok && result.url) {
+            const stamped =
+              result.updatedIds && result.updatedIds.length > 0
+                ? result.updatedIds
+                : validation.tripIds;
+            onInvoiceUploaded(stamped, result.url);
+            setSinSelected(new Set());
+            const missing = result.missingIds ?? [];
+            if (missing.length > 0) {
+              showToast(
+                `Factura vinculada a ${stamped.length} viaje(s). No encontrados: ${missing.join(', ')}.`,
+                'warning'
+              );
+            } else {
+              showToast(`Factura adjuntada a ${stamped.length} viaje(s).`, 'success');
+            }
+          } else {
+            const detail = result.message ? ` ${result.message}` : '';
+            showToast(`No se recibió URL de factura.${detail}`, 'warning');
+          }
+        } catch (e) {
+          console.error(e);
+          showToast('Error al subir la factura.', 'error');
+        } finally {
+          setUploading(false);
+          setUploadLabel('');
+        }
+      };
+      reader.onerror = () => {
+        setUploading(false);
+        setUploadLabel('');
+        showToast('Error al leer el archivo.', 'error');
+      };
+    },
+    [clients, onInvoiceUploaded, showToast]
+  );
+
+  const openMultiInvoicePicker = useCallback(() => {
+    const validation = validateInvoiceSelection(selectedSinTrips);
+    if (!validation.ok) {
+      showToast(validation.message, 'warning');
+      return;
+    }
+    multiFileInputRef.current?.click();
+  }, [selectedSinTrips, showToast]);
 
   const safeUpdate = useCallback(
     async (trip: Trip) => {
@@ -1174,15 +1259,43 @@ export const BillingView: React.FC<BillingViewProps> = ({
         >
           <p className="text-sm font-medium text-[var(--text-primary)]">
             {sinSelected.size} viaje(s) seleccionado(s)
+            {uploading && uploadLabel ? (
+              <span className="ml-2 text-[var(--text-secondary)]">— {uploadLabel}</span>
+            ) : null}
           </p>
           <div className="flex flex-wrap gap-2">
+            <input
+              ref={multiFileInputRef}
+              type="file"
+              accept={ACCEPT}
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (f) {
+                  runMultiUpload(selectedSinTrips, f);
+                }
+              }}
+            />
             <Button type="button" variant="secondary" size="sm" onClick={() => setEmailSummaryOpen(true)}>
               Ver resumen para correo
             </Button>
             <Button
               type="button"
+              variant="secondary"
+              size="sm"
+              icon={<UploadCloud className="h-4 w-4" aria-hidden />}
+              disabled={uploading}
+              onClick={openMultiInvoicePicker}
+            >
+              Adjuntar factura a selección
+            </Button>
+            <Button
+              type="button"
               variant="primary"
               size="sm"
+              disabled={uploading}
               onClick={async () => {
                 const list = trips.filter((t) => sinSelected.has(t.id));
                 for (const t of list) {
