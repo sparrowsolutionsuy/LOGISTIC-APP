@@ -96,6 +96,8 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 
 **Calidad PDF / HTML (R5–R6):** el desglose de costos excluye filas crudas `Combustible` y agrega **Combustible (imputado km)** para cerrar con `totalCostos`. PDF y cron HTML usan `es-UY`. Fuente activa: `src/utils/reportData.ts` + `pdfReport.ts`; `src/utils/reportGenerator.ts` es **legacy unused** (modelo realized). **Tras merge de este cambio: redeploy obligatorio del Apps Script** (nueva versión) para que el email del día 5 tome la reconciliación y el locale.
 
+**PDF polish (per-km + comentario):** Costo/km, Ingreso/km y Margen/km se formatean con **2 decimales** (`fmtPerKm` / `fmtPerKmGas`); el PDF embebe **Noto Sans** Latin subset en `src/assets/fonts/` (base64 en `src/utils/pdfFontData.ts`) para acentos. El reporte incluye `aiCommentary` (Gemini opcional; cron GAS solo fallback heurístico). **Tras merge: redeploy obligatorio del Apps Script** para per-km 2 decimales + bloque Comentario en el HTML del día 5.
+
 ### HITL post-merge U3 — redeploy + migrate + trigger + test
 
 1. **Redeploy** Apps Script Web App (**nueva versión**) — pegá el `GOOGLE_APPS_SCRIPT.js` del repo.

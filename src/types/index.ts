@@ -314,6 +314,8 @@ export interface GeneralReportData {
   avgMarginPerTrip: number;
   costPerKm: number;
   revenuePerKm: number;
+  /** revenuePerKm − costPerKm */
+  marginPerKm: number;
 
   topClient: { name: string; revenue: number; trips: number };
   topRoute: { route: string; revenue: number; count: number };
@@ -338,6 +340,8 @@ export interface GeneralReportData {
   };
 
   aiSummary: string;
+  /** Multi-paragraph narrative (`\\n\\n` separated). */
+  aiCommentary: string;
   aiAlerts: string[];
   aiRecommendations: string[];
 }

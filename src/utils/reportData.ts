@@ -35,8 +35,19 @@ const WEEK_RANGES: [number, number][] = [
   [22, 31],
 ];
 
-function fmtUsd(n: number): string {
+/** Aggregate USD amounts (whole dollars). Do not use for per-km rates. */
+export function fmtUsd(n: number): string {
   return n.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+}
+
+/** Per-km USD rates — always 2 decimal places so cost/km ≠ revenue/km when values differ. */
+export function fmtPerKm(n: number): string {
+  return n.toLocaleString('es-UY', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 /**
@@ -296,9 +307,14 @@ function buildComparison(
   };
 }
 
+type AiFields = Pick<
+  GeneralReportData,
+  'aiSummary' | 'aiCommentary' | 'aiAlerts' | 'aiRecommendations'
+>;
+
 function buildFallbackAi(
-  data: Omit<GeneralReportData, 'aiSummary' | 'aiAlerts' | 'aiRecommendations'>
-): Pick<GeneralReportData, 'aiSummary' | 'aiAlerts' | 'aiRecommendations'> {
+  data: Omit<GeneralReportData, 'aiSummary' | 'aiCommentary' | 'aiAlerts' | 'aiRecommendations'>
+): AiFields {
   const cmp = data.comparison.available
     ? data.comparison.revenueDelta > 2
       ? ` Los ingresos crecieron ${data.comparison.revenueDelta.toFixed(1)}% ${data.comparison.label}.`
@@ -312,6 +328,32 @@ function buildFallbackAi(
     `y un margen operativo del ${data.marginPct.toFixed(1)}% (${fmtUsd(data.netMargin)}).` +
     ` Costos del período: ${fmtUsd(data.totalCostos)}.${cmp}`;
 
+  const topShare = data.totalGenerado > 0 ? (data.topClient.revenue / data.totalGenerado) * 100 : 0;
+  const topCat = data.costsByCategory[0];
+  const p1 =
+    `En ${data.periodLabel} la operativa generó ${fmtUsd(data.totalGenerado)} con un margen de ` +
+    `${fmtUsd(data.netMargin)} (${data.marginPct.toFixed(1)}%). Se cobró el ${data.collectionRate.toFixed(0)}% ` +
+    `(${fmtUsd(data.totalCobrado)}); queda pendiente ${fmtUsd(data.totalPendiente)}.`;
+  const p2 =
+    `Por kilómetro, el costo fue ${fmtPerKm(data.costPerKm)} frente a un ingreso de ${fmtPerKm(data.revenuePerKm)}, ` +
+    `lo que deja un margen/km de ${fmtPerKm(data.marginPerKm)} sobre ${Math.round(data.totalKm).toLocaleString('es-UY')} km.`;
+  const p3Parts: string[] = [];
+  if (data.topClient.trips > 0) {
+    p3Parts.push(
+      `El principal cliente fue ${data.topClient.name} (${fmtUsd(data.topClient.revenue)}, ${topShare.toFixed(0)}% de los ingresos)`
+    );
+  }
+  if (topCat) {
+    p3Parts.push(
+      `la categoría de costo líder fue ${topCat.category} (${fmtUsd(topCat.total)}, ${topCat.pct.toFixed(0)}% del total)`
+    );
+  }
+  const p3 =
+    p3Parts.length > 0
+      ? `${p3Parts.join('; ')}. Monitoreá cobranza, concentración de clientes y eficiencia de combustible imputado.`
+      : `Sin viajes relevantes en el período; revisá la carga operativa y la captura de costos.`;
+  const aiCommentary = [p1, p2, p3].join('\n\n');
+
   const aiAlerts: string[] = [];
   if (data.marginPct < 15)
     aiAlerts.push(`Margen operativo del ${data.marginPct.toFixed(1)}%, por debajo del 15% objetivo.`);
@@ -323,7 +365,6 @@ function buildFallbackAi(
     aiAlerts.push(
       `El viaje ${data.worstMarginTrip.id} (${data.worstMarginTrip.client}) operó con margen negativo (${data.worstMarginTrip.marginPct.toFixed(1)}%).`
     );
-  const topShare = data.totalGenerado > 0 ? (data.topClient.revenue / data.totalGenerado) * 100 : 0;
   if (topShare > 55)
     aiAlerts.push(
       `${data.topClient.name} concentra el ${topShare.toFixed(0)}% de los ingresos: riesgo de dependencia.`
@@ -342,7 +383,6 @@ function buildFallbackAi(
     aiRecommendations.push(
       `Diversificá la cartera: reforzá contratos con clientes secundarios para reducir la dependencia de ${data.topClient.name}.`
     );
-  const topCat = data.costsByCategory[0];
   if (topCat && topCat.pct > 40)
     aiRecommendations.push(
       `${topCat.category} representa el ${topCat.pct.toFixed(0)}% de los costos; renegociá proveedores o revisá eficiencia en esa categoría.`
@@ -354,42 +394,54 @@ function buildFallbackAi(
 
   return {
     aiSummary,
+    aiCommentary,
     aiAlerts: aiAlerts.slice(0, 4),
     aiRecommendations: aiRecommendations.slice(0, 4),
   };
 }
 
-/** Gemini solo reescribe: JSON válido y montos citados deben coincidir con el payload. */
+/** Gemini solo reescribe: JSON válido; summary+commentary deben citar ≥1 KPI monetario del payload. */
 function validateGeminiInsights(
-  parsed: { summary?: string; alerts?: string[]; recommendations?: string[] },
+  parsed: {
+    summary?: string;
+    commentary?: string;
+    alerts?: string[];
+    recommendations?: string[];
+  },
   kpis: {
     totalGenerado: number;
     totalCobrado: number;
     totalPendiente: number;
     totalCostos: number;
     netMargin: number;
+    costPerKm: number;
+    revenuePerKm: number;
+    marginPerKm: number;
   }
 ): boolean {
   if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) return false;
+  if (typeof parsed.commentary !== 'string' || !parsed.commentary.trim()) return false;
   if (!Array.isArray(parsed.alerts) || !Array.isArray(parsed.recommendations)) return false;
 
-  const blob = [parsed.summary, ...parsed.alerts, ...parsed.recommendations].join('\n');
-  const known = [
+  const narrative = `${parsed.summary}\n${parsed.commentary}`;
+  const moneyHits = [
     kpis.totalGenerado,
     kpis.totalCobrado,
     kpis.totalPendiente,
     kpis.totalCostos,
     kpis.netMargin,
   ];
-  // Must cite at least one key money KPI (formatted or rounded).
-  return known.some((v) => {
+  const perKmHits = [kpis.costPerKm, kpis.revenuePerKm, kpis.marginPerKm];
+  const citesMoney = moneyHits.some((v) => {
     const rounded = Math.round(v);
     return (
-      blob.includes(fmtUsd(v)) ||
-      blob.includes(rounded.toLocaleString('es-UY')) ||
-      blob.includes(String(rounded))
+      narrative.includes(fmtUsd(v)) ||
+      narrative.includes(rounded.toLocaleString('es-UY')) ||
+      narrative.includes(String(rounded))
     );
   });
+  const citesPerKm = perKmHits.some((v) => narrative.includes(fmtPerKm(v)));
+  return citesMoney || citesPerKm;
 }
 
 export async function generateReport(
@@ -417,6 +469,7 @@ export async function generateReport(
   const avgMarginPerTrip = cur.totalTrips > 0 ? netMargin / cur.totalTrips : 0;
   const costPerKm = cur.totalKm > 0 ? cur.totalCostos / cur.totalKm : 0;
   const revenuePerKm = cur.totalKm > 0 ? cur.totalGenerado / cur.totalKm : 0;
+  const marginPerKm = revenuePerKm - costPerKm;
 
   // Top cliente
   const byClient = new Map<string, { revenue: number; trips: number }>();
@@ -496,7 +549,10 @@ export async function generateReport(
   const rangeStart = params.scope === 'historico' ? (series[0]?.key ?? '') : params.month ?? '';
   const rangeEnd = params.scope === 'historico' ? (series[series.length - 1]?.key ?? '') : params.month ?? '';
 
-  const base: Omit<GeneralReportData, 'aiSummary' | 'aiAlerts' | 'aiRecommendations'> = {
+  const base: Omit<
+    GeneralReportData,
+    'aiSummary' | 'aiCommentary' | 'aiAlerts' | 'aiRecommendations'
+  > = {
     scope: params.scope,
     title,
     periodLabel,
@@ -520,6 +576,7 @@ export async function generateReport(
     avgMarginPerTrip,
     costPerKm,
     revenuePerKm,
+    marginPerKm,
     topClient,
     topRoute,
     topProduct,
@@ -546,14 +603,16 @@ export async function generateReport(
       generationConfig: { responseMimeType: 'application/json' },
     });
     const prompt = `Sos analista financiero de GDC, empresa de transporte de carga en Uruguay.
-Analizá los datos del período "${periodLabel}" (${title}) y generá un análisis para inversores/gerencia.
-1. Un párrafo ejecutivo (3-5 oraciones en español, claro y orientado a decisiones).
-2. Hasta 4 alertas o riesgos concretos.
-3. Hasta 4 recomendaciones accionables y oportunidades de mejora.
+Analizá los datos del período "${periodLabel}" (${title}) y generá un análisis para gerencia.
+1. summary: párrafo ejecutivo corto (2-4 oraciones).
+2. commentary: 2 a 4 párrafos cortos separados por \\n\\n que expliquen el período usando SOLO los KPIs provistos (incluí costPerKm, revenuePerKm, marginPerKm, marginPct, cobranza, top cliente y categorías de costo cuando aporten).
+3. alerts: hasta 4 alertas concretas.
+4. recommendations: hasta 4 recomendaciones accionables.
 
 REGLAS OBLIGATORIAS:
-- Respondé SOLO con JSON válido: {"summary": string, "alerts": string[], "recommendations": string[]}
-- NO inventes números. Citá únicamente montos/porcentajes de los Datos abajo (podés usar formato es-UY).
+- Respondé SOLO con JSON válido: {"summary": string, "commentary": string, "alerts": string[], "recommendations": string[]}
+- NO inventes números ni estructura. Citá únicamente montos/porcentajes de los Datos (formato es-UY de fmt.*).
+- Tono gerencial, español rioplatense.
 - Costos = no-combustible del período + combustible imputado por km (categoría "${FUEL_IMPUTED_CATEGORY}").
 
 Datos: ${JSON.stringify({
@@ -566,7 +625,10 @@ Datos: ${JSON.stringify({
       marginPct,
       collectionRate,
       totalTrips: cur.totalTrips,
+      totalKm: cur.totalKm,
       costPerKm,
+      revenuePerKm,
+      marginPerKm,
       avgTicket,
       topClient,
       topRoute,
@@ -579,6 +641,9 @@ Datos: ${JSON.stringify({
         totalPendiente: fmtUsd(cur.totalPendiente),
         totalCostos: fmtUsd(cur.totalCostos),
         netMargin: fmtUsd(netMargin),
+        costPerKm: fmtPerKm(costPerKm),
+        revenuePerKm: fmtPerKm(revenuePerKm),
+        marginPerKm: fmtPerKm(marginPerKm),
       },
     })}`;
 
@@ -586,6 +651,7 @@ Datos: ${JSON.stringify({
     const text = result.response.text();
     const parsed = JSON.parse(text) as {
       summary?: string;
+      commentary?: string;
       alerts?: string[];
       recommendations?: string[];
     };
@@ -596,6 +662,9 @@ Datos: ${JSON.stringify({
         totalPendiente: cur.totalPendiente,
         totalCostos: cur.totalCostos,
         netMargin,
+        costPerKm,
+        revenuePerKm,
+        marginPerKm,
       })
     ) {
       console.warn('[reportData] Gemini insights fallaron validación; usando fallback');
@@ -604,6 +673,7 @@ Datos: ${JSON.stringify({
     return {
       ...base,
       aiSummary: parsed.summary!.trim(),
+      aiCommentary: parsed.commentary!.trim(),
       aiAlerts: parsed.alerts!.slice(0, 4),
       aiRecommendations: parsed.recommendations!.slice(0, 4),
     };

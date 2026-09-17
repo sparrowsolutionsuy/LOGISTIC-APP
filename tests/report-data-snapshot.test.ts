@@ -4,6 +4,7 @@ import { calcCombustiblePorKm, tripRevenueUSD } from '../src/utils/analytics';
 import {
   FUEL_IMPUTED_CATEGORY,
   buildReconciledCostsByCategory,
+  fmtPerKm,
   generateReport,
 } from '../src/utils/reportData';
 
@@ -171,5 +172,40 @@ describe('reportData — cost category reconciliation (R5)', () => {
     expect(report.aiSummary).toContain(fmt(report.netMargin));
     expect(report.aiSummary).toContain(fmt(report.totalCostos));
     expect(report.aiSummary.length).toBeGreaterThan(40);
+    expect(report.aiCommentary.trim().length).toBeGreaterThan(40);
+    expect(report.aiCommentary.split(/\n\n+/).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('fmtPerKm keeps cost/km ≠ revenue/km when values differ; margin/km correct', async () => {
+    const report = await generateReport(
+      { scope: 'mensual', month: '2026-08' },
+      trips,
+      costs,
+      [clientA, clientB]
+    );
+
+    expect(report.totalKm).toBeGreaterThan(0);
+    expect(report.costPerKm).not.toBeCloseTo(report.revenuePerKm, 2);
+    expect(report.marginPerKm).toBeCloseTo(report.revenuePerKm - report.costPerKm, 8);
+
+    const costFmt = fmtPerKm(report.costPerKm);
+    const revFmt = fmtPerKm(report.revenuePerKm);
+    const marginFmt = fmtPerKm(report.marginPerKm);
+
+    expect(costFmt).not.toEqual(revFmt);
+    expect(marginFmt).toBe(fmtPerKm(report.revenuePerKm - report.costPerKm));
+
+    // Aggregate fmt (0 decimals) would falsely equate nearby per-km rates
+    const aggregateFmt = (n: number) =>
+      n.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+    // Known case: values that round to the same whole dollar must still differ at 2 dp
+    const a = 1.24;
+    const b = 1.41;
+    expect(aggregateFmt(a)).toEqual(aggregateFmt(b));
+    expect(fmtPerKm(a)).not.toEqual(fmtPerKm(b));
+
+    expect(report.aiCommentary).toContain(costFmt);
+    expect(report.aiCommentary).toContain(revFmt);
+    expect(report.aiCommentary).toContain(marginFmt);
   });
 });
