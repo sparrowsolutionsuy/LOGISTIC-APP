@@ -94,7 +94,9 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 
 **Reportes email (U3):** hojas `DB_ReportEmails` (lista autorizada + `autoMonthly`) y `DB_ReportLog` (idempotencia / auditoría). GET dump key `reportEmails` (log **no** va en el dump). On-demand = PDF vía `sendReportEmail` (browser). Cron día 5 = HTML vía `sendMonthlyReport` (MailApp). El trigger **no** se instala solo en GET/POST.
 
-**Calidad PDF / HTML (R5–R6):** el desglose de costos excluye filas crudas `Combustible` y agrega **Combustible (imputado km)** para cerrar con `totalCostos`. PDF y cron HTML usan `es-UY`. Fuente activa: `src/utils/reportData.ts` + `pdfReport.ts`; `src/utils/reportGenerator.ts` es **legacy unused** (modelo realized). **Tras merge de este cambio: redeploy obligatorio del Apps Script** (nueva versión) para que el email del día 5 tome la reconciliación y el locale.
+**P&L de período vs margen por viaje:** KPI / charts / PDF / cron usan **costos registrados** (`Σ montoUSD` de `DB_Costos` con `fecha` en el período, todas las categorías al 100%, incluido Combustible). El desglose por categoría cierra con ese total. **Margen por viaje** sigue Política A (estimado: directos con `tripId` + km × tasa flota × 0.7) y **no** es el P&L del mes. Opcional: línea “Combustible imputado (ref.)” en reportes — no entra al margen de período. **Tras merge: redeploy obligatorio del Apps Script.**
+
+**Calidad PDF / HTML (R5–R6):** desglose por categorías registradas; PDF y cron HTML usan `es-UY`. Fuente activa: `src/utils/reportData.ts` + `pdfReport.ts`; `src/utils/reportGenerator.ts` es **legacy unused** (modelo realized).
 
 **PDF polish (per-km + comentario):** Costo/km, Ingreso/km y Margen/km se formatean con **2 decimales** (`fmtPerKm` / `fmtPerKmGas`); el PDF embebe **Noto Sans** Latin subset en `src/assets/fonts/` (base64 en `src/utils/pdfFontData.ts`) para acentos. El reporte incluye `aiCommentary` (Gemini opcional; cron GAS solo fallback heurístico). **Tras merge: redeploy obligatorio del Apps Script** para per-km 2 decimales + bloque Comentario en el HTML del día 5.
 
@@ -142,7 +144,7 @@ src/
   components/             # UI por módulos (viajes, clientes, costos, etc.)
   services/api.ts         # fetch al Web App (Sheets, login, uploads, health)
   services/geminiService.ts  # insights opcionales con Gemini
-  utils/analytics.ts      # KPIs, márgenes, tasa combustible flota (política A)
+  utils/analytics.ts      # KPIs período (costos registrados); márgenes viaje (política A)
 tests/
   fixtures/sheet-schema.json  # headers + filas fake (sin PII real)
   *.test.ts
@@ -150,9 +152,16 @@ scripts/maintenance-smoke.mjs
 GOOGLE_APPS_SCRIPT.js     # referencia para pegar en Apps Script
 ```
 
+### Costos: período vs viaje
+
+| Capa | Fórmula | Uso |
+|------|---------|-----|
+| **P&L período** (KPI, monthly/weekly charts, PDF, GAS cron) | Σ `montoUSD` de costos con `fecha` en el scope (todas las cats, Combustible 100%) | Verdad operativa / facturas |
+| **Margen por viaje** (`enrichTrips`) | Directos con `tripId` + `km × tasa`; `tasa = (Σ Combustible × 0.7) / Σ km` all-time | Proxy estimado; UI “estimado” |
+
 ### Rentabilidad por viaje (combustible)
 
-Combustible se carga de a ratos (no por viaje). **Política A (tasa flota global):**
+Combustible se carga de a ratos (no por viaje). **Política A (tasa flota global)** — solo para margen por viaje:
 
 `tasa = (Σ Combustible montoUSD × 0.7) / Σ km de todos los viajes`
 

@@ -452,12 +452,16 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
             <Kpi
               title="Total Costos"
               value={fmtMoney(kpi.totalCostos)}
-              sub={kpi.totalGenerado > 0 ? `${costRatioPnl.toFixed(0)}% de los ingresos` : periodSub}
+              sub={
+                kpi.totalGenerado > 0
+                  ? `${costRatioPnl.toFixed(0)}% de los ingresos · registrados`
+                  : `${periodSub} · registrados`
+              }
             />
             <Kpi
               title="Margen Neto"
               value={fmtMoney(kpi.margenNeto)}
-              sub="Generado − costos"
+              sub="Generado − costos registrados"
               tone={kpi.margenNeto >= 0 ? 'positive' : 'negative'}
             />
             <Kpi
@@ -519,11 +523,12 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
           <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-sm)]">
             <div className="border-b border-[var(--border)] px-4 py-3 space-y-2">
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-                Rentabilidad por viaje — {periodSub}
+                Rentabilidad estimada por viaje — {periodSub}
               </h3>
               <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                Margen estimado. Combustible = proxy por km (tasa flota global, no ticket por viaje). No
-                incluye overhead (sueldos, alquiler, cuota) salvo que estén vinculados al viaje.
+                Margen estimado (no es el P&amp;L del período). Combustible = proxy por km (tasa flota
+                global × 0.7, no ticket por viaje). No incluye overhead (sueldos, alquiler, cuota) salvo
+                que estén vinculados al viaje.
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -769,9 +774,9 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       {tab === 'costos' && (
         <div className="space-y-6">
           <p className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3 text-sm text-[var(--text-secondary)]">
-            Los costos de combustible se estiman con la tasa flota global (70% del combustible
-            histórico ÷ km de todos los viajes), aplicada a los km de cada viaje. Los márgenes por
-            viaje son estimados y no incluyen overhead sin tripId.
+            Costos del período = suma de lo registrado en DB_Costos (todas las categorías, incluido
+            Combustible al 100%). Coincide con el KPI de Overview. La tasa flota (70% ÷ km) solo se
+            usa para el margen estimado por viaje, no para este P&amp;L.
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Kpi title="Costos totales" value={fmtMoney(totalCostsAll)} sub={periodSub} />

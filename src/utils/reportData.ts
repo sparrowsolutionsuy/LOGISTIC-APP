@@ -11,6 +11,7 @@ import type {
 import {
   calcCombustiblePorKm,
   enrichTrips,
+  getCostsByCategory,
   isCobrado,
   isPendienteCobro,
   monthLabel,
@@ -25,8 +26,11 @@ export interface ReportParams {
   weekIndex?: number;
 }
 
-/** Categoría explícita de combustible imputado (no filas crudas de la hoja Combustible). */
-export const FUEL_IMPUTED_CATEGORY = 'Combustible (imputado km)';
+/** Etiqueta de referencia (Policy A) — no entra al P&L de período. */
+export const FUEL_IMPUTED_REF_LABEL = 'Combustible imputado (ref.)';
+
+/** @deprecated Usar FUEL_IMPUTED_REF_LABEL; ya no es categoría del desglose P&L. */
+export const FUEL_IMPUTED_CATEGORY = FUEL_IMPUTED_REF_LABEL;
 
 const WEEK_RANGES: [number, number][] = [
   [1, 7],
@@ -51,31 +55,13 @@ export function fmtPerKm(n: number): string {
 }
 
 /**
- * Desglose de costos reconciliado con el KPI totalCostos:
- * excluye filas crudas Combustible y agrega "Combustible (imputado km)".
- * sum(totals) === totalCostos (± centavo) cuando fuelImputed + directos = KPI.
+ * Desglose de costos del período = categorías registradas (incl. Combustible 100%).
+ * sum(totals) === totalCostos (± centavo).
  */
 export function buildReconciledCostsByCategory(
-  costsR: Cost[],
-  fuelImputed: number
+  costsR: Cost[]
 ): { category: string; total: number; pct: number }[] {
-  const totals = new Map<string, number>();
-  costsR.forEach((c) => {
-    if (c.categoria === 'Combustible') return;
-    const cat = c.categoria || 'Otros';
-    totals.set(cat, (totals.get(cat) ?? 0) + (c.montoUSD ?? 0));
-  });
-  if (fuelImputed > 0) {
-    totals.set(FUEL_IMPUTED_CATEGORY, (totals.get(FUEL_IMPUTED_CATEGORY) ?? 0) + fuelImputed);
-  }
-  const grand = Array.from(totals.values()).reduce((s, v) => s + v, 0);
-  return Array.from(totals.entries())
-    .map(([category, total]) => ({
-      category,
-      total,
-      pct: grand > 0 ? (total / grand) * 100 : 0,
-    }))
-    .sort((a, b) => b.total - a.total);
+  return getCostsByCategory(costsR);
 }
 
 function isFinished(t: Trip): boolean {
@@ -113,32 +99,28 @@ interface Snapshot {
   totalCobrado: number;
   totalPendiente: number;
   totalCostos: number;
-  directCosts: number;
-  fuelImputed: number;
+  /** Policy A km×tasa — referencia operativa; no entra a totalCostos. */
+  fuelImputedRef: number;
   totalTrips: number;
   totalKm: number;
 }
 
-/** Modelo de costos coherente con el resto de la app: costos no-combustible del rango + combustible imputado por km. */
-function computeSnapshot(
-  tripsR: Trip[],
-  costsR: Cost[],
-  combustiblePorKm: number
-): Snapshot {
+/** P&L de período: Σ montoUSD registrados en el rango (todas las categorías). */
+function computeSnapshot(tripsR: Trip[], costsR: Cost[], combustiblePorKm = 0): Snapshot {
   const totalGenerado = tripsR.reduce((s, t) => s + tripRevenueUSD(t), 0);
   const totalCobrado = tripsR.filter(isCobrado).reduce((s, t) => s + tripRevenueUSD(t), 0);
   const totalPendiente = tripsR.filter(isPendienteCobro).reduce((s, t) => s + tripRevenueUSD(t), 0);
-  const directCosts = costsR
-    .filter((c) => c.categoria !== 'Combustible')
-    .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
-  const fuelImputed = tripsR.reduce((s, t) => s + (t.kmRecorridos ?? 0) * combustiblePorKm, 0);
+  const totalCostos = costsR.reduce((s, c) => s + (c.montoUSD ?? 0), 0);
+  const fuelImputedRef =
+    combustiblePorKm > 0
+      ? tripsR.reduce((s, t) => s + (t.kmRecorridos ?? 0) * combustiblePorKm, 0)
+      : 0;
   return {
     totalGenerado,
     totalCobrado,
     totalPendiente,
-    totalCostos: directCosts + fuelImputed,
-    directCosts,
-    fuelImputed,
+    totalCostos,
+    fuelImputedRef,
     totalTrips: tripsR.length,
     totalKm: tripsR.reduce((s, t) => s + (t.kmRecorridos ?? 0), 0),
   };
@@ -179,8 +161,7 @@ function monthsBetweenAscending(startKey: string, endKey: string): string[] {
 function buildSeries(
   trips: Trip[],
   costs: Cost[],
-  params: ReportParams,
-  combustiblePorKm: number
+  params: ReportParams
 ): { series: ReportSeriesPoint[]; kind: 'mensual' | 'semanal' } {
   if (params.scope === 'semanal') {
     const month = params.month ?? '';
@@ -193,7 +174,7 @@ function buildSeries(
       const wc = costs.filter(
         (c) => c.fecha.startsWith(month) && dayOf(c.fecha) >= d0 && dayOf(c.fecha) <= d1
       );
-      const snap = computeSnapshot(wt, wc, combustiblePorKm);
+      const snap = computeSnapshot(wt, wc);
       return {
         key: `${month}-w${i + 1}`,
         label: `Sem ${i + 1}`,
@@ -222,7 +203,7 @@ function buildSeries(
   const series = keys.map((k) => {
     const mt = trips.filter((t) => t.fecha.startsWith(k));
     const mc = costs.filter((c) => c.fecha.startsWith(k));
-    const snap = computeSnapshot(mt, mc, combustiblePorKm);
+    const snap = computeSnapshot(mt, mc);
     return {
       key: k,
       label: monthLabel(k),
@@ -258,7 +239,6 @@ function buildComparison(
   trips: Trip[],
   costs: Cost[],
   params: ReportParams,
-  combustiblePorKm: number,
   cur: Snapshot,
   curMarginPct: number
 ): GeneralReportData['comparison'] {
@@ -293,7 +273,7 @@ function buildComparison(
     label = 'vs semana anterior';
   }
 
-  const prev = computeSnapshot(prevTrips, prevCosts, combustiblePorKm);
+  const prev = computeSnapshot(prevTrips, prevCosts);
   const prevMarginPct =
     prev.totalGenerado > 0 ? ((prev.totalGenerado - prev.totalCostos) / prev.totalGenerado) * 100 : 0;
   return {
@@ -350,9 +330,13 @@ function buildFallbackAi(
   }
   const p3 =
     p3Parts.length > 0
-      ? `${p3Parts.join('; ')}. Monitoreá cobranza, concentración de clientes y eficiencia de combustible imputado.`
+      ? `${p3Parts.join('; ')}. Monitoreá cobranza, concentración de clientes y carga completa de costos en DB_Costos.`
       : `Sin viajes relevantes en el período; revisá la carga operativa y la captura de costos.`;
-  const aiCommentary = [p1, p2, p3].join('\n\n');
+  const fuelRefNote =
+    data.fuelImputedRef > 0
+      ? `\n\n${FUEL_IMPUTED_REF_LABEL}: ${fmtUsd(data.fuelImputedRef)} (proxy km×tasa; no entra al margen de período).`
+      : '';
+  const aiCommentary = [p1, p2, p3].join('\n\n') + fuelRefNote;
 
   const aiAlerts: string[] = [];
   if (data.marginPct < 15)
@@ -537,9 +521,9 @@ export async function generateReport(
   if (bestPct === -Infinity) bestMarginTrip = { id: '—', client: '—', marginPct: 0 };
   if (worstPct === Infinity) worstMarginTrip = { id: '—', client: '—', marginPct: 0 };
 
-  const costsByCategory = buildReconciledCostsByCategory(costsR, cur.fuelImputed);
-  const { series, kind } = buildSeries(trips, costs, params, combustiblePorKm);
-  const comparison = buildComparison(trips, costs, params, combustiblePorKm, cur, marginPct);
+  const costsByCategory = buildReconciledCostsByCategory(costsR);
+  const { series, kind } = buildSeries(trips, costs, params);
+  const comparison = buildComparison(trips, costs, params, cur, marginPct);
   const { title, periodLabel } = periodLabelFor(params);
 
   const tripsSorted: TripWithMetrics[] = enriched
@@ -563,6 +547,7 @@ export async function generateReport(
     totalCobrado: cur.totalCobrado,
     totalPendiente: cur.totalPendiente,
     totalCostos: cur.totalCostos,
+    fuelImputedRef: cur.fuelImputedRef,
     netMargin,
     marginPct,
     collectionRate,
@@ -613,7 +598,8 @@ REGLAS OBLIGATORIAS:
 - Respondé SOLO con JSON válido: {"summary": string, "commentary": string, "alerts": string[], "recommendations": string[]}
 - NO inventes números ni estructura. Citá únicamente montos/porcentajes de los Datos (formato es-UY de fmt.*).
 - Tono gerencial, español rioplatense.
-- Costos = no-combustible del período + combustible imputado por km (categoría "${FUEL_IMPUTED_CATEGORY}").
+- Costos = suma de costos registrados en el período (DB_Costos, todas las categorías al 100%).
+- "${FUEL_IMPUTED_REF_LABEL}" es solo referencia (Policy A) y NO forma parte de totalCostos ni del margen.
 
 Datos: ${JSON.stringify({
       periodLabel,
