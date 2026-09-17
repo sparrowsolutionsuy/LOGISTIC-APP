@@ -3,6 +3,7 @@ import type {
   Client,
   Cost,
   FleetDocument,
+  ReportEmailEntry,
   ScheduledCostDefinition,
   Trip,
   TripStatus,
@@ -378,6 +379,26 @@ const MOCK_DOCUMENTS: FleetDocument[] = [
   },
 ];
 
+/** Correos autorizados demo (sin inboxes reales). */
+export const MOCK_REPORT_EMAILS: ReportEmailEntry[] = [
+  {
+    email: 'reports@example.com',
+    autoMonthly: true,
+    activo: true,
+    updatedAt: '2026-01-10',
+    createdAt: '2026-01-10',
+    createdBy: 'admin',
+  },
+  {
+    email: 'ops@example.com',
+    autoMonthly: false,
+    activo: true,
+    updatedAt: '2026-01-12',
+    createdAt: '2026-01-12',
+    createdBy: 'admin',
+  },
+];
+
 /** Dataset local usado como fallback y seeds */
 export const MOCK_DATA = {
   clients: MOCK_CLIENTS,
@@ -386,4 +407,5 @@ export const MOCK_DATA = {
   /** Definiciones de costos programados (misma fuente que producción: Sheets). */
   scheduledCostDefinitions: [] as ScheduledCostDefinition[],
   documents: MOCK_DOCUMENTS,
+  reportEmails: MOCK_REPORT_EMAILS,
 };

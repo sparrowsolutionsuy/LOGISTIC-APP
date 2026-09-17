@@ -21,6 +21,7 @@ describe('parseIncludeParam', () => {
     expect(parseIncludeParam('clients,trips')).toEqual(['clients', 'trips']);
     expect(parseIncludeParam('clients, bogus, costs')).toEqual(['clients', 'costs']);
     expect(parseIncludeParam('documents')).toEqual(['documents']);
+    expect(parseIncludeParam('reportEmails')).toEqual(['reportEmails']);
   });
 
   it('falls back to all keys when only unknown tokens', () => {
@@ -37,7 +38,7 @@ describe('buildDumpCacheKey', () => {
 
   it('uses 0 for empty epoch', () => {
     expect(buildDumpCacheKey('', [...DUMP_KEYS])).toBe(
-      `${DUMP_CACHE_PREFIX}:0:clients,costs,documents,scheduledCostDefinitions,trips`
+      `${DUMP_CACHE_PREFIX}:0:clients,costs,documents,reportEmails,scheduledCostDefinitions,trips`
     );
   });
 

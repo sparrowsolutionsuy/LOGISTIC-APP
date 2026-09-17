@@ -3,6 +3,7 @@ import type {
   Client,
   Cost,
   FleetDocument,
+  ReportEmailEntry,
   ScheduledCostDefinition,
   Trip,
   TripStatus,
@@ -10,6 +11,7 @@ import type {
 } from '../types';
 import { MOCK_DATA } from '../constants';
 import { normalizeDocumentCategory } from '../utils/documents';
+import { MAX_REPORT_EMAILS, normalizeReportEmail } from '../utils/reportEmails';
 
 const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
 const DRIVE_FOLDER_REMITOS = String(import.meta.env.VITE_DRIVE_FOLDER_REMITOS ?? '').trim();
@@ -315,6 +317,15 @@ function getMockDocuments(): FleetDocument[] {
   return mockDocumentsCache;
 }
 
+let mockReportEmailsCache: ReportEmailEntry[] | null = null;
+
+function getMockReportEmails(): ReportEmailEntry[] {
+  if (mockReportEmailsCache === null) {
+    mockReportEmailsCache = MOCK_DATA.reportEmails.map((e) => normalizeReportEmail(e));
+  }
+  return mockReportEmailsCache;
+}
+
 export function normalizeCost(row: unknown): Cost {
   const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
   const tripIdRaw = r.tripId;
@@ -375,6 +386,8 @@ export interface LogisticsData {
   scheduledCostDefinitions: ScheduledCostDefinition[];
   /** Fleet documents; empty array if old GAS omits the key. */
   documents: FleetDocument[];
+  /** Authorized report emails; empty array if old GAS omits the key. */
+  reportEmails: ReportEmailEntry[];
 }
 
 /** GET dump timeout — aligned to observed Apps Script p95 (often 8–22s). */
@@ -411,6 +424,7 @@ function cloneMockData(): LogisticsData {
     costs: MOCK_DATA.costs.map((c) => normalizeCost(c)),
     scheduledCostDefinitions: getMockScheduledDefinitions().map((d) => ({ ...d })),
     documents: getMockDocuments().map((d) => ({ ...d })),
+    reportEmails: getMockReportEmails().map((e) => ({ ...e })),
   };
 }
 
@@ -420,6 +434,7 @@ function mapLogisticsRecord(record: {
   costs?: unknown;
   scheduledCostDefinitions?: unknown;
   documents?: unknown;
+  reportEmails?: unknown;
 }): LogisticsData {
   const clientsRaw = Array.isArray(record.clients) ? record.clients : [];
   const tripsRaw = Array.isArray(record.trips) ? record.trips : [];
@@ -427,14 +442,16 @@ function mapLogisticsRecord(record: {
   const defsRaw = Array.isArray(record.scheduledCostDefinitions)
     ? record.scheduledCostDefinitions
     : [];
-  // Old GAS without documents key → empty array (do not throw).
+  // Old GAS without documents / reportEmails key → empty array (do not throw).
   const docsRaw = Array.isArray(record.documents) ? record.documents : [];
+  const emailsRaw = Array.isArray(record.reportEmails) ? record.reportEmails : [];
   return {
     clients: clientsRaw.map((row) => normalizeClient(row)),
     trips: tripsRaw.map((row) => normalizeTrip(row)),
     costs: costsRaw.map((row) => normalizeCost(row)),
     scheduledCostDefinitions: defsRaw.map((row) => normalizeScheduledCostDefinition(row)),
     documents: docsRaw.map((row) => normalizeDocument(row)),
+    reportEmails: emailsRaw.map((row) => normalizeReportEmail(row)),
   };
 }
 
@@ -477,6 +494,7 @@ async function attemptLogisticsGet(
       costs?: unknown;
       scheduledCostDefinitions?: unknown;
       documents?: unknown;
+      reportEmails?: unknown;
     };
     try {
       record = JSON.parse(text) as typeof record;
@@ -614,6 +632,53 @@ async function postSheet(type: string, data: unknown): Promise<boolean> {
           ...arr[idx],
           activo: false,
           actualizadoEn: new Date().toISOString().split('T')[0],
+        };
+      }
+      return true;
+    }
+    if (type === 'reportEmail') {
+      const entry = normalizeReportEmail(data);
+      if (!entry.email) return false;
+      const arr = getMockReportEmails();
+      const idx = arr.findIndex((e) => e.email === entry.email);
+      if (idx >= 0) {
+        // Upsert: do not overwrite autoMonthly if sheet already has the email (migrate path).
+        const incoming = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+        const keepAuto =
+          incoming.preserveAutoMonthly === true || incoming.preserveAutoMonthly === 'TRUE';
+        arr[idx] = {
+          ...arr[idx],
+          ...entry,
+          autoMonthly: keepAuto ? arr[idx].autoMonthly : entry.autoMonthly,
+          activo: true,
+        };
+      } else {
+        if (arr.filter((e) => e.activo).length >= MAX_REPORT_EMAILS) return false;
+        arr.push({ ...entry, activo: true });
+      }
+      return true;
+    }
+    if (type === 'updateReportEmail') {
+      const entry = normalizeReportEmail(data);
+      const arr = getMockReportEmails();
+      const idx = arr.findIndex((e) => e.email === entry.email);
+      if (idx >= 0) {
+        arr[idx] = { ...arr[idx], ...entry };
+      }
+      return true;
+    }
+    if (type === 'deleteReportEmail') {
+      const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+      const email = String(rec.email ?? '')
+        .trim()
+        .toLowerCase();
+      const arr = getMockReportEmails();
+      const idx = arr.findIndex((e) => e.email === email);
+      if (idx >= 0) {
+        arr[idx] = {
+          ...arr[idx],
+          activo: false,
+          updatedAt: new Date().toISOString().split('T')[0],
         };
       }
       return true;
@@ -1048,6 +1113,8 @@ export interface SendReportEmailParams {
   message: string;
   pdfBase64: string;
   fileName: string;
+  /** Optional YYYY-MM for DB_ReportLog audit. */
+  monthKey?: string;
 }
 
 export interface SendReportEmailResult {
@@ -1077,6 +1144,7 @@ export async function sendReportByEmail(params: SendReportEmailParams): Promise<
             fileData: params.pdfBase64,
             fileName: params.fileName,
             mimeType: 'application/pdf',
+            monthKey: params.monthKey || '',
           },
         }),
       },
@@ -1299,5 +1367,24 @@ export async function deleteDocumentFromSheet(id: string): Promise<boolean> {
   return postSheet('deleteDocument', {
     id,
     actualizadoEn: new Date().toISOString().split('T')[0],
+  });
+}
+
+/** Upsert authorized report email (DB_ReportEmails). */
+export async function saveReportEmailToSheet(
+  entry: ReportEmailEntry & { preserveAutoMonthly?: boolean }
+): Promise<boolean> {
+  return postSheet('reportEmail', entry);
+}
+
+export async function updateReportEmailInSheet(entry: ReportEmailEntry): Promise<boolean> {
+  return postSheet('updateReportEmail', entry);
+}
+
+/** Soft-delete: sets activo=FALSE. */
+export async function deleteReportEmailFromSheet(email: string): Promise<boolean> {
+  return postSheet('deleteReportEmail', {
+    email: String(email).trim().toLowerCase(),
+    updatedAt: new Date().toISOString().split('T')[0],
   });
 }

@@ -18,7 +18,6 @@ import {
   AlertTriangle,
   CalendarDays,
   CalendarRange,
-  Check,
   Download,
   History,
   Lightbulb,
@@ -32,7 +31,7 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react';
-import type { Client, Cost, GeneralReportData, ReportScope, Trip } from '../../types';
+import type { Client, Cost, GeneralReportData, ReportEmailEntry, ReportScope, Trip } from '../../types';
 import type { CostCategory } from '../../types';
 import { Modal } from '../ui/Modal';
 import { generateReport, type ReportParams } from '../../utils/reportData';
@@ -44,7 +43,14 @@ import {
   svgToPngDataUrl,
 } from '../../utils/pdfReport';
 import { IS_MOCK, sendReportByEmail } from '../../services/api';
-import { addSavedEmail, getSavedEmails, isValidEmail, removeSavedEmail } from '../../utils/savedEmails';
+import { isValidEmail } from '../../utils/savedEmails';
+import {
+  MAX_REPORT_EMAILS,
+  activeReportEmails,
+  hasMigratedLocalEmails,
+  localEmailsToMigrate,
+  markLocalEmailsMigrated,
+} from '../../utils/reportEmails';
 import { monthLabel, tripRevenueUSD } from '../../utils/analytics';
 
 const CATEGORY_FILL: Record<CostCategory, string> = {
@@ -74,6 +80,13 @@ export interface ReportCenterProps {
   availableMonths: string[];
   formatAmount?: (n: number) => string;
   convertAggregateToDisplay?: (amountUSD: number) => number;
+  /** Authorized emails from Sheet (DB_ReportEmails). */
+  reportEmails?: ReportEmailEntry[];
+  onAddReportEmail?: (email: string) => Promise<boolean>;
+  onToggleAutoMonthly?: (email: string, autoMonthly: boolean) => Promise<boolean>;
+  onRemoveReportEmail?: (email: string) => Promise<boolean>;
+  /** One-shot migrate localStorage → Sheet. */
+  onMigrateLocalEmails?: (emails: string[]) => Promise<void>;
 }
 
 const SCOPE_OPTIONS: { id: ReportScope; label: string; icon: React.ReactNode }[] = [
@@ -93,6 +106,11 @@ export const ReportCenter: React.FC<ReportCenterProps> = ({
   availableMonths,
   formatAmount: formatAmountProp,
   convertAggregateToDisplay: convertAggregateToDisplayProp,
+  reportEmails = [],
+  onAddReportEmail,
+  onToggleAutoMonthly,
+  onRemoveReportEmail,
+  onMigrateLocalEmails,
 }) => {
   const fmt = useMemo(() => {
     if (formatAmountProp && convertAggregateToDisplayProp) {
@@ -109,18 +127,37 @@ export const ReportCenter: React.FC<ReportCenterProps> = ({
 
   // Email
   const [emailEnabled, setEmailEnabled] = useState(false);
-  const [emailInput, setEmailInput] = useState('');
-  const [savedEmails, setSavedEmails] = useState<string[]>([]);
+  const [newEmailInput, setNewEmailInput] = useState('');
+  const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
+  const [managing, setManaging] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   const trendRef = useRef<HTMLDivElement>(null);
   const pieRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<HTMLDivElement>(null);
 
+  const authorized = useMemo(() => activeReportEmails(reportEmails), [reportEmails]);
+
   useEffect(() => {
-    if (open) setSavedEmails(getSavedEmails());
-  }, [open]);
+    if (!open || !onMigrateLocalEmails || hasMigratedLocalEmails()) return;
+    const toMigrate = localEmailsToMigrate(reportEmails);
+    void (async () => {
+      try {
+        if (toMigrate.length > 0) {
+          await onMigrateLocalEmails(toMigrate);
+        }
+        markLocalEmailsMigrated();
+      } catch {
+        /* leave flag unset so we retry next open */
+      }
+    })();
+  }, [open, onMigrateLocalEmails, reportEmails]);
+
+  useEffect(() => {
+    // Drop selections that are no longer authorized.
+    setSelectedEmails((prev) => prev.filter((e) => authorized.some((a) => a.email === e)));
+  }, [authorized]);
 
   useEffect(() => {
     if (availableMonths.length && !availableMonths.includes(month)) {
@@ -174,11 +211,49 @@ export const ReportCenter: React.FC<ReportCenterProps> = ({
     downloadReportPdf(data, fmt, charts);
   }, [data, fmt, captureCharts]);
 
+  const toggleSelected = useCallback((email: string) => {
+    setSelectedEmails((prev) =>
+      prev.includes(email) ? prev.filter((e) => e !== email) : [...prev, email]
+    );
+  }, []);
+
+  const handleAddAuthorized = useCallback(async () => {
+    const clean = newEmailInput.trim().toLowerCase();
+    if (!isValidEmail(clean)) {
+      setFeedback({ type: 'err', text: 'Ingresá un email válido.' });
+      return;
+    }
+    if (authorized.length >= MAX_REPORT_EMAILS) {
+      setFeedback({ type: 'err', text: `Máximo ${MAX_REPORT_EMAILS} correos autorizados.` });
+      return;
+    }
+    if (!onAddReportEmail) return;
+    setManaging(true);
+    setFeedback(null);
+    try {
+      const ok = await onAddReportEmail(clean);
+      if (ok) {
+        setNewEmailInput('');
+        setSelectedEmails((prev) => (prev.includes(clean) ? prev : [...prev, clean]));
+        setFeedback({ type: 'ok', text: `Agregado ${clean}.` });
+      } else {
+        setFeedback({ type: 'err', text: 'No se pudo agregar el email.' });
+      }
+    } finally {
+      setManaging(false);
+    }
+  }, [newEmailInput, authorized.length, onAddReportEmail]);
+
   const handleSend = useCallback(async () => {
     if (!data) return;
-    const target = emailInput.trim();
-    if (!isValidEmail(target)) {
-      setFeedback({ type: 'err', text: 'Ingresá un email válido.' });
+    if (selectedEmails.length === 0) {
+      setFeedback({ type: 'err', text: 'Seleccioná al menos un destinatario de la lista autorizada.' });
+      return;
+    }
+    const allowed = new Set(authorized.map((a) => a.email));
+    const targets = selectedEmails.filter((e) => allowed.has(e));
+    if (targets.length === 0) {
+      setFeedback({ type: 'err', text: 'Los destinatarios deben estar en la lista autorizada.' });
       return;
     }
     setSending(true);
@@ -189,19 +264,19 @@ export const ReportCenter: React.FC<ReportCenterProps> = ({
       const subject = `${data.title} · ${data.periodLabel} — GDC`;
       const message = `Hola,\n\nAdjuntamos el ${data.title.toLowerCase()} correspondiente a ${data.periodLabel}.\n\nResumen ejecutivo:\n${data.aiSummary}\n\nSaludos,\nGDC Transporte de Carga`;
       const res = await sendReportByEmail({
-        to: target,
+        to: targets.join(','),
         subject,
         message,
         pdfBase64,
         fileName: reportFileName(data),
+        monthKey: data.rangeStart || month || undefined,
       });
       if (res.ok) {
-        setSavedEmails(addSavedEmail(target));
         setFeedback({
           type: 'ok',
           text: IS_MOCK
-            ? `Envío simulado a ${target} (modo demo: configurá el backend para envíos reales).`
-            : `Reporte enviado a ${target}.`,
+            ? `Envío simulado a ${targets.join(', ')} (modo demo).`
+            : `Reporte enviado a ${targets.join(', ')}.`,
         });
       } else {
         setFeedback({ type: 'err', text: res.error ?? 'No se pudo enviar el reporte.' });
@@ -211,11 +286,7 @@ export const ReportCenter: React.FC<ReportCenterProps> = ({
     } finally {
       setSending(false);
     }
-  }, [data, emailInput, fmt, captureCharts]);
-
-  const handleRemoveEmail = useCallback((email: string) => {
-    setSavedEmails(removeSavedEmail(email));
-  }, []);
+  }, [data, selectedEmails, authorized, fmt, captureCharts, month]);
 
   return (
     <Modal open={open} onClose={onClose} title="Generar reporte" size="full">
@@ -326,74 +397,117 @@ export const ReportCenter: React.FC<ReportCenterProps> = ({
             </div>
           </div>
 
-          {/* Panel de email */}
+          {/* Panel de email — lista autorizada + multi-select on-demand */}
           {emailEnabled && (
-            <div className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <label className="flex flex-1 flex-col gap-1">
-                  <span className="text-xs font-medium text-[var(--text-muted)]">Email destinatario</span>
-                  <input
-                    type="email"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    placeholder="nombre@empresa.com"
-                    className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </label>
+            <div className="space-y-4 rounded-lg border border-[var(--border)] bg-[var(--bg-surface)] p-4">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                  Correos autorizados
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <label className="flex flex-1 flex-col gap-1">
+                    <span className="text-xs font-medium text-[var(--text-muted)]">Agregar email</span>
+                    <input
+                      type="email"
+                      value={newEmailInput}
+                      onChange={(e) => setNewEmailInput(e.target.value)}
+                      placeholder="reports@example.com"
+                      className="rounded-lg border border-[var(--border)] bg-[var(--bg-base)] px-3 py-2 text-sm text-[var(--text-primary)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void handleAddAuthorized()}
+                    disabled={managing || !newEmailInput.trim() || !onAddReportEmail}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-2 text-sm font-medium hover:bg-[var(--bg-muted)] disabled:opacity-50"
+                  >
+                    {managing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                    Agregar
+                  </button>
+                </div>
+                {authorized.length === 0 ? (
+                  <p className="text-xs text-[var(--text-muted)]">
+                    No hay correos autorizados. Agregá destinatarios para enviar reportes.
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
+                    {authorized.map((entry) => {
+                      const selected = selectedEmails.includes(entry.email);
+                      return (
+                        <li
+                          key={entry.email}
+                          className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm"
+                        >
+                          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => toggleSelected(entry.email)}
+                              className="rounded border-[var(--border)]"
+                            />
+                            <span className="truncate font-medium">{entry.email}</span>
+                          </label>
+                          <label className="inline-flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                            <input
+                              type="checkbox"
+                              checked={entry.autoMonthly}
+                              disabled={!onToggleAutoMonthly || managing}
+                              onChange={() => {
+                                if (!onToggleAutoMonthly) return;
+                                setManaging(true);
+                                void onToggleAutoMonthly(entry.email, !entry.autoMonthly).finally(() =>
+                                  setManaging(false)
+                                );
+                              }}
+                              className="rounded border-[var(--border)]"
+                            />
+                            Auto mensualmente
+                          </label>
+                          {onRemoveReportEmail && (
+                            <button
+                              type="button"
+                              aria-label={`Quitar ${entry.email}`}
+                              disabled={managing}
+                              onClick={() => {
+                                setManaging(true);
+                                void onRemoveReportEmail(entry.email).finally(() => setManaging(false));
+                                setSelectedEmails((prev) => prev.filter((e) => e !== entry.email));
+                              }}
+                              className="text-[var(--text-muted)] hover:text-[var(--accent-red)] disabled:opacity-50"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                <p className="text-[11px] text-[var(--text-muted)]">
+                  Solo se puede enviar a correos de esta lista. «Auto mensualmente» recibe el HTML del día 5
+                  (mes anterior).
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] pt-3">
+                <p className="text-xs text-[var(--text-muted)]">
+                  {selectedEmails.length} seleccionado{selectedEmails.length === 1 ? '' : 's'}
+                </p>
                 <button
                   type="button"
                   onClick={() => void handleSend()}
-                  disabled={sending || !data || !emailInput.trim()}
+                  disabled={sending || !data || selectedEmails.length === 0}
                   className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--accent-emerald)] px-4 py-2 text-sm font-semibold text-white shadow hover:opacity-90 disabled:opacity-50"
                 >
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  Enviar
+                  Enviar PDF
                 </button>
               </div>
 
-              {savedEmails.length > 0 && (
-                <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-[var(--text-muted)]">Destinatarios guardados</p>
-                  <div className="flex flex-wrap gap-2">
-                    {savedEmails.map((email) => (
-                      <span
-                        key={email}
-                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${
-                          emailInput.trim().toLowerCase() === email
-                            ? 'border-[var(--accent-blue)] bg-[var(--accent-blue-muted)] text-[var(--accent-blue)]'
-                            : 'border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-secondary)]'
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setEmailInput(email)}
-                          className="inline-flex items-center gap-1"
-                        >
-                          {emailInput.trim().toLowerCase() === email ? (
-                            <Check className="h-3 w-3" />
-                          ) : (
-                            <Plus className="h-3 w-3" />
-                          )}
-                          {email}
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Quitar ${email}`}
-                          onClick={() => handleRemoveEmail(email)}
-                          className="text-[var(--text-muted)] hover:text-[var(--accent-red)]"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {IS_MOCK && (
                 <p className="text-xs text-[var(--text-muted)]">
-                  Modo demo: el envío real de emails requiere el backend (Apps Script) configurado y
-                  re-deployado con el handler <code>sendReportEmail</code>.
+                  Modo demo: el envío real requiere Apps Script redeployado (`sendReportEmail` + hojas
+                  ReportEmails/ReportLog).
                 </p>
               )}
             </div>

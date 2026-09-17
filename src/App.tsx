@@ -5,6 +5,7 @@ import type {
   Client,
   Cost,
   FleetDocument,
+  ReportEmailEntry,
   ScheduledCostDefinition,
   Trip,
   User,
@@ -27,6 +28,7 @@ import { CurrencySwitch } from './components/ui/CurrencySwitch';
 import {
   deleteCostFromSheet,
   deleteDocumentFromSheet,
+  deleteReportEmailFromSheet,
   deleteScheduledCostDefinition,
   deleteTripFromSheet,
   fetchLogisticsData,
@@ -34,10 +36,12 @@ import {
   saveClientToSheet,
   saveCostToSheet,
   saveDocumentToSheet,
+  saveReportEmailToSheet,
   saveScheduledCostDefinition,
   saveTripToSheet,
   updateCostInSheet,
   updateDocumentInSheet,
+  updateReportEmailInSheet,
   updateScheduledCostDefinition,
   updateTripInSheet,
   uploadDocumentFile,
@@ -52,6 +56,7 @@ import { sanitizeFileName } from './utils/formatters';
 import { collectAvailableMonthKeys } from './utils/analytics';
 import { countDocumentAlerts } from './utils/documents';
 import { ReportCenter } from './components/modules/ReportCenter';
+import { normalizeEmailAddress } from './utils/reportEmails';
 
 const STORAGE_USER_KEY = 'gdc_user';
 const THEME_KEY = 'gdc_theme';
@@ -100,6 +105,7 @@ const App: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [costs, setCosts] = useState<Cost[]>([]);
   const [documents, setDocuments] = useState<FleetDocument[]>([]);
+  const [reportEmails, setReportEmails] = useState<ReportEmailEntry[]>([]);
   const [scheduledCostDefinitions, setScheduledCostDefinitions] = useState<ScheduledCostDefinition[]>(
     []
   );
@@ -141,6 +147,7 @@ const App: React.FC = () => {
       setTrips(data.trips);
       setCosts(data.costs);
       setDocuments(data.documents);
+      setReportEmails(data.reportEmails);
       setOffline(lastLogisticsFetchWasMock());
       if (currentUser?.role === 'admin') {
         setScheduledCostDefinitions(data.scheduledCostDefinitions);
@@ -231,6 +238,7 @@ const App: React.FC = () => {
     setClients([]);
     setCosts([]);
     setDocuments([]);
+    setReportEmails([]);
     setScheduledCostDefinitions([]);
     setInsights([]);
     setOffline(false);
@@ -472,6 +480,95 @@ const App: React.FC = () => {
     [showToast]
   );
 
+  const onAddReportEmail = useCallback(
+    async (email: string) => {
+      const today = new Date().toISOString().split('T')[0];
+      const entry: ReportEmailEntry = {
+        email: normalizeEmailAddress(email),
+        autoMonthly: false,
+        activo: true,
+        updatedAt: today,
+        createdAt: today,
+        createdBy: user?.username ?? 'admin',
+      };
+      const ok = await saveReportEmailToSheet(entry);
+      if (!ok) {
+        showToast('No se pudo guardar el email en Google Sheets.', 'error');
+        return false;
+      }
+      setReportEmails((prev) => {
+        const idx = prev.findIndex((e) => e.email === entry.email);
+        if (idx >= 0) {
+          const next = prev.slice();
+          next[idx] = { ...next[idx], ...entry, activo: true };
+          return next;
+        }
+        return [...prev, entry];
+      });
+      return true;
+    },
+    [showToast, user?.username]
+  );
+
+  const onToggleAutoMonthly = useCallback(
+    async (email: string, autoMonthly: boolean) => {
+      const existing = reportEmails.find((e) => e.email === normalizeEmailAddress(email));
+      if (!existing) return false;
+      const today = new Date().toISOString().split('T')[0];
+      const updated: ReportEmailEntry = { ...existing, autoMonthly, updatedAt: today };
+      const ok = await updateReportEmailInSheet(updated);
+      if (!ok) {
+        showToast('No se pudo actualizar autoMonthly.', 'error');
+        return false;
+      }
+      setReportEmails((prev) => prev.map((e) => (e.email === updated.email ? updated : e)));
+      return true;
+    },
+    [reportEmails, showToast]
+  );
+
+  const onRemoveReportEmail = useCallback(
+    async (email: string) => {
+      const clean = normalizeEmailAddress(email);
+      const ok = await deleteReportEmailFromSheet(clean);
+      if (!ok) {
+        showToast('No se pudo desactivar el email.', 'error');
+        return false;
+      }
+      const today = new Date().toISOString().split('T')[0];
+      setReportEmails((prev) =>
+        prev.map((e) => (e.email === clean ? { ...e, activo: false, updatedAt: today } : e))
+      );
+      return true;
+    },
+    [showToast]
+  );
+
+  const onMigrateLocalEmails = useCallback(
+    async (emails: string[]) => {
+      const today = new Date().toISOString().split('T')[0];
+      for (const email of emails) {
+        const entry: ReportEmailEntry & { preserveAutoMonthly?: boolean } = {
+          email: normalizeEmailAddress(email),
+          autoMonthly: false,
+          activo: true,
+          updatedAt: today,
+          createdAt: today,
+          createdBy: user?.username ?? 'admin',
+          preserveAutoMonthly: true,
+        };
+        const ok = await saveReportEmailToSheet(entry);
+        if (ok) {
+          setReportEmails((prev) => {
+            if (prev.some((e) => e.email === entry.email)) return prev;
+            return [...prev, entry];
+          });
+        }
+      }
+    },
+    [user?.username]
+  );
+
   const pendingTripsCount = useMemo(
     () => trips.filter((t) => t.estado === 'Pendiente').length,
     [trips]
@@ -656,6 +753,11 @@ const App: React.FC = () => {
       availableMonths={availableMonths}
       formatAmount={formatAmount}
       convertAggregateToDisplay={convertAggregateToDisplay}
+      reportEmails={reportEmails}
+      onAddReportEmail={onAddReportEmail}
+      onToggleAutoMonthly={onToggleAutoMonthly}
+      onRemoveReportEmail={onRemoveReportEmail}
+      onMigrateLocalEmails={onMigrateLocalEmails}
     />
     </>
   );
