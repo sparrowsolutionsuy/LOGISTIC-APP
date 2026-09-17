@@ -12,15 +12,16 @@
 var DUMP_CACHE_TTL_SEC = 45;
 var DUMP_CACHE_PREFIX = 'gdc_dump_v1';
 var DUMP_CACHE_EPOCH_KEY = 'gdc_dump_epoch';
-var DUMP_KEYS = ['clients', 'trips', 'costs', 'scheduledCostDefinitions'];
+var DUMP_KEYS = ['clients', 'trips', 'costs', 'scheduledCostDefinitions', 'documents'];
 var DUMP_SHEET_BY_KEY = {
   clients: 'DB_Clientes',
   trips: 'DB_Viajes',
   costs: 'DB_Costos',
   scheduledCostDefinitions: 'DB_CostosProgramados',
+  documents: 'DB_Documentos',
 };
 
-/** Parse ?include= (comma-separated). Empty/missing → all four keys. */
+/** Parse ?include= (comma-separated). Empty/missing → all dump keys. */
 function parseIncludeParam(raw) {
   if (raw == null || String(raw).trim() === '') {
     return DUMP_KEYS.slice();
@@ -213,7 +214,14 @@ function probeDriveFolder(folderId) {
 function buildHealthPayload(folderIds) {
   var started = Date.now();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var names = ['DB_Viajes', 'DB_Clientes', 'DB_Costos', 'DB_CostosProgramados', 'DB_Usuarios'];
+  var names = [
+    'DB_Viajes',
+    'DB_Clientes',
+    'DB_Costos',
+    'DB_CostosProgramados',
+    'DB_Documentos',
+    'DB_Usuarios',
+  ];
   var sheets = {};
   for (var i = 0; i < names.length; i++) {
     var name = names[i];
@@ -236,11 +244,19 @@ function buildHealthPayload(folderIds) {
     (ids.folderIds && ids.folderIds.facturas) ||
     ids.facturas ||
     '';
+  var documentosId =
+    ids.documentosFolderId ||
+    (ids.folderIds && ids.folderIds.documentos) ||
+    ids.documentos ||
+    '';
   if (remitosId) {
     drive.remitos = probeDriveFolder(remitosId);
   }
   if (facturasId) {
     drive.facturas = probeDriveFolder(facturasId);
+  }
+  if (documentosId) {
+    drive.documentos = probeDriveFolder(documentosId);
   }
   return {
     status: 'success',
@@ -362,6 +378,26 @@ function ensureSchema() {
     ]);
   }
   ensureScheduledDefinitionSheetHeaders(scheduledSheet);
+
+  var docSheet = ss.getSheetByName('DB_Documentos');
+  if (!docSheet) {
+    docSheet = ss.insertSheet('DB_Documentos');
+    docSheet.appendRow([
+      'id',
+      'titulo',
+      'categoria',
+      'entidadRef',
+      'emitidoEn',
+      'venceEn',
+      'archivoUrl',
+      'notas',
+      'activo',
+      'creadoPor',
+      'creadoEn',
+      'actualizadoEn',
+    ]);
+  }
+  ensureDocumentSheetHeaders(docSheet);
 }
 
 /** Build dump object for selected include keys (read-only; missing sheet → []). */
@@ -379,6 +415,7 @@ function buildDumpPayload(includeKeys) {
       trips: payload.trips || [],
       costs: payload.costs || [],
       scheduledCostDefinitions: payload.scheduledCostDefinitions || [],
+      documents: payload.documents || [],
     };
   }
   return payload;
@@ -392,6 +429,7 @@ function doGet(e) {
     var getFolderIds = {};
     if (params.remitosFolderId) getFolderIds.remitosFolderId = params.remitosFolderId;
     if (params.facturasFolderId) getFolderIds.facturasFolderId = params.facturasFolderId;
+    if (params.documentosFolderId) getFolderIds.documentosFolderId = params.documentosFolderId;
     // Health is never stored as dump cache.
     return ContentService.createTextOutput(JSON.stringify(buildHealthPayload(getFolderIds))).setMimeType(
       ContentService.MimeType.JSON
@@ -715,6 +753,88 @@ function doPost(e) {
         }
         sheet.getRange(rowNum, remitoUrlIdx + 1).setValue(fileUrl);
       }, 'DB_Viajes');
+    } else if (type === 'document') {
+      var docSheetNew = ss.getSheetByName('DB_Documentos');
+      if (!docSheetNew) {
+        docSheetNew = ss.insertSheet('DB_Documentos');
+        docSheetNew.appendRow([
+          'id',
+          'titulo',
+          'categoria',
+          'entidadRef',
+          'emitidoEn',
+          'venceEn',
+          'archivoUrl',
+          'notas',
+          'activo',
+          'creadoPor',
+          'creadoEn',
+          'actualizadoEn',
+        ]);
+      }
+      ensureDocumentSheetHeaders(docSheetNew);
+      var docHdrNew = docSheetNew.getRange(1, 1, 1, docSheetNew.getLastColumn()).getValues()[0];
+      docSheetNew.appendRow(documentRowValues(data, docHdrNew));
+    } else if (type === 'updateDocument') {
+      var docSheetU = ss.getSheetByName('DB_Documentos');
+      if (!docSheetU) {
+        return createErrorResponse('DB_Documentos no existe');
+      }
+      ensureDocumentSheetHeaders(docSheetU);
+      var docValsU = docSheetU.getDataRange().getValues();
+      var docHeadersU = docValsU[0];
+      var docIdColU = docHeadersU.indexOf('id');
+      if (docIdColU === -1) {
+        return createErrorResponse('DB_Documentos sin columna id');
+      }
+      var docFoundU = false;
+      for (var duDoc = 1; duDoc < docValsU.length; duDoc++) {
+        if (String(docValsU[duDoc][docIdColU]) === String(data.id)) {
+          var docNewRow = documentRowValues(data, docHeadersU);
+          for (var ducDoc = 0; ducDoc < docNewRow.length; ducDoc++) {
+            docSheetU.getRange(duDoc + 1, ducDoc + 1).setValue(docNewRow[ducDoc]);
+          }
+          docFoundU = true;
+          break;
+        }
+      }
+      if (!docFoundU) {
+        return createErrorResponse('Documento no encontrado: ' + data.id);
+      }
+    } else if (type === 'deleteDocument') {
+      var docSheetD = ss.getSheetByName('DB_Documentos');
+      if (!docSheetD) {
+        return createErrorResponse('DB_Documentos no existe');
+      }
+      ensureDocumentSheetHeaders(docSheetD);
+      var docValsD = docSheetD.getDataRange().getValues();
+      var docHeadersD = docValsD[0];
+      var docIdColD = docHeadersD.indexOf('id');
+      var docActivoCol = docHeadersD.indexOf('activo');
+      var docActualizadoCol = docHeadersD.indexOf('actualizadoEn');
+      if (docIdColD === -1) {
+        return createErrorResponse('DB_Documentos sin columna id');
+      }
+      var docDel = false;
+      for (var ddDoc = 1; ddDoc < docValsD.length; ddDoc++) {
+        if (String(docValsD[ddDoc][docIdColD]) === String(data.id)) {
+          if (docActivoCol > -1) {
+            docSheetD.getRange(ddDoc + 1, docActivoCol + 1).setValue(false);
+          }
+          if (docActualizadoCol > -1) {
+            docSheetD
+              .getRange(ddDoc + 1, docActualizadoCol + 1)
+              .setValue(data.actualizadoEn || new Date().toISOString().split('T')[0]);
+          }
+          docDel = true;
+          break;
+        }
+      }
+      if (!docDel) {
+        return createErrorResponse('Documento no encontrado: ' + data.id);
+      }
+    } else if (type === 'uploadDocument') {
+      return uploadDocument(data);
     } else {
       return createErrorResponse('Unknown type: ' + String(type));
     }
@@ -913,6 +1033,156 @@ function definitionRowValues(data, headers) {
     if (h === 'tripId') return data.tripId != null && String(data.tripId) !== '' ? String(data.tripId) : '';
     return data[h] != null ? data[h] : '';
   });
+}
+
+/** Asegura columnas esperadas en DB_Documentos (hojas antiguas). */
+function ensureDocumentSheetHeaders(sheet) {
+  var expected = [
+    'id',
+    'titulo',
+    'categoria',
+    'entidadRef',
+    'emitidoEn',
+    'venceEn',
+    'archivoUrl',
+    'notas',
+    'activo',
+    'creadoPor',
+    'creadoEn',
+    'actualizadoEn',
+  ];
+  var lastCol = Math.max(1, sheet.getLastColumn());
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  for (var di = 0; di < expected.length; di++) {
+    var dname = expected[di];
+    if (headers.indexOf(dname) === -1) {
+      var dlc = sheet.getLastColumn();
+      sheet.getRange(1, dlc + 1).setValue(dname);
+      headers.push(dname);
+    }
+  }
+}
+
+function documentRowValues(data, headers) {
+  return headers.map(function (h) {
+    if (h === 'id') return data.id || '';
+    if (h === 'titulo') return data.titulo || '';
+    if (h === 'categoria') return data.categoria || 'otro';
+    if (h === 'entidadRef') return data.entidadRef || '';
+    if (h === 'emitidoEn') return data.emitidoEn || '';
+    if (h === 'venceEn') return data.venceEn || '';
+    if (h === 'archivoUrl') return data.archivoUrl || '';
+    if (h === 'notas') return data.notas || '';
+    if (h === 'activo') {
+      if (data.activo === undefined || data.activo === null || data.activo === '') {
+        return true;
+      }
+      return boolOrBlank(data.activo);
+    }
+    if (h === 'creadoPor') return data.creadoPor || '';
+    if (h === 'creadoEn') return data.creadoEn || '';
+    if (h === 'actualizadoEn') return data.actualizadoEn || '';
+    return data[h] != null ? data[h] : '';
+  });
+}
+
+/**
+ * Upload fleet document to Drive and set archivoUrl on DB_Documentos by documentId.
+ * Does not use tripId (keeps remito/invoice uploadFile path unchanged).
+ */
+function uploadDocument(data) {
+  try {
+    if (!data || !data.fileData) {
+      return createErrorResponse('Faltan datos del archivo (fileData).');
+    }
+    var documentId = data.documentId || data.id;
+    if (!documentId) {
+      return createErrorResponse('Falta documentId.');
+    }
+
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var contentType = data.mimeType || 'application/pdf';
+    var rawBase64 = stripBase64Prefix(data.fileData);
+    var decoded;
+    try {
+      decoded = Utilities.base64Decode(rawBase64);
+    } catch (decodeErr) {
+      return createErrorResponse('No se pudo decodificar el archivo (base64 inválido).');
+    }
+    var blob = Utilities.newBlob(decoded, contentType, data.fileName || 'documento.bin');
+
+    var folder;
+    if (data.folderId && data.folderId !== '') {
+      try {
+        folder = DriveApp.getFolderById(data.folderId);
+      } catch (e) {
+        try {
+          folder = getFolderByName(ss, 'Documentos');
+        } catch (fallbackErr) {
+          return createErrorResponse(
+            'No se pudo abrir la carpeta Drive (folderId inválido) ni crear "Documentos": ' +
+              String(fallbackErr)
+          );
+        }
+      }
+    } else {
+      try {
+        folder = getFolderByName(ss, 'Documentos');
+      } catch (fallbackErr) {
+        return createErrorResponse(
+          'Sin folderId y no se pudo resolver carpeta "Documentos": ' +
+            String(fallbackErr) +
+            '. Configurá VITE_DRIVE_FOLDER_DOCUMENTOS.'
+        );
+      }
+    }
+
+    var file;
+    try {
+      file = folder.createFile(blob);
+    } catch (createErr) {
+      return createErrorResponse('No se pudo crear el archivo en Drive: ' + String(createErr));
+    }
+
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (shareErr) {
+      // Sharing policy may block ANYONE_WITH_LINK.
+    }
+    var fileUrl = file.getUrl();
+
+    var sheet = ss.getSheetByName('DB_Documentos');
+    if (sheet) {
+      ensureDocumentSheetHeaders(sheet);
+      var values = sheet.getDataRange().getValues();
+      var headers = values[0];
+      var idIdx = headers.indexOf('id');
+      var urlIdx = headers.indexOf('archivoUrl');
+      var updIdx = headers.indexOf('actualizadoEn');
+      if (idIdx >= 0) {
+        for (var i = 1; i < values.length; i++) {
+          if (String(values[i][idIdx]) === String(documentId)) {
+            if (urlIdx > -1) {
+              sheet.getRange(i + 1, urlIdx + 1).setValue(fileUrl);
+            }
+            if (updIdx > -1) {
+              sheet
+                .getRange(i + 1, updIdx + 1)
+                .setValue(data.actualizadoEn || new Date().toISOString().split('T')[0]);
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    invalidateDumpCache();
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success', url: fileUrl })).setMimeType(
+      ContentService.MimeType.JSON
+    );
+  } catch (err) {
+    return createErrorResponse('Error al subir documento: ' + String(err));
+  }
 }
 
 function buildRow(headers, data) {

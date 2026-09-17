@@ -9,6 +9,7 @@ import {
   LogOut,
   Wallet,
   LineChart,
+  FileText,
 } from 'lucide-react';
 import type { ActiveTab, User, UserRole } from '../../types';
 import { ROUTE_NAMES } from '../../constants';
@@ -20,6 +21,10 @@ export interface SidebarProps {
   onNavigate: (view: ActiveTab) => void;
   offline: boolean;
   pendingTripsCount: number;
+  /** Active documents with expiring/overdue alerts. */
+  documentsAlertCount?: number;
+  /** If true and alert count > 0, badge uses red token; else amber. */
+  documentsAlertHasOverdue?: boolean;
   onRequestClose?: () => void;
   onLogout: () => void;
 }
@@ -30,6 +35,7 @@ interface NavDef {
   icon: React.ReactNode;
   roles?: UserRole[];
   showPendingBadge?: boolean;
+  showDocumentsBadge?: boolean;
 }
 
 const OPERATIVE_NAV: NavDef[] = [
@@ -41,6 +47,12 @@ const OPERATIVE_NAV: NavDef[] = [
     showPendingBadge: true,
   },
   { view: 'map', label: ROUTE_NAMES.map, icon: <MapIcon size={20} strokeWidth={2} aria-hidden /> },
+  {
+    view: 'documents',
+    label: ROUTE_NAMES.documents,
+    icon: <FileText size={20} strokeWidth={2} aria-hidden />,
+    showDocumentsBadge: true,
+  },
 ];
 
 const FINANCIAL_NAV: NavDef[] = [
@@ -78,6 +90,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNavigate,
   offline,
   pendingTripsCount,
+  documentsAlertCount = 0,
+  documentsAlertHasOverdue = false,
   onRequestClose,
   onLogout,
 }) => {
@@ -108,7 +122,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex flex-col gap-2">
             {OPERATIVE_NAV.map((item) => {
               const active = currentView === item.view;
-              const badgeCount = item.showPendingBadge ? pendingTripsCount : 0;
+              const pendingBadge = item.showPendingBadge ? pendingTripsCount : 0;
+              const docsBadge = item.showDocumentsBadge ? documentsAlertCount : 0;
+              const badgeCount = pendingBadge > 0 ? pendingBadge : docsBadge;
+              const badgeIsRed = item.showDocumentsBadge && docsBadge > 0 && documentsAlertHasOverdue;
+              const badgeTitle = item.showPendingBadge
+                ? 'Viajes pendientes'
+                : 'Documentos por vencer o vencidos';
               return (
                 <button
                   key={item.view}
@@ -128,8 +148,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   {badgeCount > 0 ? (
                     <span
-                      className="shrink-0 rounded-[var(--radius-full)] border border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent-amber)_12%,transparent)] px-2 py-0.5 text-xs font-bold tabular-nums text-[var(--accent-amber)]"
-                      title="Viajes pendientes"
+                      className={
+                        badgeIsRed
+                          ? 'shrink-0 rounded-[var(--radius-full)] border border-[color-mix(in_srgb,var(--accent-red)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent-red)_12%,transparent)] px-2 py-0.5 text-xs font-bold tabular-nums text-[var(--accent-red)]'
+                          : 'shrink-0 rounded-[var(--radius-full)] border border-[color-mix(in_srgb,var(--accent-amber)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent-amber)_12%,transparent)] px-2 py-0.5 text-xs font-bold tabular-nums text-[var(--accent-amber)]'
+                      }
+                      title={badgeTitle}
                     >
                       {badgeCount > 99 ? '99+' : badgeCount}
                     </span>

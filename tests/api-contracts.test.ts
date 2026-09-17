@@ -156,7 +156,67 @@ describe('fetchLogisticsDataFromUrl with configured URL', () => {
     expect(result.scheduledCostDefinitions).toHaveLength(1);
     expect(result.scheduledCostDefinitions[0]?.id).toBe('sc1');
     expect(result.scheduledCostDefinitions[0]?.descripcion).toBe('Alquiler');
+    expect(result.documents).toEqual([]);
     expect(lastLogisticsFetchWasMock()).toBe(false);
+  });
+
+  it('parses documents from GET dump and defaults missing key to []', async () => {
+    const withDocs = {
+      clients: [],
+      trips: [],
+      costs: [],
+      scheduledCostDefinitions: [],
+      documents: [
+        {
+          id: 'DOC1',
+          titulo: 'Libreta',
+          categoria: 'camion',
+          entidadRef: 'ABC',
+          emitidoEn: '2026-01-01',
+          venceEn: '2026-12-31',
+          activo: true,
+          creadoPor: 'admin',
+          creadoEn: '2026-01-01',
+          notas: '',
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => JSON.stringify(withDocs),
+      })
+    );
+    const withResult = await fetchLogisticsDataFromUrl(
+      'https://example.invalid/macros/s/docs/exec',
+      { treatAsProd: true }
+    );
+    expect(withResult.documents).toHaveLength(1);
+    expect(withResult.documents[0]?.id).toBe('DOC1');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () =>
+          JSON.stringify({
+            clients: [],
+            trips: [],
+            costs: [],
+            scheduledCostDefinitions: [],
+          }),
+      })
+    );
+    const oldGas = await fetchLogisticsDataFromUrl(
+      'https://example.invalid/macros/s/old-gas/exec',
+      { treatAsProd: true }
+    );
+    expect(oldGas.documents).toEqual([]);
   });
 
   it('retries once on HTTP 404 then succeeds', async () => {

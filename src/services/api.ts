@@ -1,9 +1,20 @@
-import type { BillingInfo, Client, Cost, ScheduledCostDefinition, Trip, TripStatus, User } from '../types';
+import type {
+  BillingInfo,
+  Client,
+  Cost,
+  FleetDocument,
+  ScheduledCostDefinition,
+  Trip,
+  TripStatus,
+  User,
+} from '../types';
 import { MOCK_DATA } from '../constants';
+import { normalizeDocumentCategory } from '../utils/documents';
 
 const SHEET_URL = String(import.meta.env.VITE_SHEET_URL ?? '').trim();
 const DRIVE_FOLDER_REMITOS = String(import.meta.env.VITE_DRIVE_FOLDER_REMITOS ?? '').trim();
 const DRIVE_FOLDER_FACTURAS = String(import.meta.env.VITE_DRIVE_FOLDER_FACTURAS ?? '').trim();
+const DRIVE_FOLDER_DOCUMENTOS = String(import.meta.env.VITE_DRIVE_FOLDER_DOCUMENTOS ?? '').trim();
 
 /**
  * Mock data is allowed only in development or Vitest — never in production builds.
@@ -39,6 +50,8 @@ const MOCK_DELAY_MS = 300;
 
 /** En modo mock, definiciones de costos programados persisten en memoria del módulo. */
 let mockScheduledCostDefinitionsCache: ScheduledCostDefinition[] | null = null;
+/** En modo mock, documentos de flota persisten en memoria del módulo. */
+let mockDocumentsCache: FleetDocument[] | null = null;
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -264,6 +277,44 @@ function getMockScheduledDefinitions(): ScheduledCostDefinition[] {
   return mockScheduledCostDefinitionsCache;
 }
 
+export function normalizeDocument(row: unknown): FleetDocument {
+  const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+  const parseDateOnly = (v: unknown): string => {
+    if (v == null || v === '' || v === 'NaN' || v === 'NaT') return '';
+    if (v instanceof Date) return v.toISOString().split('T')[0];
+    const s = String(v).trim();
+    if (!s || s === 'NaN' || s === 'NaT' || s === 'Invalid Date') return '';
+    return s.split('T')[0];
+  };
+  const archivoRaw = r.archivoUrl;
+  const archivoUrl =
+    archivoRaw != null && String(archivoRaw).trim() !== '' && String(archivoRaw).trim() !== 'NaN'
+      ? String(archivoRaw).trim()
+      : undefined;
+  const actualizado = parseDateOnly(r.actualizadoEn);
+  return {
+    id: String(r.id ?? ''),
+    titulo: String(r.titulo ?? ''),
+    categoria: normalizeDocumentCategory(r.categoria),
+    entidadRef: String(r.entidadRef ?? ''),
+    emitidoEn: parseDateOnly(r.emitidoEn),
+    venceEn: parseDateOnly(r.venceEn),
+    ...(archivoUrl ? { archivoUrl } : {}),
+    notas: String(r.notas ?? ''),
+    activo: r.activo === true || String(r.activo).toUpperCase() === 'TRUE',
+    creadoPor: String(r.creadoPor ?? ''),
+    creadoEn: parseDateOnly(r.creadoEn) || String(r.creadoEn ?? ''),
+    ...(actualizado ? { actualizadoEn: actualizado } : {}),
+  };
+}
+
+function getMockDocuments(): FleetDocument[] {
+  if (mockDocumentsCache === null) {
+    mockDocumentsCache = MOCK_DATA.documents.map((d) => normalizeDocument(d));
+  }
+  return mockDocumentsCache;
+}
+
 export function normalizeCost(row: unknown): Cost {
   const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
   const tripIdRaw = r.tripId;
@@ -322,6 +373,8 @@ export interface LogisticsData {
   costs: Cost[];
   /** Present on the same GET dump as clients/trips/costs (Apps Script already sends the key). */
   scheduledCostDefinitions: ScheduledCostDefinition[];
+  /** Fleet documents; empty array if old GAS omits the key. */
+  documents: FleetDocument[];
 }
 
 /** GET dump timeout — aligned to observed Apps Script p95 (often 8–22s). */
@@ -357,6 +410,7 @@ function cloneMockData(): LogisticsData {
     trips: MOCK_DATA.trips.map((t) => normalizeTrip(t)),
     costs: MOCK_DATA.costs.map((c) => normalizeCost(c)),
     scheduledCostDefinitions: getMockScheduledDefinitions().map((d) => ({ ...d })),
+    documents: getMockDocuments().map((d) => ({ ...d })),
   };
 }
 
@@ -365,6 +419,7 @@ function mapLogisticsRecord(record: {
   trips?: unknown;
   costs?: unknown;
   scheduledCostDefinitions?: unknown;
+  documents?: unknown;
 }): LogisticsData {
   const clientsRaw = Array.isArray(record.clients) ? record.clients : [];
   const tripsRaw = Array.isArray(record.trips) ? record.trips : [];
@@ -372,11 +427,14 @@ function mapLogisticsRecord(record: {
   const defsRaw = Array.isArray(record.scheduledCostDefinitions)
     ? record.scheduledCostDefinitions
     : [];
+  // Old GAS without documents key → empty array (do not throw).
+  const docsRaw = Array.isArray(record.documents) ? record.documents : [];
   return {
     clients: clientsRaw.map((row) => normalizeClient(row)),
     trips: tripsRaw.map((row) => normalizeTrip(row)),
     costs: costsRaw.map((row) => normalizeCost(row)),
     scheduledCostDefinitions: defsRaw.map((row) => normalizeScheduledCostDefinition(row)),
+    documents: docsRaw.map((row) => normalizeDocument(row)),
   };
 }
 
@@ -418,6 +476,7 @@ async function attemptLogisticsGet(
       trips?: unknown;
       costs?: unknown;
       scheduledCostDefinitions?: unknown;
+      documents?: unknown;
     };
     try {
       record = JSON.parse(text) as typeof record;
@@ -530,6 +589,33 @@ async function postSheet(type: string, data: unknown): Promise<boolean> {
       const id = String(rec.id ?? '');
       const filtered = getMockScheduledDefinitions().filter((d) => d.id !== id);
       mockScheduledCostDefinitionsCache = filtered;
+      return true;
+    }
+    if (type === 'document') {
+      getMockDocuments().push(normalizeDocument(data));
+      return true;
+    }
+    if (type === 'updateDocument') {
+      const doc = normalizeDocument(data);
+      const arr = getMockDocuments();
+      const idx = arr.findIndex((d) => d.id === doc.id);
+      if (idx >= 0) {
+        arr[idx] = doc;
+      }
+      return true;
+    }
+    if (type === 'deleteDocument') {
+      const rec = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+      const id = String(rec.id ?? '');
+      const arr = getMockDocuments();
+      const idx = arr.findIndex((d) => d.id === id);
+      if (idx >= 0) {
+        arr[idx] = {
+          ...arr[idx],
+          activo: false,
+          actualizadoEn: new Date().toISOString().split('T')[0],
+        };
+      }
       return true;
     }
     return true;
@@ -775,8 +861,10 @@ function logUploadDiag(
 
 async function postDriveUpload(options: {
   label: string;
-  type: 'uploadInvoice' | 'uploadRemito';
-  tripId: string;
+  type: 'uploadInvoice' | 'uploadRemito' | 'uploadDocument';
+  /** tripId for remito/invoice; documentId for documents. */
+  entityId: string;
+  idField: 'tripId' | 'documentId';
   fileData: string;
   fileName: string;
   mimeType: string;
@@ -786,6 +874,10 @@ async function postDriveUpload(options: {
 
   for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
     try {
+      const idPayload =
+        options.idField === 'documentId'
+          ? { documentId: options.entityId }
+          : { tripId: options.entityId };
       const response = await fetchWithTimeout(
         SHEET_URL,
         {
@@ -794,7 +886,7 @@ async function postDriveUpload(options: {
           body: JSON.stringify({
             type: options.type,
             data: {
-              tripId: options.tripId,
+              ...idPayload,
               fileData: options.fileData,
               fileName: options.fileName,
               mimeType: options.mimeType,
@@ -881,7 +973,8 @@ export async function uploadInvoice(
   return postDriveUpload({
     label: 'uploadInvoice',
     type: 'uploadInvoice',
-    tripId,
+    entityId: tripId,
+    idField: 'tripId',
     fileData,
     fileName,
     mimeType,
@@ -907,11 +1000,45 @@ export async function uploadRemitoImage(
   return postDriveUpload({
     label: 'uploadRemitoImage',
     type: 'uploadRemito',
-    tripId,
+    entityId: tripId,
+    idField: 'tripId',
     fileData,
     fileName,
     mimeType,
     folderId: DRIVE_FOLDER_REMITOS,
+  });
+}
+
+/** Sube archivo de documento a Drive (`type: uploadDocument`). */
+export async function uploadDocumentFile(
+  documentId: string,
+  fileData: string,
+  fileName: string,
+  mimeType: string
+): Promise<DriveUploadResult> {
+  if (IS_MOCK) {
+    await delay(MOCK_DELAY_MS);
+    const url = `https://drive.google.com/mock-documento/${encodeURIComponent(documentId)}/${encodeURIComponent(fileName)}`;
+    const arr = getMockDocuments();
+    const idx = arr.findIndex((d) => d.id === documentId);
+    if (idx >= 0) {
+      arr[idx] = {
+        ...arr[idx],
+        archivoUrl: url,
+        actualizadoEn: new Date().toISOString().split('T')[0],
+      };
+    }
+    return { ok: true, url };
+  }
+  return postDriveUpload({
+    label: 'uploadDocumentFile',
+    type: 'uploadDocument',
+    entityId: documentId,
+    idField: 'documentId',
+    fileData,
+    fileName,
+    mimeType,
+    folderId: DRIVE_FOLDER_DOCUMENTOS,
   });
 }
 
@@ -1041,6 +1168,7 @@ export interface HealthResponse {
   drive: {
     remitos?: HealthDriveStatus;
     facturas?: HealthDriveStatus;
+    documentos?: HealthDriveStatus;
   };
   latencyMs?: number;
   message?: string;
@@ -1103,6 +1231,7 @@ export async function fetchHealth(): Promise<HealthResponse> {
   const data: Record<string, string> = {};
   if (DRIVE_FOLDER_REMITOS) data.remitosFolderId = DRIVE_FOLDER_REMITOS;
   if (DRIVE_FOLDER_FACTURAS) data.facturasFolderId = DRIVE_FOLDER_FACTURAS;
+  if (DRIVE_FOLDER_DOCUMENTOS) data.documentosFolderId = DRIVE_FOLDER_DOCUMENTOS;
 
   const response = await fetchWithTimeout(
     SHEET_URL,
@@ -1155,4 +1284,20 @@ export async function deleteScheduledCostDefinition(id: string): Promise<void> {
   if (!ok) {
     throw new Error('No se pudo eliminar la definición de costo programado');
   }
+}
+
+export async function saveDocumentToSheet(doc: FleetDocument): Promise<boolean> {
+  return postSheet('document', doc);
+}
+
+export async function updateDocumentInSheet(doc: FleetDocument): Promise<boolean> {
+  return postSheet('updateDocument', doc);
+}
+
+/** Soft-delete: sets activo=FALSE in Sheets. */
+export async function deleteDocumentFromSheet(id: string): Promise<boolean> {
+  return postSheet('deleteDocument', {
+    id,
+    actualizadoEn: new Date().toISOString().split('T')[0],
+  });
 }

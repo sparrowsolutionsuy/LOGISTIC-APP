@@ -25,10 +25,11 @@ Creá un archivo **`.env.local`** en la raíz (no se sube a git) con al menos:
 
 | Variable | Descripción |
 |----------|-------------|
-| `VITE_SHEET_URL` | URL del Web App de Apps Script (GET: `clients`, `trips`, `costs`, `scheduledCostDefinitions`) |
+| `VITE_SHEET_URL` | URL del Web App de Apps Script (GET: `clients`, `trips`, `costs`, `scheduledCostDefinitions`, `documents`) |
 | `VITE_GEMINI_API_KEY` | Opcional; si falta, los insights del dashboard usan texto fijo local |
 | `VITE_DRIVE_FOLDER_REMITOS` | ID de carpeta de Drive para remitos (subida vía script) |
 | `VITE_DRIVE_FOLDER_FACTURAS` | ID de carpeta de Drive para facturas |
+| `VITE_DRIVE_FOLDER_DOCUMENTOS` | Opcional; ID de carpeta Drive para Documentos (fallback: carpeta `Documentos`) |
 | `VITE_ALLOW_MOCK` | **Ignored in production builds.** Local DEV/test mock is automatic when `VITE_SHEET_URL` is unset; a configured URL never falls back to mock data on failure. |
 
 ```bash
@@ -67,6 +68,7 @@ Definí al menos (nombres exactos):
 - `VITE_GEMINI_API_KEY`
 - `VITE_DRIVE_FOLDER_REMITOS`
 - `VITE_DRIVE_FOLDER_FACTURAS`
+- `VITE_DRIVE_FOLDER_DOCUMENTOS` (opcional; si falta, GAS crea/usa carpeta `Documentos` bajo el padre de la hoja)
 
 Si usás el **environment** `github-pages` en el repo, replicá los mismos secrets ahí para que el job de build los reciba.
 
@@ -80,11 +82,13 @@ Copiá el contenido de **`GOOGLE_APPS_SCRIPT.js`** en el proyecto de Apps Script
 
 El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, data }`) para evitar preflight innecesario; el script debe seguir usando `JSON.parse(e.postData.contents)`.
 
-**Operaciones soportadas (POST `type`):** `login`, `trip`, `client`, `updateTrip`, `deleteTrip`, `cost`, `updateCost`, `deleteCost`, `saveScheduledCost`, `updateScheduledCost`, `deleteScheduledCost`, `uploadInvoice`, `uploadRemito`, `sendReportEmail`, `health`. Tipos desconocidos responden `status: error`.
+**Operaciones soportadas (POST `type`):** `login`, `trip`, `client`, `updateTrip`, `deleteTrip`, `cost`, `updateCost`, `deleteCost`, `saveScheduledCost`, `updateScheduledCost`, `deleteScheduledCost`, `document`, `updateDocument`, `deleteDocument` (soft `activo=FALSE`), `uploadDocument`, `uploadInvoice`, `uploadRemito`, `sendReportEmail`, `health`. Tipos desconocidos responden `status: error`.
 
-**Remitos / facturas (Drive):** el cliente reintenta subidas 2–3 veces ante HTTP 404, HTML, red o JSON inválido; comprime fotos de remito (máx. ~1600px, JPEG ~0.8) antes de enviar. Los errores del script se muestran en toast/alerta.
+**Remitos / facturas / documentos (Drive):** el cliente reintenta subidas 2–3 veces ante HTTP 404, HTML, red o JSON inválido; comprime fotos de remito (máx. ~1600px, JPEG ~0.8) antes de enviar. Los errores del script se muestran en toast/alerta. Documentos usan `documentId` (no `tripId`).
 
-**Health:** POST `{ type: "health", data: { remitosFolderId?, facturasFolderId? } }` or GET `?health=1` — runs `ensureSchema()` once, then reports tabs, row counts, probe Drive (`DriveApp.getFolderById` only; no crea archivos). Health responses are **not** dump-cached.
+**Health:** POST `{ type: "health", data: { remitosFolderId?, facturasFolderId?, documentosFolderId? } }` or GET `?health=1` — runs `ensureSchema()` once, then reports tabs (incl. `DB_Documentos`), row counts, probe Drive (`DriveApp.getFolderById` only; no crea archivos). Health responses are **not** dump-cached.
+
+**Documentos (Operativo):** hoja `DB_Documentos` + carpeta Drive; GET dump key `documents`. Admin CRUD + upload; rol operativo solo lectura. Tras merge de U2: **redeploy GAS + `?migrate=1` obligatorio** (crea hoja/headers).
 
 **Costos programados:** definiciones en `DB_CostosProgramados`; el GET las expone como `scheduledCostDefinitions`. Tras **Phase A** (latencia), el login admin hace **un solo GET** y reutiliza esas defs — no un segundo dump completo.
 
@@ -98,17 +102,16 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 | Dump ScriptCache TTL | **45s** (`gdc_dump_v1` + epoch); writes invalidan el cache |
 | Schema migration | **Off** hot GET — `ensureSchema()` vía `?migrate=1` o health |
 
-**Phase B (Apps Script):** hot dump GET only reads existing sheets (missing sheet → `[]`). Optional `?include=clients,trips,costs,scheduledCostDefinitions` (comma-separated; default = all four). Second GET within TTL should be faster (cache hit); first GET after a write is cold.
+**Phase B (Apps Script):** hot dump GET only reads existing sheets (missing sheet → `[]`). Optional `?include=clients,trips,costs,scheduledCostDefinitions,documents` (comma-separated; default = all five). Second GET within TTL should be faster (cache hit); first GET after a write is cold.
 
-After deploy / if schema might be old:
+After deploy / if schema might be old (incl. **U2 Documentos**):
 
-1. Redeploy Apps Script Web App (**new version**).
-2. Hit once: `GET …/exec?migrate=1` **or** `GET …/exec?health=1` / POST `{ type: "health" }`.
+1. Redeploy Apps Script Web App (**new version**) — paste latest `GOOGLE_APPS_SCRIPT.js`.
+2. Hit once: `GET …/exec?migrate=1` **or** `GET …/exec?health=1` / POST `{ type: "health" }` (creates `DB_Documentos` if missing).
 3. Smoke: `npm run maintenance:smoke` (optional second GET within 45s to observe cache).
+4. UI: Operativo → Documentos — crear metadata + subir un PDF de prueba (admin).
 
-Plan completo: `sparrow-harness/thoughts/shared/plans/2026-09-17-logistic-app-latency.md`.
-
-> Tras cambiar `GOOGLE_APPS_SCRIPT.js` en el repo, un humano debe **redeployar** la Web App (Manage deployments → New version). Hasta entonces producción sigue con el script viejo. **HITL obligatorio** tras merge si este PR tocó Apps Script. **Phase B requiere redeploy + migrate/health.**
+> Tras cambiar `GOOGLE_APPS_SCRIPT.js` en el repo, un humano debe **redeployar** la Web App (Manage deployments → New version). Hasta entonces producción sigue con el script viejo. **HITL obligatorio** tras merge si este PR tocó Apps Script. **U2 Documentos requiere redeploy + migrate.**
 
 ---
 

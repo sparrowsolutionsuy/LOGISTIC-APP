@@ -5,6 +5,7 @@ interface ImportMetaEnv {
   readonly VITE_GEMINI_API_KEY?: string;
   readonly VITE_DRIVE_FOLDER_REMITOS?: string;
   readonly VITE_DRIVE_FOLDER_FACTURAS?: string;
+  readonly VITE_DRIVE_FOLDER_DOCUMENTOS?: string;
   /** Opcional: reporte de rendimiento con Anthropic. */
   readonly VITE_ANTHROPIC_API_KEY?: string;
   /** Solo DEV/tests: permite mock aunque falte VITE_SHEET_URL. */

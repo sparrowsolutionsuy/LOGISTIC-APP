@@ -13,6 +13,8 @@ export interface AppShellProps {
   /** true cuando los datos vienen de mock o falló la conexión al Sheet. */
   offline: boolean;
   pendingTripsCount: number;
+  documentsAlertCount?: number;
+  documentsAlertHasOverdue?: boolean;
   onLogout: () => void;
   headerBadge?: React.ReactNode;
   /** Selector de moneda y TC (header desktop y móvil). */
@@ -28,6 +30,8 @@ export const AppShell: React.FC<AppShellProps> = ({
   onNavigate,
   offline,
   pendingTripsCount,
+  documentsAlertCount = 0,
+  documentsAlertHasOverdue = false,
   onLogout,
   headerBadge,
   currencySwitch,
@@ -98,6 +102,8 @@ export const AppShell: React.FC<AppShellProps> = ({
                 onNavigate={onNavigate}
                 offline={offline}
                 pendingTripsCount={pendingTripsCount}
+                documentsAlertCount={documentsAlertCount}
+                documentsAlertHasOverdue={documentsAlertHasOverdue}
                 onRequestClose={() => setDrawerOpen(false)}
                 onLogout={() => {
                   setDrawerOpen(false);
@@ -117,6 +123,8 @@ export const AppShell: React.FC<AppShellProps> = ({
             onNavigate={onNavigate}
             offline={offline}
             pendingTripsCount={pendingTripsCount}
+            documentsAlertCount={documentsAlertCount}
+            documentsAlertHasOverdue={documentsAlertHasOverdue}
             onLogout={onLogout}
           />
         </aside>

@@ -110,6 +110,34 @@ export interface ScheduledCostDefinition {
 
 export type DisplayCurrency = 'USD' | 'UYU';
 
+/** Categorías v1 del repositorio de Documentos (Operativo). */
+export type DocumentCategory = 'camion' | 'funcionario' | 'seguro' | 'otro';
+
+export const DOCUMENT_CATEGORIES: DocumentCategory[] = [
+  'camion',
+  'funcionario',
+  'seguro',
+  'otro',
+];
+
+/** Metadata de documento de flota / funcionarios (DB_Documentos + Drive). */
+export interface FleetDocument {
+  id: string;
+  titulo: string;
+  categoria: DocumentCategory;
+  entidadRef: string;
+  /** YYYY-MM-DD o '' si no aplica. */
+  emitidoEn: string;
+  /** YYYY-MM-DD o '' — sin fecha = sin alerta. */
+  venceEn: string;
+  archivoUrl?: string;
+  notas: string;
+  activo: boolean;
+  creadoPor: string;
+  creadoEn: string;
+  actualizadoEn?: string;
+}
+
 export interface ExchangeRateContext {
   displayCurrency: DisplayCurrency;
   currentRate: number;
@@ -298,6 +326,7 @@ export type ActiveTab =
   | 'dashboard'
   | 'trips'
   | 'map'
+  | 'documents'
   | 'costs'
   | 'financial'
   | 'clients'
@@ -310,6 +339,7 @@ export interface AppState {
   trips: Trip[];
   clients: Client[];
   costs: Cost[];
+  documents: FleetDocument[];
   loading: boolean;
   offline: boolean;
 }
