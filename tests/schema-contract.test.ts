@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 import schema from './fixtures/sheet-schema.json';
 
 describe('GET payload contract', () => {
-  it('expects documents among top-level keys', () => {
+  it('expects documents and reportEmails among top-level keys', () => {
     expect(schema.expectedGetKeys).toContain('clients');
     expect(schema.expectedGetKeys).toContain('trips');
     expect(schema.expectedGetKeys).toContain('costs');
     expect(schema.expectedGetKeys).toContain('scheduledCostDefinitions');
     expect(schema.expectedGetKeys).toContain('documents');
+    expect(schema.expectedGetKeys).toContain('reportEmails');
   });
 });
 
@@ -47,6 +48,26 @@ describe('Sheet header fixtures', () => {
       'creadoPor',
       'creadoEn',
       'actualizadoEn',
+    ]);
+  });
+
+  it('DB_ReportEmails and DB_ReportLog have report headers', () => {
+    expect(schema.sheets.DB_ReportEmails.headers).toEqual([
+      'email',
+      'autoMonthly',
+      'activo',
+      'updatedAt',
+      'createdAt',
+      'createdBy',
+    ]);
+    expect(schema.sheets.DB_ReportLog.headers).toEqual([
+      'monthKey',
+      'channel',
+      'recipients',
+      'sentAt',
+      'status',
+      'detail',
+      'messageId',
     ]);
   });
 

@@ -4,7 +4,8 @@
     "trips",
     "costs",
     "scheduledCostDefinitions",
-    "documents"
+    "documents",
+    "reportEmails"
   ],
   "sheets": {
     "DB_Viajes": {
@@ -237,6 +238,56 @@
           "creadoPor": "admin",
           "creadoEn": "2026-02-01",
           "actualizadoEn": ""
+        }
+      ]
+    },
+    "DB_ReportEmails": {
+      "headers": [
+        "email",
+        "autoMonthly",
+        "activo",
+        "updatedAt",
+        "createdAt",
+        "createdBy"
+      ],
+      "sampleRows": [
+        {
+          "email": "reports@example.com",
+          "autoMonthly": true,
+          "activo": true,
+          "updatedAt": "2026-01-10",
+          "createdAt": "2026-01-10",
+          "createdBy": "admin"
+        },
+        {
+          "email": "ops@example.com",
+          "autoMonthly": "FALSE",
+          "activo": "TRUE",
+          "updatedAt": "2026-01-12",
+          "createdAt": "2026-01-12",
+          "createdBy": "admin"
+        }
+      ]
+    },
+    "DB_ReportLog": {
+      "headers": [
+        "monthKey",
+        "channel",
+        "recipients",
+        "sentAt",
+        "status",
+        "detail",
+        "messageId"
+      ],
+      "sampleRows": [
+        {
+          "monthKey": "2026-08",
+          "channel": "cron",
+          "recipients": "reports@example.com",
+          "sentAt": "2026-09-05T11:00:00.000Z",
+          "status": "ok",
+          "detail": "HTML monthly",
+          "messageId": "R-fixture-001"
         }
       ]
     }

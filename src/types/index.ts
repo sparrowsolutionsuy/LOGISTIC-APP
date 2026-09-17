@@ -138,6 +138,27 @@ export interface FleetDocument {
   actualizadoEn?: string;
 }
 
+/** Correo autorizado para reportes (DB_ReportEmails). */
+export interface ReportEmailEntry {
+  email: string;
+  autoMonthly: boolean;
+  activo: boolean;
+  updatedAt: string;
+  createdAt?: string;
+  createdBy?: string;
+}
+
+/** Log de envíos de reporte (DB_ReportLog) — GAS write-only; not in dump v1. */
+export interface ReportLogEntry {
+  monthKey: string;
+  channel: 'cron' | 'ondemand';
+  recipients: string;
+  sentAt: string;
+  status: 'ok' | 'partial' | 'error';
+  detail?: string;
+  messageId?: string;
+}
+
 export interface ExchangeRateContext {
   displayCurrency: DisplayCurrency;
   currentRate: number;
@@ -340,6 +361,7 @@ export interface AppState {
   clients: Client[];
   costs: Cost[];
   documents: FleetDocument[];
+  reportEmails: ReportEmailEntry[];
   loading: boolean;
   offline: boolean;
 }

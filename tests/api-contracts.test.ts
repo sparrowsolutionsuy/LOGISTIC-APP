@@ -157,6 +157,7 @@ describe('fetchLogisticsDataFromUrl with configured URL', () => {
     expect(result.scheduledCostDefinitions[0]?.id).toBe('sc1');
     expect(result.scheduledCostDefinitions[0]?.descripcion).toBe('Alquiler');
     expect(result.documents).toEqual([]);
+    expect(result.reportEmails).toEqual([]);
     expect(lastLogisticsFetchWasMock()).toBe(false);
   });
 
@@ -217,6 +218,62 @@ describe('fetchLogisticsDataFromUrl with configured URL', () => {
       { treatAsProd: true }
     );
     expect(oldGas.documents).toEqual([]);
+  });
+
+  it('parses reportEmails from GET dump and defaults missing key to []', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () =>
+          JSON.stringify({
+            clients: [],
+            trips: [],
+            costs: [],
+            scheduledCostDefinitions: [],
+            documents: [],
+            reportEmails: [
+              {
+                email: 'reports@example.com',
+                autoMonthly: true,
+                activo: true,
+                updatedAt: '2026-01-10',
+              },
+            ],
+          }),
+      })
+    );
+    const withResult = await fetchLogisticsDataFromUrl(
+      'https://example.invalid/macros/s/emails/exec',
+      { treatAsProd: true }
+    );
+    expect(withResult.reportEmails).toHaveLength(1);
+    expect(withResult.reportEmails[0]?.email).toBe('reports@example.com');
+    expect(withResult.reportEmails[0]?.autoMonthly).toBe(true);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () =>
+          JSON.stringify({
+            clients: [],
+            trips: [],
+            costs: [],
+            scheduledCostDefinitions: [],
+            documents: [],
+          }),
+      })
+    );
+    const oldGas = await fetchLogisticsDataFromUrl(
+      'https://example.invalid/macros/s/old-gas-emails/exec',
+      { treatAsProd: true }
+    );
+    expect(oldGas.reportEmails).toEqual([]);
   });
 
   it('retries once on HTTP 404 then succeeds', async () => {
