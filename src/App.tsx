@@ -304,14 +304,25 @@ const App: React.FC = () => {
     setCosts((prev) => prev.filter((c) => c.tripId !== tripId));
   }, [showToast]);
 
-  const onUploadInvoice = useCallback((tripId: string, url: string) => {
+  const onUploadInvoice = useCallback((tripIdOrIds: string | string[], url: string) => {
+    const ids = Array.isArray(tripIdOrIds) ? tripIdOrIds : [tripIdOrIds];
+    const idSet = new Set(ids.map(String));
     setTrips((prev) => {
       const next = prev.map((t) =>
-        t.id === tripId ? { ...t, facturaUrl: url, estado: 'Cerrado' as const } : t
+        idSet.has(t.id)
+          ? {
+              ...t,
+              facturaUrl: url,
+              facturaGenerada: true,
+              estado: 'Cerrado' as const,
+            }
+          : t
       );
-      const updated = next.find((t) => t.id === tripId);
-      if (updated) {
-        void updateTripInSheet(updated);
+      for (const id of idSet) {
+        const updated = next.find((t) => t.id === id);
+        if (updated) {
+          void updateTripInSheet(updated);
+        }
       }
       return next;
     });

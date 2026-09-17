@@ -46,7 +46,7 @@ export interface TripManagerProps {
   ) => boolean | Promise<boolean>;
   onUpdateTrip: (trip: Trip) => void | Promise<void>;
   onDeleteTrip: (tripId: string) => void | Promise<void>;
-  onInvoiceUploaded: (tripId: string, url: string) => void;
+  onInvoiceUploaded: (tripIdOrIds: string | string[], url: string) => void;
   currentRate: number;
   displayCurrency: DisplayCurrency;
   formatAmount: (n: number) => string;

@@ -86,6 +86,8 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 
 **Remitos / facturas / documentos (Drive):** el cliente reintenta subidas 2–3 veces ante HTTP 404, HTML, red o JSON inválido; comprime fotos de remito (máx. ~1600px, JPEG ~0.8) antes de enviar. Los errores del script se muestran en toast/alerta. Documentos usan `documentId` (no `tripId`).
 
+**Factura multi-viaje (Fase 1):** en Facturación → Sin Factura, seleccioná varios viajes del **mismo cliente** y **misma moneda**, luego **Adjuntar factura a selección**. Se sube **un** PDF a Drive y se estampa el mismo `facturaUrl` (+ `facturaGenerada`, `estado: Cerrado`) en todos los viajes encontrados. El POST `uploadInvoice` acepta `tripIds: string[]` (y `tripId` singular por compatibilidad); la respuesta incluye `url`, `updatedIds`, `missingIds`. El tab Facturas puede mostrar la misma URL en N filas (sin entidad `DB_Facturas`). **Tras merge: redeploy obligatorio del Apps Script** (nueva versión del Web App) — hasta entonces prod sigue con upload 1:1.
+
 **Health:** POST `{ type: "health", data: { remitosFolderId?, facturasFolderId?, documentosFolderId? } }` or GET `?health=1` — runs `ensureSchema()` once, then reports tabs (incl. `DB_Documentos`, `DB_ReportEmails`, `DB_ReportLog`), row counts, probe Drive (`DriveApp.getFolderById` only; no crea archivos). Health responses are **not** dump-cached.
 
 **Documentos (Operativo):** hoja `DB_Documentos` + carpeta Drive; GET dump key `documents`. Admin CRUD + upload; rol operativo solo lectura. Tras merge de U2: **redeploy GAS + `?migrate=1` obligatorio** (crea hoja/headers).
