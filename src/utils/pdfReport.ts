@@ -15,16 +15,16 @@ type RGB = [number, number, number];
 const NAVY: RGB = [15, 39, 71];
 const SLATE: RGB = [71, 85, 105];
 const MUTED: RGB = [148, 163, 184];
-const EMERALD: RGB = [16, 185, 129];
 const RED: RGB = [225, 78, 78];
-const AMBER: RGB = [217, 152, 19];
 const BLUE: RGB = [37, 99, 235];
-const LIGHT: RGB = [241, 245, 249];
 const BORDER: RGB = [226, 232, 240];
 
 const PAGE = { w: 595.28, h: 841.89 };
 const M = 40;
 const CONTENT_W = PAGE.w - M * 2;
+
+const METHODOLOGY_LINE =
+  'Costos = no-combustible del período + combustible imputado por km flota';
 
 /** Serializa un <svg> (p.ej. de Recharts) a PNG data URL sin html2canvas. */
 export async function svgToPngDataUrl(svg: SVGSVGElement, scale = 2): Promise<ChartImage | null> {
@@ -77,17 +77,19 @@ interface Ctx {
   doc: jsPDF;
   y: number;
   page: number;
+  periodShort: string;
 }
 
-function footer(doc: jsPDF, page: number): void {
+function footer(doc: jsPDF, page: number, periodShort: string): void {
   doc.setFontSize(8);
   doc.setTextColor(...MUTED);
-  doc.text('GDC · Reporte generado automáticamente', M, PAGE.h - 22);
+  const left = periodShort ? `GDC · ${periodShort}` : 'GDC';
+  doc.text(left, M, PAGE.h - 22);
   doc.text(`Página ${page}`, PAGE.w - M, PAGE.h - 22, { align: 'right' });
 }
 
 function newPage(ctx: Ctx): void {
-  footer(ctx.doc, ctx.page);
+  footer(ctx.doc, ctx.page, ctx.periodShort);
   ctx.doc.addPage();
   ctx.page += 1;
   ctx.y = M;
@@ -115,17 +117,17 @@ function wrap(doc: jsPDF, text: string, width: number): string[] {
 function drawCover(ctx: Ctx, data: GeneralReportData): void {
   const { doc } = ctx;
   doc.setFillColor(...NAVY);
-  doc.rect(0, 0, PAGE.w, 150, 'F');
+  doc.rect(0, 0, PAGE.w, 158, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.text('GDC · TRANSPORTE DE CARGA', M, 46);
+  doc.text('GDC · TRANSPORTE DE CARGA', M, 42);
   doc.setFontSize(24);
-  doc.text(data.title, M, 84);
+  doc.text(data.title, M, 78);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(13);
   doc.setTextColor(200, 214, 234);
-  doc.text(data.periodLabel, M, 110);
+  doc.text(data.periodLabel, M, 104);
   const gen = new Date(data.generatedAt).toLocaleString('es-UY', {
     day: '2-digit',
     month: 'short',
@@ -134,57 +136,14 @@ function drawCover(ctx: Ctx, data: GeneralReportData): void {
     minute: '2-digit',
   });
   doc.setFontSize(9);
-  doc.text(`Generado: ${gen}`, M, 130);
-  ctx.y = 172;
+  doc.text(`Generado: ${gen}`, M, 124);
+  doc.setFontSize(8);
+  doc.setTextColor(180, 198, 220);
+  doc.text(METHODOLOGY_LINE, M, 144);
+  ctx.y = 178;
 }
 
-function kpiGrid(
-  ctx: Ctx,
-  cards: { label: string; value: string; sub?: string; tone?: RGB }[]
-): void {
-  const cols = 3;
-  const gap = 12;
-  const cardW = (CONTENT_W - gap * (cols - 1)) / cols;
-  const cardH = 56;
-  cards.forEach((c, i) => {
-    const col = i % cols;
-    if (col === 0) {
-      ensure(ctx, cardH + gap);
-      if (i > 0) ctx.y += cardH + gap;
-    }
-    const x = M + col * (cardW + gap);
-    const top = ctx.y;
-    ctx.doc.setFillColor(...LIGHT);
-    ctx.doc.setDrawColor(...BORDER);
-    ctx.doc.roundedRect(x, top, cardW, cardH, 6, 6, 'FD');
-    if (c.tone) {
-      ctx.doc.setFillColor(...c.tone);
-      ctx.doc.rect(x, top, 4, cardH, 'F');
-    }
-    ctx.doc.setFont('helvetica', 'normal');
-    ctx.doc.setFontSize(7.5);
-    ctx.doc.setTextColor(...MUTED);
-    ctx.doc.text(c.label.toUpperCase(), x + 12, top + 16);
-    ctx.doc.setFont('helvetica', 'bold');
-    ctx.doc.setFontSize(14);
-    ctx.doc.setTextColor(...NAVY);
-    ctx.doc.text(c.value, x + 12, top + 36);
-    if (c.sub) {
-      ctx.doc.setFont('helvetica', 'normal');
-      ctx.doc.setFontSize(7.5);
-      ctx.doc.setTextColor(...SLATE);
-      ctx.doc.text(c.sub, x + 12, top + 49);
-    }
-  });
-  ctx.y += cardH + 8;
-}
-
-function bulletBox(
-  ctx: Ctx,
-  title: string,
-  items: string[],
-  tone: RGB
-): void {
+function bulletBox(ctx: Ctx, title: string, items: string[], tone: RGB): void {
   if (items.length === 0) return;
   sectionTitle(ctx, title);
   items.forEach((it) => {
@@ -193,8 +152,6 @@ function bulletBox(
     ensure(ctx, boxH + 6);
     const top = ctx.y;
     ctx.doc.setFillColor(tone[0], tone[1], tone[2]);
-    ctx.doc.setDrawColor(tone[0], tone[1], tone[2]);
-    // marcador
     ctx.doc.circle(M + 7, top + 7, 2.5, 'F');
     ctx.doc.setFont('helvetica', 'normal');
     ctx.doc.setFontSize(9.5);
@@ -205,10 +162,8 @@ function bulletBox(
   ctx.y += 6;
 }
 
-function marginColor(pct: number): RGB {
-  if (pct > 20) return EMERALD;
-  if (pct >= 5) return AMBER;
-  return RED;
+function afterTable(ctx: Ctx): void {
+  ctx.y = (ctx.doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 16;
 }
 
 /** Construye el documento PDF completo del reporte. */
@@ -218,12 +173,14 @@ export function buildReportPdf(
   charts: ChartImage[] = []
 ): jsPDF {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const ctx: Ctx = { doc, y: M, page: 1 };
+  const periodShort = data.periodLabel.length > 42 ? data.periodLabel.slice(0, 40) + '…' : data.periodLabel;
+  const ctx: Ctx = { doc, y: M, page: 1, periodShort };
 
+  // 1. Portada + metodología
   drawCover(ctx, data);
 
-  // Resumen ejecutivo
-  sectionTitle(ctx, 'Análisis ejecutivo');
+  // 2. Resumen ejecutivo
+  sectionTitle(ctx, 'Resumen ejecutivo');
   const summaryLines = wrap(doc, data.aiSummary, CONTENT_W - 24);
   const sumH = summaryLines.length * 13 + 20;
   ensure(ctx, sumH);
@@ -236,26 +193,63 @@ export function buildReportPdf(
   doc.text(summaryLines, M + 12, ctx.y + 16);
   ctx.y += sumH + 14;
 
-  // KPIs principales
-  sectionTitle(ctx, 'Indicadores principales');
+  // 3. P&L corto
+  sectionTitle(ctx, 'P&L del período');
+  autoTable(doc, {
+    startY: ctx.y,
+    margin: { left: M, right: M },
+    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
+    styles: { fontSize: 9, cellPadding: 5 },
+    head: [['Concepto', 'Monto']],
+    body: [
+      ['Generado', fmt(data.totalGenerado)],
+      ['Cobrado', fmt(data.totalCobrado)],
+      ['Pendiente', fmt(data.totalPendiente)],
+      ['Costos', fmt(data.totalCostos)],
+      ['Margen', fmt(data.netMargin)],
+      ['Margen %', `${data.marginPct.toFixed(1)}%`],
+    ],
+    columnStyles: { 1: { halign: 'right', fontStyle: 'bold', textColor: NAVY } },
+  });
+  afterTable(ctx);
+
+  // 4. Indicadores compactos (tabla — evita 9 cards ilegibles)
+  sectionTitle(ctx, 'Indicadores');
   const cmp = data.comparison;
   const deltaStr = (v: number, pp = false) =>
-    cmp.available ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}${pp ? ' pp' : '%'} ${cmp.label}` : undefined;
-  kpiGrid(ctx, [
-    { label: 'Ingresos generados', value: fmt(data.totalGenerado), sub: deltaStr(cmp.revenueDelta), tone: BLUE },
-    { label: 'Ingresos cobrados', value: fmt(data.totalCobrado), sub: `${data.collectionRate.toFixed(0)}% de cobranza`, tone: EMERALD },
-    { label: 'Pendiente de cobro', value: fmt(data.totalPendiente), sub: 'Facturado sin cobrar', tone: AMBER },
-    { label: 'Costos totales', value: fmt(data.totalCostos), sub: deltaStr(cmp.costsDelta), tone: RED },
-    { label: 'Margen neto', value: fmt(data.netMargin), sub: deltaStr(cmp.marginDelta), tone: marginColor(data.marginPct) },
-    { label: 'Margen %', value: `${data.marginPct.toFixed(1)}%`, sub: deltaStr(cmp.marginPctDeltaPp, true), tone: marginColor(data.marginPct) },
-    { label: 'Viajes', value: String(data.totalTrips), sub: `${data.completedTrips} completados`, tone: NAVY },
-    { label: 'Ticket promedio', value: fmt(data.avgTicket), sub: 'Ingreso por viaje', tone: NAVY },
-    { label: 'Costo por km', value: fmt(data.costPerKm), sub: `${Math.round(data.totalKm).toLocaleString('es-UY')} km`, tone: NAVY },
-  ]);
+    cmp.available ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}${pp ? ' pp' : '%'} ${cmp.label}` : '—';
+  autoTable(doc, {
+    startY: ctx.y,
+    margin: { left: M, right: M },
+    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 8.5 },
+    styles: { fontSize: 8.5, cellPadding: 4.5 },
+    head: [['Indicador', 'Valor', 'Δ / nota']],
+    body: [
+      ['Viajes', String(data.totalTrips), `${data.completedTrips} completados`],
+      [
+        'Km recorridos',
+        Math.round(data.totalKm).toLocaleString('es-UY'),
+        cmp.available ? deltaStr(cmp.tripsDelta) : '—',
+      ],
+      ['Ticket promedio', fmt(data.avgTicket), 'Ingreso / viaje'],
+      ['Costo / km', fmt(data.costPerKm), deltaStr(cmp.costsDelta)],
+      ['Ingreso / km', fmt(data.revenuePerKm), deltaStr(cmp.revenueDelta)],
+      ['Cobranza', `${data.collectionRate.toFixed(1)}%`, fmt(data.totalPendiente) + ' pendiente'],
+    ],
+    columnStyles: {
+      1: { halign: 'right' },
+      2: { halign: 'right', textColor: SLATE },
+    },
+  });
+  afterTable(ctx);
 
-  // Gráficos
+  // 5. Insights
+  bulletBox(ctx, 'Alertas y riesgos', data.aiAlerts, RED);
+  bulletBox(ctx, 'Recomendaciones', data.aiRecommendations, BLUE);
+
+  // 6. Charts solo si hay PNG
   if (charts.length > 0) {
-    sectionTitle(ctx, 'Tendencias y distribución');
+    sectionTitle(ctx, 'Tendencias');
     charts.forEach((ch) => {
       const imgW = CONTENT_W;
       const imgH = Math.min(230, imgW * ch.ratio);
@@ -276,8 +270,49 @@ export function buildReportPdf(
     });
   }
 
-  // Destacados
-  sectionTitle(ctx, 'Destacados del período');
+  // 7. Top clientes (max 8 — ya limitado en payload)
+  if (data.clientBreakdown.length > 0) {
+    sectionTitle(ctx, 'Clientes (top)');
+    autoTable(doc, {
+      startY: ctx.y,
+      margin: { left: M, right: M },
+      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
+      styles: { fontSize: 9, cellPadding: 5 },
+      head: [['Cliente', 'Viajes', 'Ingresos', '% del total']],
+      body: data.clientBreakdown.slice(0, 8).map((c) => [
+        c.name,
+        String(c.trips),
+        fmt(c.revenue),
+        `${data.totalGenerado > 0 ? ((c.revenue / data.totalGenerado) * 100).toFixed(1) : '0.0'}%`,
+      ]),
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+    });
+    afterTable(ctx);
+  }
+
+  // 8. Costos reconciliados
+  if (data.costsByCategory.length > 0) {
+    sectionTitle(ctx, 'Desglose de costos');
+    autoTable(doc, {
+      startY: ctx.y,
+      margin: { left: M, right: M },
+      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
+      styles: { fontSize: 9, cellPadding: 5 },
+      head: [['Categoría', 'Total (USD eq.)', '% del total']],
+      body: data.costsByCategory.map((r) => [r.category, fmt(r.total), `${r.pct.toFixed(1)}%`]),
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+    });
+    afterTable(ctx);
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...MUTED);
+    ensure(ctx, 14);
+    doc.text(METHODOLOGY_LINE, M, ctx.y);
+    ctx.y += 14;
+  }
+
+  // 9. Destacados
+  sectionTitle(ctx, 'Destacados');
   autoTable(doc, {
     startY: ctx.y,
     margin: { left: M, right: M },
@@ -288,61 +323,28 @@ export function buildReportPdf(
       ['Mejor cliente', `${data.topClient.name} — ${fmt(data.topClient.revenue)} (${data.topClient.trips} viajes)`],
       ['Ruta destacada', `${data.topRoute.route} — ${fmt(data.topRoute.revenue)} (${data.topRoute.count} viajes)`],
       ['Producto top', `${data.topProduct.name} — ${fmt(data.topProduct.revenue)} (${data.topProduct.tons.toFixed(1)} t)`],
-      ['Mejor margen', `${data.bestMarginTrip.id} (${data.bestMarginTrip.client}) — ${data.bestMarginTrip.marginPct.toFixed(1)}%`],
-      ['Menor margen', `${data.worstMarginTrip.id} (${data.worstMarginTrip.client}) — ${data.worstMarginTrip.marginPct.toFixed(1)}%`],
+      [
+        'Mejor margen',
+        `${data.bestMarginTrip.id} (${data.bestMarginTrip.client}) — ${data.bestMarginTrip.marginPct.toFixed(1)}%`,
+      ],
+      [
+        'Menor margen',
+        `${data.worstMarginTrip.id} (${data.worstMarginTrip.client}) — ${data.worstMarginTrip.marginPct.toFixed(1)}%`,
+      ],
     ],
   });
-  ctx.y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 16;
+  afterTable(ctx);
 
-  // Costos por categoría
-  if (data.costsByCategory.length > 0) {
-    sectionTitle(ctx, 'Desglose de costos por categoría');
-    autoTable(doc, {
-      startY: ctx.y,
-      margin: { left: M, right: M },
-      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
-      styles: { fontSize: 9, cellPadding: 5 },
-      head: [['Categoría', 'Total (USD eq.)', '% del total']],
-      body: data.costsByCategory.map((r) => [
-        r.category,
-        fmt(r.total),
-        `${r.pct.toFixed(1)}%`,
-      ]),
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
-    });
-    ctx.y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 16;
-  }
-
-  // Top clientes
-  if (data.clientBreakdown.length > 0) {
-    sectionTitle(ctx, 'Ingresos por cliente');
-    autoTable(doc, {
-      startY: ctx.y,
-      margin: { left: M, right: M },
-      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
-      styles: { fontSize: 9, cellPadding: 5 },
-      head: [['Cliente', 'Viajes', 'Ingresos', '% del total']],
-      body: data.clientBreakdown.map((c) => [
-        c.name,
-        String(c.trips),
-        fmt(c.revenue),
-        `${data.totalGenerado > 0 ? ((c.revenue / data.totalGenerado) * 100).toFixed(1) : '0.0'}%`,
-      ]),
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
-    });
-    ctx.y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 16;
-  }
-
-  // Detalle de viajes (limitado)
+  // 10. Viajes max 25
   if (data.trips.length > 0) {
     sectionTitle(ctx, 'Detalle de viajes');
-    const rows = data.trips.slice(0, 40);
+    const rows = data.trips.slice(0, 25);
     autoTable(doc, {
       startY: ctx.y,
       margin: { left: M, right: M },
       headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 8 },
       styles: { fontSize: 7.5, cellPadding: 3.5, overflow: 'ellipsize' },
-      head: [['ID', 'Fecha', 'Cliente', 'Ruta', 'Ingreso', 'Costos', 'Margen %']],
+      head: [['ID', 'Fecha', 'Cliente', 'Ingreso', 'Margen %']],
       body: rows.map((t) => {
         const ing = tripRevenueUSD(t);
         const pct = ing > 0 ? ((ing - t.totalCosts) / ing) * 100 : 0;
@@ -350,39 +352,30 @@ export function buildReportPdf(
           t.id,
           t.fecha,
           t.clientName,
-          `${t.origen} → ${t.destino}`,
           fmt(ing),
-          fmt(t.totalCosts),
           ing > 0 ? `${pct.toFixed(1)}%` : '—',
         ];
       }),
       columnStyles: {
+        3: { halign: 'right' },
         4: { halign: 'right' },
-        5: { halign: 'right' },
-        6: { halign: 'right' },
       },
     });
-    ctx.y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 16;
-    if (data.trips.length > rows.length) {
-      doc.setFont('helvetica', 'italic');
-      doc.setFontSize(8);
-      doc.setTextColor(...MUTED);
-      ensure(ctx, 16);
-      doc.text(`Mostrando ${rows.length} de ${data.trips.length} viajes.`, M, ctx.y);
-      ctx.y += 16;
-    }
+    afterTable(ctx);
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.setTextColor(...MUTED);
+    ensure(ctx, 16);
+    doc.text(`Mostrando ${rows.length} de ${data.trips.length} viajes.`, M, ctx.y);
+    ctx.y += 16;
   }
 
-  // Alertas y recomendaciones
-  bulletBox(ctx, 'Alertas y riesgos', data.aiAlerts, RED);
-  bulletBox(ctx, 'Recomendaciones y oportunidades', data.aiRecommendations, BLUE);
-
-  footer(doc, ctx.page);
+  footer(doc, ctx.page, ctx.periodShort);
   return doc;
 }
 
 export function reportFileName(data: GeneralReportData): string {
-  const slug = data.scope === 'historico' ? 'historico' : (data.rangeEnd || 'periodo');
+  const slug = data.scope === 'historico' ? 'historico' : data.rangeEnd || 'periodo';
   return `GDC_${data.title.replace(/\s+/g, '_')}_${slug}.pdf`;
 }
 

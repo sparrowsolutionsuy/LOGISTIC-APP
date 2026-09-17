@@ -94,6 +94,8 @@ El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, da
 
 **Reportes email (U3):** hojas `DB_ReportEmails` (lista autorizada + `autoMonthly`) y `DB_ReportLog` (idempotencia / auditoría). GET dump key `reportEmails` (log **no** va en el dump). On-demand = PDF vía `sendReportEmail` (browser). Cron día 5 = HTML vía `sendMonthlyReport` (MailApp). El trigger **no** se instala solo en GET/POST.
 
+**Calidad PDF / HTML (R5–R6):** el desglose de costos excluye filas crudas `Combustible` y agrega **Combustible (imputado km)** para cerrar con `totalCostos`. PDF y cron HTML usan `es-UY`. Fuente activa: `src/utils/reportData.ts` + `pdfReport.ts`; `src/utils/reportGenerator.ts` es **legacy unused** (modelo realized). **Tras merge de este cambio: redeploy obligatorio del Apps Script** (nueva versión) para que el email del día 5 tome la reconciliación y el locale.
+
 ### HITL post-merge U3 — redeploy + migrate + trigger + test
 
 1. **Redeploy** Apps Script Web App (**nueva versión**) — pegá el `GOOGLE_APPS_SCRIPT.js` del repo.

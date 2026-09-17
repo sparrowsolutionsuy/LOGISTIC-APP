@@ -1,3 +1,8 @@
+/**
+ * LEGACY / UNUSED — modelo de ingresos *realized* (fecha de cobro).
+ * El PDF on-demand y el cron HTML usan `reportData.generateReport` / GAS `buildMonthlyReportPayload`.
+ * No borrar en el PR de calidad PDF; retirar en PR aparte si se confirma.
+ */
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { Client, Cost, MonthlyReportData, Trip } from '../types';
 import {
