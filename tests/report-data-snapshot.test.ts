@@ -3,6 +3,7 @@ import type { Client, Cost, Trip } from '../src/types';
 import { calcCombustiblePorKm, tripRevenueUSD } from '../src/utils/analytics';
 import {
   FUEL_IMPUTED_CATEGORY,
+  FUEL_IMPUTED_REF_LABEL,
   buildReconciledCostsByCategory,
   fmtPerKm,
   generateReport,
@@ -54,7 +55,7 @@ function cost(
   };
 }
 
-describe('reportData — cost category reconciliation (R5)', () => {
+describe('reportData — registered period costs (policy D)', () => {
   const trips: Trip[] = [
     trip({
       id: 't1',
@@ -84,7 +85,7 @@ describe('reportData — cost category reconciliation (R5)', () => {
       pesoKg: 16000,
       facturaCobrada: true,
     }),
-    // outside month — used for fleet fuel rate
+    // outside month — used for fleet fuel rate (trip margin / fuelImputedRef only)
     trip({
       id: 't-jul',
       fecha: '2026-07-10',
@@ -104,7 +105,28 @@ describe('reportData — cost category reconciliation (R5)', () => {
     cost({ id: 'c-blue', fecha: '2026-08-18', categoria: 'AD Blue', montoUSD: 50 }),
   ];
 
-  it('sum(costsByCategory.total) === totalCostos (±0.01) and excludes raw Combustible', async () => {
+  it('totalCostos = Combustible + Mant. (+ other) at 100%; no ×0.7 on period total', async () => {
+    const report = await generateReport(
+      { scope: 'mensual', month: '2026-08' },
+      trips,
+      costs,
+      [clientA, clientB]
+    );
+
+    // August registered: fuel 1000 + maint 200 + sueldos 500 + AD Blue 50
+    expect(report.totalCostos).toBeCloseTo(1750, 6);
+    // Must NOT be hybrid: non-fuel 750 + (monthKm × rate × implies 0.7 in rate)
+    const rate = calcCombustiblePorKm(trips, costs);
+    const monthKm = trips
+      .filter((t) => t.fecha.startsWith('2026-08'))
+      .reduce((s, t) => s + t.kmRecorridos, 0);
+    const hybridOld = 750 + monthKm * rate;
+    expect(report.totalCostos).not.toBeCloseTo(hybridOld, 0);
+    // Raw Combustible fully included (not ×0.7)
+    expect(report.totalCostos).toBeGreaterThan(1000 + 200 + 500 + 50 - 0.01);
+  });
+
+  it('sum(costsByCategory.total) === totalCostos (±0.01) and includes raw Combustible', async () => {
     const report = await generateReport(
       { scope: 'mensual', month: '2026-08' },
       trips,
@@ -115,28 +137,28 @@ describe('reportData — cost category reconciliation (R5)', () => {
     const catSum = report.costsByCategory.reduce((s, r) => s + r.total, 0);
     expect(Math.abs(catSum - report.totalCostos)).toBeLessThanOrEqual(0.01);
 
-    expect(report.costsByCategory.some((r) => r.category === 'Combustible')).toBe(false);
-    expect(report.costsByCategory.some((r) => r.category === FUEL_IMPUTED_CATEGORY)).toBe(true);
+    const fuelRow = report.costsByCategory.find((r) => r.category === 'Combustible');
+    expect(fuelRow?.total).toBeCloseTo(1000, 6);
+    expect(report.costsByCategory.some((r) => r.category === 'Mantenimiento')).toBe(true);
+    expect(
+      report.costsByCategory.some(
+        (r) => r.category === FUEL_IMPUTED_CATEGORY || r.category === 'Combustible (imputado km)'
+      )
+    ).toBe(false);
 
-    const rate = calcCombustiblePorKm(trips, costs);
-    const monthTrips = trips.filter((t) => t.fecha.startsWith('2026-08'));
-    const fuelImputed = monthTrips.reduce((s, t) => s + t.kmRecorridos * rate, 0);
-    const fuelRow = report.costsByCategory.find((r) => r.category === FUEL_IMPUTED_CATEGORY);
-    expect(fuelRow?.total).toBeCloseTo(fuelImputed, 6);
+    // Q1 ref line: Policy A estimate present but does not drive totalCostos
+    expect(report.fuelImputedRef).toBeGreaterThan(0);
+    expect(report.fuelImputedRef).not.toBeCloseTo(report.totalCostos, 0);
   });
 
-  it('buildReconciledCostsByCategory closes with direct + fuel', () => {
+  it('buildReconciledCostsByCategory closes with registered sum', () => {
     const monthCosts = costs.filter((c) => c.fecha.startsWith('2026-08'));
-    const rate = calcCombustiblePorKm(trips, costs);
-    const monthTrips = trips.filter((t) => t.fecha.startsWith('2026-08'));
-    const fuelImputed = monthTrips.reduce((s, t) => s + t.kmRecorridos * rate, 0);
-    const direct = monthCosts
-      .filter((c) => c.categoria !== 'Combustible')
-      .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
-    const rows = buildReconciledCostsByCategory(monthCosts, fuelImputed);
+    const registered = monthCosts.reduce((s, c) => s + (c.montoUSD ?? 0), 0);
+    const rows = buildReconciledCostsByCategory(monthCosts);
     const sum = rows.reduce((s, r) => s + r.total, 0);
-    expect(sum).toBeCloseTo(direct + fuelImputed, 6);
-    expect(rows.find((r) => r.category === 'Combustible')).toBeUndefined();
+    expect(sum).toBeCloseTo(registered, 6);
+    expect(rows.find((r) => r.category === 'Combustible')?.total).toBeCloseTo(1000, 6);
+    expect(rows.find((r) => r.category === FUEL_IMPUTED_REF_LABEL)).toBeUndefined();
   });
 
   it('KPI sanity: generado / cobrado / pendiente relationship', async () => {
@@ -174,6 +196,7 @@ describe('reportData — cost category reconciliation (R5)', () => {
     expect(report.aiSummary.length).toBeGreaterThan(40);
     expect(report.aiCommentary.trim().length).toBeGreaterThan(40);
     expect(report.aiCommentary.split(/\n\n+/).length).toBeGreaterThanOrEqual(2);
+    expect(report.aiCommentary).toContain(FUEL_IMPUTED_REF_LABEL);
   });
 
   it('fmtPerKm keeps cost/km ≠ revenue/km when values differ; margin/km correct', async () => {
@@ -185,6 +208,7 @@ describe('reportData — cost category reconciliation (R5)', () => {
     );
 
     expect(report.totalKm).toBeGreaterThan(0);
+    expect(report.costPerKm).toBeCloseTo(report.totalCostos / report.totalKm, 8);
     expect(report.costPerKm).not.toBeCloseTo(report.revenuePerKm, 2);
     expect(report.marginPerKm).toBeCloseTo(report.revenuePerKm - report.costPerKm, 8);
 

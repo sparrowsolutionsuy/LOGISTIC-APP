@@ -210,7 +210,7 @@ export interface KPIData {
   totalGenerado: number; // suma de TODOS los ingresos del periodo (USD)
   totalCobrado: number; // suma de ingresos efectivamente cobrados (USD)
   totalPendienteCobro: number; // suma de ingresos facturados pero no cobrados (USD)
-  totalCostos: number; // suma de costos del periodo (USD)
+  totalCostos: number; // suma registrada DB_Costos del periodo (USD, todas las cats)
   margenNeto: number; // totalGenerado - totalCostos
   margenPct: number; // (margenNeto / totalGenerado) * 100
   viajesRealizados: number; // cantidad de viajes Completado + Cerrado
@@ -299,6 +299,8 @@ export interface GeneralReportData {
   totalCobrado: number;
   totalPendiente: number;
   totalCostos: number;
+  /** Policy A km×tasa del período — referencia; no entra al margen. */
+  fuelImputedRef: number;
   netMargin: number;
   marginPct: number;
   collectionRate: number;

@@ -29,7 +29,14 @@ const LINE_HEIGHT_FACTOR = 1.3;
 const FONT = 'NotoSans';
 
 const METHODOLOGY_LINE =
-  'Costos = no-combustible del período + combustible imputado por km flota';
+  'Costos = suma de costos registrados en el período (DB_Costos)';
+
+function fuelRefLine(data: GeneralReportData): string | null {
+  if (!(data.fuelImputedRef > 0)) return null;
+  const fmt = (n: number) =>
+    n.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  return `Combustible imputado (ref.): ${fmt(data.fuelImputedRef)} — no entra al margen de período`;
+}
 
 /** Serializa un <svg> (p.ej. de Recharts) a PNG data URL sin html2canvas. */
 export async function svgToPngDataUrl(svg: SVGSVGElement, scale = 2): Promise<ChartImage | null> {
@@ -193,6 +200,8 @@ function drawCover(ctx: Ctx, data: GeneralReportData): void {
   const periodLines = wrap(doc, data.periodLabel, CONTENT_W);
   setFont(doc, 'normal', 8);
   const methodLines = wrap(doc, METHODOLOGY_LINE, CONTENT_W);
+  const ref = fuelRefLine(data);
+  const refLines = ref ? wrap(doc, ref, CONTENT_W) : [];
   const gen = new Date(data.generatedAt).toLocaleString('es-UY', {
     day: '2-digit',
     month: 'short',
@@ -213,6 +222,7 @@ function drawCover(ctx: Ctx, data: GeneralReportData): void {
     lineHeight(9) +
     8 +
     methodLines.length * lineHeight(8) +
+    (refLines.length > 0 ? 4 + refLines.length * lineHeight(8) : 0) +
     20;
 
   doc.setFillColor(...NAVY);
@@ -240,6 +250,10 @@ function drawCover(ctx: Ctx, data: GeneralReportData): void {
   setFont(doc, 'normal', 8);
   doc.setTextColor(180, 198, 220);
   doc.text(methodLines, M, y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+  if (refLines.length > 0) {
+    y += methodLines.length * lineHeight(8) + 4;
+    doc.text(refLines, M, y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+  }
 
   ctx.y = bandH + 22;
 }
@@ -413,7 +427,7 @@ export function buildReportPdf(
     afterTable(ctx);
   }
 
-  // 8. Costos reconciliados
+  // 8. Costos registrados
   if (data.costsByCategory.length > 0) {
     sectionTitle(ctx, 'Desglose de costos');
     autoTable(doc, {
@@ -430,10 +444,14 @@ export function buildReportPdf(
     afterTable(ctx);
     setFont(doc, 'normal', 7.5);
     doc.setTextColor(...MUTED);
-    const methodNote = wrap(doc, METHODOLOGY_LINE, CONTENT_W);
-    ensure(ctx, methodNote.length * lineHeight(7.5) + 8);
-    doc.text(methodNote, M, ctx.y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
-    ctx.y += methodNote.length * lineHeight(7.5) + 12;
+    const notes = [METHODOLOGY_LINE, fuelRefLine(data)].filter(Boolean) as string[];
+    for (const note of notes) {
+      const methodNote = wrap(doc, note, CONTENT_W);
+      ensure(ctx, methodNote.length * lineHeight(7.5) + 4);
+      doc.text(methodNote, M, ctx.y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+      ctx.y += methodNote.length * lineHeight(7.5) + 4;
+    }
+    ctx.y += 8;
   }
 
   // 9. Destacados

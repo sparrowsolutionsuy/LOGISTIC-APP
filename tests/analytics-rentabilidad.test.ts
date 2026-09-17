@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Client, Cost, Trip } from '../src/types';
 import {
+  buildKPIData,
   calcCombustiblePorKm,
   enrichTrips,
   tripRevenueUSD,
@@ -41,7 +42,7 @@ function fuelCost(partial: Partial<Cost> & Pick<Cost, 'id' | 'fecha' | 'montoUSD
   };
 }
 
-describe('policy A — combustiblePorKm tasa flota global', () => {
+describe('policy A — combustiblePorKm tasa flota global (trip-level only)', () => {
   // Many trips across months; fuel loaded in different months (periodic, not per trip).
   const allTrips: Trip[] = [
     trip({ id: 't-jan-1', fecha: '2026-01-10', kmRecorridos: 400, tarifa: 45, pesoKg: 20000 }),
@@ -150,5 +151,39 @@ describe('policy A — combustiblePorKm tasa flota global', () => {
     const rate = calcCombustiblePorKm(allTrips, allCosts);
     const enriched = enrichTrips(aprilTrips, [client], allCosts, { combustiblePorKm: rate });
     expect(enriched[0].fuelCostEst).toBeCloseTo(aprilTrips[0].kmRecorridos * rate, 10);
+  });
+});
+
+describe('period KPI — registered costs (policy D)', () => {
+  const trips: Trip[] = [
+    trip({ id: 't1', fecha: '2026-08-10', kmRecorridos: 400, tarifa: 50, pesoKg: 20000 }),
+    trip({ id: 't2', fecha: '2026-07-10', kmRecorridos: 500, tarifa: 40, pesoKg: 15000 }),
+  ];
+
+  const costs: Cost[] = [
+    fuelCost({ id: 'f-aug', fecha: '2026-08-01', montoUSD: 1000 }),
+    {
+      id: 'm-aug',
+      fecha: '2026-08-05',
+      tripId: null,
+      categoria: 'Mantenimiento',
+      descripcion: 'Service',
+      monto: 300,
+      moneda: 'USD',
+      montoUSD: 300,
+      registradoPor: 'test',
+    },
+    fuelCost({ id: 'f-jul', fecha: '2026-07-01', montoUSD: 800 }),
+  ];
+
+  it('buildKPIData includes Combustible + Mant. at 100%; no ×0.7 on period total', () => {
+    const kpi = buildKPIData(trips, [client], costs, '2026-08');
+    expect(kpi.totalCostos).toBeCloseTo(1300, 6);
+
+    const rate = calcCombustiblePorKm(trips, costs);
+    const hybridOld = 300 + 400 * rate;
+    expect(kpi.totalCostos).not.toBeCloseTo(hybridOld, 0);
+    // 0.7 would make fuel contribution 700 if wrongly applied to period invoice
+    expect(kpi.totalCostos).not.toBeCloseTo(700 + 300, 0);
   });
 });

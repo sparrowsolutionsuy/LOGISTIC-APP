@@ -217,8 +217,6 @@ export function buildMonthlyStats(
   const endKey = filterMonth ?? latestYearMonthKey(trips, costs);
   if (!endKey) return [];
   const keys = filterMonth ? [filterMonth] : monthsEndingAt(endKey, months);
-  const combustiblePorKm = calcCombustiblePorKm(trips, costs);
-
   return keys.map((month) => {
     const monthTrips = trips.filter((t) => t.fecha.startsWith(month));
 
@@ -228,14 +226,11 @@ export function buildMonthlyStats(
       .filter(isPendienteCobro)
       .reduce((s, t) => s + tripRevenueUSD(t), 0);
 
-    const directCostsMonth = costs
-      .filter((c) => c.fecha.startsWith(month) && c.categoria !== 'Combustible')
+    // Period P&L: all registered costs by fecha (incl. Combustible at 100%).
+    // Trip-level fuel imputation (Policy A) is only used in enrichTrips.
+    const totalCosts = costs
+      .filter((c) => c.fecha.startsWith(month))
       .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
-    const fuelCostMonth = monthTrips.reduce(
-      (s, t) => s + estimatedFuelCostForTrip(t, combustiblePorKm),
-      0
-    );
-    const totalCosts = directCostsMonth + fuelCostMonth;
 
     const margin = totalGenerado - totalCosts;
     const marginPct = totalGenerado > 0 ? (margin / totalGenerado) * 100 : 0;
@@ -275,28 +270,15 @@ export function buildKPIData(
 
   const scopeCosts = monthFilter ? costs.filter((c) => c.fecha.startsWith(monthFilter)) : costs;
 
-  const combustiblePorKm = calcCombustiblePorKm(trips, costs);
-
   const totalGenerado = scopeTrips.reduce((s, t) => s + tripRevenueUSD(t), 0);
   const totalCobrado = scopeTrips.filter(isCobrado).reduce((s, t) => s + tripRevenueUSD(t), 0);
   const totalPendienteCobro = scopeTrips
     .filter(isPendienteCobro)
     .reduce((s, t) => s + tripRevenueUSD(t), 0);
 
-  const directCosts = scopeCosts
-    .filter((c) => c.categoria !== 'Combustible')
-    .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
-
-  // Fuel attributed to period trips = Σ (km × global rate). Same rate as enrichTrips
-  // (policy A). Period KPI still includes non-fuel costs dated in the month (overhead),
-  // so KPI totalCostos can diverge from Σ trip totalCosts (which only has trip-linked
-  // directos + fuel_est).
-  const totalCombustibleAtribuible = scopeTrips.reduce(
-    (s, t) => s + estimatedFuelCostForTrip(t, combustiblePorKm),
-    0
-  );
-
-  const totalCostos = directCosts + totalCombustibleAtribuible;
+  // Period P&L = Σ registered montoUSD in scope (all categories, Combustible 100%).
+  // Does NOT use Policy A km×rate (that remains trip-only via enrichTrips).
+  const totalCostos = scopeCosts.reduce((s, c) => s + (c.montoUSD ?? 0), 0);
   const margenNeto = totalGenerado - totalCostos;
   const margenPct = totalGenerado > 0 ? (margenNeto / totalGenerado) * 100 : 0;
 
@@ -416,8 +398,6 @@ export function buildWeeklyBucketsInMonth(
     [15, 21],
     [22, lastDay],
   ];
-  const combustiblePorKm = calcCombustiblePorKm(trips, costs);
-
   return ranges.map(([d0, d1], i) => {
     const weekTrips = trips.filter((t) => {
       if (!t.fecha.startsWith(monthKey)) return false;
@@ -425,21 +405,17 @@ export function buildWeeklyBucketsInMonth(
       return day >= d0 && day <= d1;
     });
     const ingresos = weekTrips.reduce((s, t) => s + tripRevenueUSD(t), 0);
-    const directCosts = costs
+    const costos = costs
       .filter((c) => {
-        if (!c.fecha.startsWith(monthKey) || c.categoria === 'Combustible') return false;
+        if (!c.fecha.startsWith(monthKey)) return false;
         const day = Number(c.fecha.slice(8, 10));
         return day >= d0 && day <= d1;
       })
       .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
-    const fuelCost = weekTrips.reduce(
-      (s, t) => s + estimatedFuelCostForTrip(t, combustiblePorKm),
-      0
-    );
     return {
       label: `Sem. ${i + 1} (${d0}–${Math.min(d1, lastDay)})`,
       ingresos,
-      costos: directCosts + fuelCost,
+      costos,
     };
   });
 }

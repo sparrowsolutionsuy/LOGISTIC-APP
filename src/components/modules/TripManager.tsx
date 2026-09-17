@@ -978,7 +978,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                   Ton
                 </th>
                 <SortableHeader
-                  label={marginEsEstimado ? 'Margen *' : 'Margen'}
+                  label={marginEsEstimado ? 'Margen est.*' : 'Margen'}
                   column="netMargin"
                   currentColumn={sort.column}
                   direction={sort.direction}
@@ -986,7 +986,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                   align="right"
                   title={
                     marginEsEstimado
-                      ? 'Margen estimado (incluye combustible prorrateado)'
+                      ? 'Margen estimado (no es P&L de período; combustible = km × tasa flota)'
                       : undefined
                   }
                 />
@@ -1087,7 +1087,7 @@ export const TripManager: React.FC<TripManagerProps> = ({
                         <span
                           title={
                             marginEsEstimado
-                              ? 'Margen estimado (incluye combustible prorrateado)'
+                              ? 'Margen estimado (no es P&L de período; combustible = km × tasa flota)'
                               : undefined
                           }
                           style={{

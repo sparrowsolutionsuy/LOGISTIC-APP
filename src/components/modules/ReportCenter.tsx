@@ -846,7 +846,11 @@ const ReportBody: React.FC<ReportBodyProps> = ({ data, fmt, trendRef, pieRef, cl
           hour: '2-digit',
           minute: '2-digit',
         })}
-        . Margen calculado sobre ingresos generados; combustible imputado por km recorrido.
+        . Costos = suma registrada en DB_Costos del período. Margen sobre ingresos generados.
+        {data.fuelImputedRef > 0
+          ? ` Combustible imputado (ref.): ${fmt(data.fuelImputedRef)} — no entra al margen de período.`
+          : ''}{' '}
+        Márgenes por viaje son estimados (combustible por km).
       </p>
     </div>
   );

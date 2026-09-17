@@ -1783,21 +1783,23 @@ function computeSnapshotGas(tripsR, costsR, rate) {
     if (isPendienteCobroGas(tripsR[i])) totalPendiente += rev;
     totalKm += Number(tripsR[i].kmRecorridos) || 0;
   }
-  var direct = 0;
+  var totalCostos = 0;
   for (var c = 0; c < costsR.length; c++) {
-    if (String(costsR[c].categoria) !== 'Combustible') {
-      direct += Number(costsR[c].montoUSD) || 0;
-    }
+    totalCostos += Number(costsR[c].montoUSD) || 0;
   }
-  var fuel = 0;
-  for (var t = 0; t < tripsR.length; t++) {
-    fuel += (Number(tripsR[t].kmRecorridos) || 0) * rate;
+  var fuelImputedRef = 0;
+  var r = Number(rate) || 0;
+  if (r > 0) {
+    for (var t = 0; t < tripsR.length; t++) {
+      fuelImputedRef += (Number(tripsR[t].kmRecorridos) || 0) * r;
+    }
   }
   return {
     totalGenerado: totalGenerado,
     totalCobrado: totalCobrado,
     totalPendiente: totalPendiente,
-    totalCostos: direct + fuel,
+    totalCostos: totalCostos,
+    fuelImputedRef: fuelImputedRef,
     totalTrips: tripsR.length,
     totalKm: totalKm,
   };
@@ -1854,20 +1856,15 @@ function monthLabelGas(ym) {
   return names[m - 1] + ' ' + y;
 }
 
-/** Reconciled with KPI totalCostos: exclude raw Combustible; add imputed fuel row. */
-var FUEL_IMPUTED_CATEGORY_GAS = 'Combustible (imputado km)';
+/** Registered categories only — sum closes with KPI totalCostos. */
+var FUEL_IMPUTED_REF_LABEL_GAS = 'Combustible imputado (ref.)';
 
-function costsByCategoryGas(costsR, fuelImputed) {
+function costsByCategoryGas(costsR) {
   var totals = {};
   for (var i = 0; i < costsR.length; i++) {
-    if (String(costsR[i].categoria) === 'Combustible') continue;
     var cat = String(costsR[i].categoria || 'Otros');
     var usd = Number(costsR[i].montoUSD) || 0;
     totals[cat] = (totals[cat] || 0) + usd;
-  }
-  var fuel = Number(fuelImputed) || 0;
-  if (fuel > 0) {
-    totals[FUEL_IMPUTED_CATEGORY_GAS] = (totals[FUEL_IMPUTED_CATEGORY_GAS] || 0) + fuel;
   }
   var grand = 0;
   for (var gk in totals) {
@@ -2014,11 +2011,7 @@ function buildMonthlyReportPayload(monthKey) {
   if (bestPct === -Infinity) bestMarginTrip = { id: '—', client: '—', marginPct: 0 };
   if (worstPct === Infinity) worstMarginTrip = { id: '—', client: '—', marginPct: 0 };
 
-  var fuelImputed = 0;
-  for (var fi = 0; fi < tripsR.length; fi++) {
-    fuelImputed += (Number(tripsR[fi].kmRecorridos) || 0) * rate;
-  }
-  var costsByCategory = costsByCategoryGas(costsR, fuelImputed);
+  var costsByCategory = costsByCategoryGas(costsR);
   var periodLabel = monthLabelGas(monthKey);
 
   var cmp =
@@ -2102,8 +2095,16 @@ function buildMonthlyReportPayload(monthKey) {
   var commentaryP3 =
     commentaryP3Parts.length > 0
       ? commentaryP3Parts.join('; ') +
-        '. Monitoreá cobranza, concentración de clientes y eficiencia de combustible imputado.'
+        '. Monitoreá cobranza, concentración de clientes y carga completa de costos en DB_Costos.'
       : 'Sin viajes relevantes en el período; revisá la carga operativa y la captura de costos.';
+  if (cur.fuelImputedRef > 0) {
+    commentaryP3 +=
+      '\n\n' +
+      FUEL_IMPUTED_REF_LABEL_GAS +
+      ': ' +
+      fmtUsdGas(cur.fuelImputedRef) +
+      ' (proxy km×tasa; no entra al margen de período).';
+  }
   var aiCommentary = commentaryP1 + '\n\n' + commentaryP2 + '\n\n' + commentaryP3;
 
   var aiAlerts = [];
@@ -2182,6 +2183,7 @@ function buildMonthlyReportPayload(monthKey) {
     totalCobrado: cur.totalCobrado,
     totalPendiente: cur.totalPendiente,
     totalCostos: cur.totalCostos,
+    fuelImputedRef: cur.fuelImputedRef,
     netMargin: netMargin,
     marginPct: marginPct,
     collectionRate: collectionRate,
@@ -2325,7 +2327,15 @@ function buildMonthlyReportHtml(payload) {
     ul(payload.aiAlerts) +
     '<h2 style="font-size:15px;margin:16px 0 8px;color:#1d4ed8;">Recomendaciones</h2>' +
     ul(payload.aiRecommendations) +
-    '<p style="font-size:11px;color:#94a3b8;margin-top:24px;">Reporte automático HTML (sin gráficos). On-demand PDF disponible en la app.</p>' +
+    '<p style="font-size:11px;color:#94a3b8;margin-top:24px;">Costos = suma registrada DB_Costos del período.' +
+    (payload.fuelImputedRef > 0
+      ? ' ' +
+        FUEL_IMPUTED_REF_LABEL_GAS +
+        ': ' +
+        escapeHtmlGas(fmtUsdGas(payload.fuelImputedRef)) +
+        ' (no entra al margen).'
+      : '') +
+    ' Márgenes por viaje estimados. Reporte automático HTML (sin gráficos). On-demand PDF disponible en la app.</p>' +
     '</div>'
   );
 }
