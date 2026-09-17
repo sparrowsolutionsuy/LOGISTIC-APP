@@ -8,6 +8,7 @@ import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import Badge from '../ui/Badge';
 import SortableHeader from '../ui/SortableHeader';
+import { BillingFacturasTab } from './BillingFacturasTab';
 import {
   calcDaysDiff,
   formatDateUY,
@@ -114,7 +115,7 @@ function BillingCheck({
   );
 }
 
-type MainTab = 'sin' | 'gestion' | 'cobrados';
+type MainTab = 'sin' | 'gestion' | 'cobrados' | 'facturas';
 
 type SinFacturaSortKey = 'fecha' | 'id' | 'clientName' | 'totalUsd' | 'diasSinFacturar' | 'pesoKg';
 type GestionSortKey = 'fecha' | 'id' | 'clientName' | 'totalUsd' | 'sortKey';
@@ -526,6 +527,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
             { id: 'sin' as const, label: 'Sin Factura' },
             { id: 'gestion' as const, label: 'Gestión' },
             { id: 'cobrados' as const, label: 'Cobrados' },
+            { id: 'facturas' as const, label: 'Facturas' },
           ] as const
         ).map((t) => (
           <button
@@ -1000,6 +1002,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
           </div>
         </section>
       )}
+
+      {mainTab === 'facturas' && <BillingFacturasTab trips={trips} clients={clients} />}
 
       {mainTab === 'cobrados' && (
         <section className="space-y-4">
