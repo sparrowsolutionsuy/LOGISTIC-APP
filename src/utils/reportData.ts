@@ -11,7 +11,6 @@ import type {
 import {
   calcCombustiblePorKm,
   enrichTrips,
-  getCostsByCategory,
   isCobrado,
   isPendienteCobro,
   monthLabel,
@@ -26,6 +25,9 @@ export interface ReportParams {
   weekIndex?: number;
 }
 
+/** Categoría explícita de combustible imputado (no filas crudas de la hoja Combustible). */
+export const FUEL_IMPUTED_CATEGORY = 'Combustible (imputado km)';
+
 const WEEK_RANGES: [number, number][] = [
   [1, 7],
   [8, 14],
@@ -35,6 +37,34 @@ const WEEK_RANGES: [number, number][] = [
 
 function fmtUsd(n: number): string {
   return n.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+}
+
+/**
+ * Desglose de costos reconciliado con el KPI totalCostos:
+ * excluye filas crudas Combustible y agrega "Combustible (imputado km)".
+ * sum(totals) === totalCostos (± centavo) cuando fuelImputed + directos = KPI.
+ */
+export function buildReconciledCostsByCategory(
+  costsR: Cost[],
+  fuelImputed: number
+): { category: string; total: number; pct: number }[] {
+  const totals = new Map<string, number>();
+  costsR.forEach((c) => {
+    if (c.categoria === 'Combustible') return;
+    const cat = c.categoria || 'Otros';
+    totals.set(cat, (totals.get(cat) ?? 0) + (c.montoUSD ?? 0));
+  });
+  if (fuelImputed > 0) {
+    totals.set(FUEL_IMPUTED_CATEGORY, (totals.get(FUEL_IMPUTED_CATEGORY) ?? 0) + fuelImputed);
+  }
+  const grand = Array.from(totals.values()).reduce((s, v) => s + v, 0);
+  return Array.from(totals.entries())
+    .map(([category, total]) => ({
+      category,
+      total,
+      pct: grand > 0 ? (total / grand) * 100 : 0,
+    }))
+    .sort((a, b) => b.total - a.total);
 }
 
 function isFinished(t: Trip): boolean {
@@ -72,6 +102,8 @@ interface Snapshot {
   totalCobrado: number;
   totalPendiente: number;
   totalCostos: number;
+  directCosts: number;
+  fuelImputed: number;
   totalTrips: number;
   totalKm: number;
 }
@@ -88,12 +120,14 @@ function computeSnapshot(
   const directCosts = costsR
     .filter((c) => c.categoria !== 'Combustible')
     .reduce((s, c) => s + (c.montoUSD ?? 0), 0);
-  const fuelCost = tripsR.reduce((s, t) => s + (t.kmRecorridos ?? 0) * combustiblePorKm, 0);
+  const fuelImputed = tripsR.reduce((s, t) => s + (t.kmRecorridos ?? 0) * combustiblePorKm, 0);
   return {
     totalGenerado,
     totalCobrado,
     totalPendiente,
-    totalCostos: directCosts + fuelCost,
+    totalCostos: directCosts + fuelImputed,
+    directCosts,
+    fuelImputed,
     totalTrips: tripsR.length,
     totalKm: tripsR.reduce((s, t) => s + (t.kmRecorridos ?? 0), 0),
   };
@@ -275,36 +309,87 @@ function buildFallbackAi(
   const aiSummary =
     `En ${data.periodLabel}, GDC generó ${fmtUsd(data.totalGenerado)} en ingresos ` +
     `(${fmtUsd(data.totalCobrado)} cobrados, ${data.collectionRate.toFixed(0)}% de cobranza) con ${data.totalTrips} viajes ` +
-    `y un margen operativo del ${data.marginPct.toFixed(1)}% (${fmtUsd(data.netMargin)}).${cmp}`;
+    `y un margen operativo del ${data.marginPct.toFixed(1)}% (${fmtUsd(data.netMargin)}).` +
+    ` Costos del período: ${fmtUsd(data.totalCostos)}.${cmp}`;
 
   const aiAlerts: string[] = [];
-  if (data.marginPct < 15) aiAlerts.push(`Margen operativo del ${data.marginPct.toFixed(1)}%, por debajo del 15% objetivo.`);
+  if (data.marginPct < 15)
+    aiAlerts.push(`Margen operativo del ${data.marginPct.toFixed(1)}%, por debajo del 15% objetivo.`);
   if (data.collectionRate < 70 && data.totalGenerado > 0)
-    aiAlerts.push(`Solo se cobró el ${data.collectionRate.toFixed(0)}% de lo generado; hay ${fmtUsd(data.totalPendiente)} pendientes.`);
+    aiAlerts.push(
+      `Solo se cobró el ${data.collectionRate.toFixed(0)}% de lo generado; hay ${fmtUsd(data.totalPendiente)} pendientes.`
+    );
   if (data.worstMarginTrip.marginPct < 0)
-    aiAlerts.push(`El viaje ${data.worstMarginTrip.id} (${data.worstMarginTrip.client}) operó con margen negativo (${data.worstMarginTrip.marginPct.toFixed(1)}%).`);
+    aiAlerts.push(
+      `El viaje ${data.worstMarginTrip.id} (${data.worstMarginTrip.client}) operó con margen negativo (${data.worstMarginTrip.marginPct.toFixed(1)}%).`
+    );
   const topShare = data.totalGenerado > 0 ? (data.topClient.revenue / data.totalGenerado) * 100 : 0;
   if (topShare > 55)
-    aiAlerts.push(`${data.topClient.name} concentra el ${topShare.toFixed(0)}% de los ingresos: riesgo de dependencia.`);
+    aiAlerts.push(
+      `${data.topClient.name} concentra el ${topShare.toFixed(0)}% de los ingresos: riesgo de dependencia.`
+    );
+  if (data.comparison.available && data.comparison.costsDelta > 15)
+    aiAlerts.push(
+      `Los costos subieron ${data.comparison.costsDelta.toFixed(1)}% ${data.comparison.label} (umbral +15%).`
+    );
 
   const aiRecommendations: string[] = [];
+  if (data.totalPendiente > 0)
+    aiRecommendations.push(
+      `Acelerá la cobranza de ${fmtUsd(data.totalPendiente)} pendientes para mejorar el flujo de caja.`
+    );
   if (topShare > 55)
-    aiRecommendations.push(`Diversificá la cartera: reforzá contratos con clientes secundarios para reducir la dependencia de ${data.topClient.name}.`);
+    aiRecommendations.push(
+      `Diversificá la cartera: reforzá contratos con clientes secundarios para reducir la dependencia de ${data.topClient.name}.`
+    );
   const topCat = data.costsByCategory[0];
-  if (topCat && topCat.pct > 45)
-    aiRecommendations.push(`${topCat.category} representa el ${topCat.pct.toFixed(0)}% de los costos; renegociá proveedores o revisá eficiencia en esa categoría.`);
-  if (data.collectionRate < 80 && data.totalPendiente > 0)
-    aiRecommendations.push(`Acelerá la cobranza de ${fmtUsd(data.totalPendiente)} pendientes para mejorar el flujo de caja.`);
+  if (topCat && topCat.pct > 40)
+    aiRecommendations.push(
+      `${topCat.category} representa el ${topCat.pct.toFixed(0)}% de los costos; renegociá proveedores o revisá eficiencia en esa categoría.`
+    );
   if (data.topRoute.count > 0)
-    aiRecommendations.push(`La ruta ${data.topRoute.route} es la de mayor ingreso; evaluá retornos con carga y consolidación para subir el margen.`);
-  if (data.costPerKm > 0)
-    aiRecommendations.push(`Costo por km en ${fmtUsd(data.costPerKm)}; monitoreá combustible y mantenimiento, principales palancas de eficiencia.`);
+    aiRecommendations.push(
+      `La ruta ${data.topRoute.route} es la de mayor ingreso; evaluá retornos con carga y consolidación para subir el margen.`
+    );
 
   return {
     aiSummary,
     aiAlerts: aiAlerts.slice(0, 4),
     aiRecommendations: aiRecommendations.slice(0, 4),
   };
+}
+
+/** Gemini solo reescribe: JSON válido y montos citados deben coincidir con el payload. */
+function validateGeminiInsights(
+  parsed: { summary?: string; alerts?: string[]; recommendations?: string[] },
+  kpis: {
+    totalGenerado: number;
+    totalCobrado: number;
+    totalPendiente: number;
+    totalCostos: number;
+    netMargin: number;
+  }
+): boolean {
+  if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) return false;
+  if (!Array.isArray(parsed.alerts) || !Array.isArray(parsed.recommendations)) return false;
+
+  const blob = [parsed.summary, ...parsed.alerts, ...parsed.recommendations].join('\n');
+  const known = [
+    kpis.totalGenerado,
+    kpis.totalCobrado,
+    kpis.totalPendiente,
+    kpis.totalCostos,
+    kpis.netMargin,
+  ];
+  // Must cite at least one key money KPI (formatted or rounded).
+  return known.some((v) => {
+    const rounded = Math.round(v);
+    return (
+      blob.includes(fmtUsd(v)) ||
+      blob.includes(rounded.toLocaleString('es-UY')) ||
+      blob.includes(String(rounded))
+    );
+  });
 }
 
 export async function generateReport(
@@ -399,7 +484,7 @@ export async function generateReport(
   if (bestPct === -Infinity) bestMarginTrip = { id: '—', client: '—', marginPct: 0 };
   if (worstPct === Infinity) worstMarginTrip = { id: '—', client: '—', marginPct: 0 };
 
-  const costsByCategory = getCostsByCategory(costsR);
+  const costsByCategory = buildReconciledCostsByCategory(costsR, cur.fuelImputed);
   const { series, kind } = buildSeries(trips, costs, params, combustiblePorKm);
   const comparison = buildComparison(trips, costs, params, combustiblePorKm, cur, marginPct);
   const { title, periodLabel } = periodLabelFor(params);
@@ -466,6 +551,11 @@ Analizá los datos del período "${periodLabel}" (${title}) y generá un anális
 2. Hasta 4 alertas o riesgos concretos.
 3. Hasta 4 recomendaciones accionables y oportunidades de mejora.
 
+REGLAS OBLIGATORIAS:
+- Respondé SOLO con JSON válido: {"summary": string, "alerts": string[], "recommendations": string[]}
+- NO inventes números. Citá únicamente montos/porcentajes de los Datos abajo (podés usar formato es-UY).
+- Costos = no-combustible del período + combustible imputado por km (categoría "${FUEL_IMPUTED_CATEGORY}").
+
 Datos: ${JSON.stringify({
       periodLabel,
       totalGenerado: cur.totalGenerado,
@@ -483,10 +573,14 @@ Datos: ${JSON.stringify({
       topProduct,
       costsByCategory: costsByCategory.slice(0, 5),
       comparison,
-    })}
-
-Respondé SOLO con JSON válido:
-{"summary": string, "alerts": string[], "recommendations": string[]}`;
+      fmt: {
+        totalGenerado: fmtUsd(cur.totalGenerado),
+        totalCobrado: fmtUsd(cur.totalCobrado),
+        totalPendiente: fmtUsd(cur.totalPendiente),
+        totalCostos: fmtUsd(cur.totalCostos),
+        netMargin: fmtUsd(netMargin),
+      },
+    })}`;
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
@@ -495,14 +589,23 @@ Respondé SOLO con JSON válido:
       alerts?: string[];
       recommendations?: string[];
     };
+    if (
+      !validateGeminiInsights(parsed, {
+        totalGenerado: cur.totalGenerado,
+        totalCobrado: cur.totalCobrado,
+        totalPendiente: cur.totalPendiente,
+        totalCostos: cur.totalCostos,
+        netMargin,
+      })
+    ) {
+      console.warn('[reportData] Gemini insights fallaron validación; usando fallback');
+      return { ...base, ...fallback };
+    }
     return {
       ...base,
-      aiSummary: typeof parsed.summary === 'string' && parsed.summary.trim() ? parsed.summary : fallback.aiSummary,
-      aiAlerts: Array.isArray(parsed.alerts) && parsed.alerts.length ? parsed.alerts.slice(0, 4) : fallback.aiAlerts,
-      aiRecommendations:
-        Array.isArray(parsed.recommendations) && parsed.recommendations.length
-          ? parsed.recommendations.slice(0, 4)
-          : fallback.aiRecommendations,
+      aiSummary: parsed.summary!.trim(),
+      aiAlerts: parsed.alerts!.slice(0, 4),
+      aiRecommendations: parsed.recommendations!.slice(0, 4),
     };
   } catch (e) {
     console.warn('[reportData] Gemini error, usando fallback:', e);

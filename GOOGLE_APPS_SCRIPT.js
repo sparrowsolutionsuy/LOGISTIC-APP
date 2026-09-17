@@ -1810,7 +1810,11 @@ function pctDeltaGas(curr, prev) {
 
 function fmtUsdGas(n) {
   var v = Math.round(Number(n) || 0);
-  return 'USD ' + v.toLocaleString('en-US');
+  try {
+    return v.toLocaleString('es-UY', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  } catch (e) {
+    return 'USD ' + v.toLocaleString('es-UY');
+  }
 }
 
 function monthLabelGas(ym) {
@@ -1835,14 +1839,24 @@ function monthLabelGas(ym) {
   return names[m - 1] + ' ' + y;
 }
 
-function costsByCategoryGas(costsR) {
+/** Reconciled with KPI totalCostos: exclude raw Combustible; add imputed fuel row. */
+var FUEL_IMPUTED_CATEGORY_GAS = 'Combustible (imputado km)';
+
+function costsByCategoryGas(costsR, fuelImputed) {
   var totals = {};
-  var grand = 0;
   for (var i = 0; i < costsR.length; i++) {
+    if (String(costsR[i].categoria) === 'Combustible') continue;
     var cat = String(costsR[i].categoria || 'Otros');
     var usd = Number(costsR[i].montoUSD) || 0;
     totals[cat] = (totals[cat] || 0) + usd;
-    grand += usd;
+  }
+  var fuel = Number(fuelImputed) || 0;
+  if (fuel > 0) {
+    totals[FUEL_IMPUTED_CATEGORY_GAS] = (totals[FUEL_IMPUTED_CATEGORY_GAS] || 0) + fuel;
+  }
+  var grand = 0;
+  for (var gk in totals) {
+    if (Object.prototype.hasOwnProperty.call(totals, gk)) grand += totals[gk];
   }
   var arr = [];
   for (var k in totals) {
@@ -1984,7 +1998,11 @@ function buildMonthlyReportPayload(monthKey) {
   if (bestPct === -Infinity) bestMarginTrip = { id: '—', client: '—', marginPct: 0 };
   if (worstPct === Infinity) worstMarginTrip = { id: '—', client: '—', marginPct: 0 };
 
-  var costsByCategory = costsByCategoryGas(costsR);
+  var fuelImputed = 0;
+  for (var fi = 0; fi < tripsR.length; fi++) {
+    fuelImputed += (Number(tripsR[fi].kmRecorridos) || 0) * rate;
+  }
+  var costsByCategory = costsByCategoryGas(costsR, fuelImputed);
   var periodLabel = monthLabelGas(monthKey);
 
   var cmp =
@@ -2009,7 +2027,9 @@ function buildMonthlyReportPayload(monthKey) {
     marginPct.toFixed(1) +
     '% (' +
     fmtUsdGas(netMargin) +
-    ').' +
+    '). Costos del período: ' +
+    fmtUsdGas(cur.totalCostos) +
+    '.' +
     cmp;
 
   var aiAlerts = [];
@@ -2042,8 +2062,22 @@ function buildMonthlyReportPayload(monthKey) {
       topClient.name + ' concentra el ' + topShare.toFixed(0) + '% de los ingresos: riesgo de dependencia.'
     );
   }
+  if (comparison.available && comparison.costsDelta > 15) {
+    aiAlerts.push(
+      'Los costos subieron ' +
+        comparison.costsDelta.toFixed(1) +
+        '% ' +
+        comparison.label +
+        ' (umbral +15%).'
+    );
+  }
 
   var aiRecommendations = [];
+  if (cur.totalPendiente > 0) {
+    aiRecommendations.push(
+      'Acelerá la cobranza de ' + fmtUsdGas(cur.totalPendiente) + ' pendientes para mejorar el flujo de caja.'
+    );
+  }
   if (topShare > 55) {
     aiRecommendations.push(
       'Diversificá la cartera: reforzá contratos con clientes secundarios para reducir la dependencia de ' +
@@ -2052,7 +2086,7 @@ function buildMonthlyReportPayload(monthKey) {
     );
   }
   var topCat = costsByCategory[0];
-  if (topCat && topCat.pct > 45) {
+  if (topCat && topCat.pct > 40) {
     aiRecommendations.push(
       topCat.category +
         ' representa el ' +
@@ -2060,23 +2094,11 @@ function buildMonthlyReportPayload(monthKey) {
         '% de los costos; renegociá proveedores o revisá eficiencia en esa categoría.'
     );
   }
-  if (collectionRate < 80 && cur.totalPendiente > 0) {
-    aiRecommendations.push(
-      'Acelerá la cobranza de ' + fmtUsdGas(cur.totalPendiente) + ' pendientes para mejorar el flujo de caja.'
-    );
-  }
   if (topRoute.count > 0) {
     aiRecommendations.push(
       'La ruta ' +
         topRoute.route +
         ' es la de mayor ingreso; evaluá retornos con carga y consolidación para subir el margen.'
-    );
-  }
-  if (costPerKm > 0) {
-    aiRecommendations.push(
-      'Costo por km en ' +
-        fmtUsdGas(costPerKm) +
-        '; monitoreá combustible y mantenimiento, principales palancas de eficiencia.'
     );
   }
 
