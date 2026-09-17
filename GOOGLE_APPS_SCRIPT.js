@@ -1817,6 +1817,21 @@ function fmtUsdGas(n) {
   }
 }
 
+/** Per-km rates with 2 decimals (never use fmtUsdGas for $/km). */
+function fmtPerKmGas(n) {
+  var v = Number(n) || 0;
+  try {
+    return v.toLocaleString('es-UY', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  } catch (e) {
+    return 'USD ' + v.toFixed(2);
+  }
+}
+
 function monthLabelGas(ym) {
   var parts = String(ym).split('-');
   var y = Number(parts[0]);
@@ -1897,6 +1912,7 @@ function buildMonthlyReportPayload(monthKey) {
   var avgTicket = cur.totalTrips > 0 ? cur.totalGenerado / cur.totalTrips : 0;
   var costPerKm = cur.totalKm > 0 ? cur.totalCostos / cur.totalKm : 0;
   var revenuePerKm = cur.totalKm > 0 ? cur.totalGenerado / cur.totalKm : 0;
+  var marginPerKm = revenuePerKm - costPerKm;
 
   var parts = monthKey.split('-');
   var py = Number(parts[0]);
@@ -2032,6 +2048,64 @@ function buildMonthlyReportPayload(monthKey) {
     '.' +
     cmp;
 
+  var topShare = cur.totalGenerado > 0 ? (topClient.revenue / cur.totalGenerado) * 100 : 0;
+  var topCatEarly = costsByCategory[0];
+  var commentaryP1 =
+    'En ' +
+    periodLabel +
+    ' la operativa generó ' +
+    fmtUsdGas(cur.totalGenerado) +
+    ' con un margen de ' +
+    fmtUsdGas(netMargin) +
+    ' (' +
+    marginPct.toFixed(1) +
+    '%). Se cobró el ' +
+    collectionRate.toFixed(0) +
+    '% (' +
+    fmtUsdGas(cur.totalCobrado) +
+    '); queda pendiente ' +
+    fmtUsdGas(cur.totalPendiente) +
+    '.';
+  var commentaryP2 =
+    'Por kilómetro, el costo fue ' +
+    fmtPerKmGas(costPerKm) +
+    ' frente a un ingreso de ' +
+    fmtPerKmGas(revenuePerKm) +
+    ', lo que deja un margen/km de ' +
+    fmtPerKmGas(marginPerKm) +
+    ' sobre ' +
+    Math.round(cur.totalKm).toLocaleString('es-UY') +
+    ' km.';
+  var commentaryP3Parts = [];
+  if (topClient.trips > 0) {
+    commentaryP3Parts.push(
+      'El principal cliente fue ' +
+        topClient.name +
+        ' (' +
+        fmtUsdGas(topClient.revenue) +
+        ', ' +
+        topShare.toFixed(0) +
+        '% de los ingresos)'
+    );
+  }
+  if (topCatEarly) {
+    commentaryP3Parts.push(
+      'la categoría de costo líder fue ' +
+        topCatEarly.category +
+        ' (' +
+        fmtUsdGas(topCatEarly.total) +
+        ', ' +
+        topCatEarly.pct.toFixed(0) +
+        '% del total)'
+    );
+  }
+  var commentaryP3 =
+    commentaryP3Parts.length > 0
+      ? commentaryP3Parts.join('; ') +
+        '. Monitoreá cobranza, concentración de clientes y eficiencia de combustible imputado.'
+      : 'Sin viajes relevantes en el período; revisá la carga operativa y la captura de costos.';
+  var aiCommentary = commentaryP1 + '\n\n' + commentaryP2 + '\n\n' + commentaryP3;
+
   var aiAlerts = [];
   if (marginPct < 15) {
     aiAlerts.push('Margen operativo del ' + marginPct.toFixed(1) + '%, por debajo del 15% objetivo.');
@@ -2056,7 +2130,6 @@ function buildMonthlyReportPayload(monthKey) {
         '%).'
     );
   }
-  var topShare = cur.totalGenerado > 0 ? (topClient.revenue / cur.totalGenerado) * 100 : 0;
   if (topShare > 55) {
     aiAlerts.push(
       topClient.name + ' concentra el ' + topShare.toFixed(0) + '% de los ingresos: riesgo de dependencia.'
@@ -2117,6 +2190,7 @@ function buildMonthlyReportPayload(monthKey) {
     avgTicket: avgTicket,
     costPerKm: costPerKm,
     revenuePerKm: revenuePerKm,
+    marginPerKm: marginPerKm,
     comparison: comparison,
     topClient: topClient,
     topRoute: topRoute,
@@ -2126,6 +2200,7 @@ function buildMonthlyReportPayload(monthKey) {
     costsByCategory: costsByCategory,
     clientBreakdown: clientBreakdown.slice(0, 8),
     aiSummary: aiSummary,
+    aiCommentary: aiCommentary,
     aiAlerts: aiAlerts.slice(0, 4),
     aiRecommendations: aiRecommendations.slice(0, 4),
   };
@@ -2159,12 +2234,26 @@ function buildMonthlyReportHtml(payload) {
     kpiRow('Margen neto', fmtUsdGas(payload.netMargin) + ' (' + payload.marginPct.toFixed(1) + '%)') +
     kpiRow('Viajes', String(payload.totalTrips)) +
     kpiRow('Ticket promedio', fmtUsdGas(payload.avgTicket)) +
-    kpiRow('Costo / km', fmtUsdGas(payload.costPerKm)) +
+    kpiRow('Costo / km', fmtPerKmGas(payload.costPerKm)) +
+    kpiRow('Ingreso / km', fmtPerKmGas(payload.revenuePerKm)) +
+    kpiRow('Margen / km', fmtPerKmGas(payload.marginPerKm != null ? payload.marginPerKm : payload.revenuePerKm - payload.costPerKm)) +
     kpiRow(
       'Δ ingresos ' + cmp.label,
       (cmp.revenueDelta >= 0 ? '+' : '') + cmp.revenueDelta.toFixed(1) + '%'
     ) +
     '</table>';
+
+  var commentaryHtml = '';
+  if (payload.aiCommentary) {
+    var paras = String(payload.aiCommentary).split(/\n\n+/);
+    commentaryHtml = '<h2 style="font-size:15px;margin:16px 0 8px;">Comentario</h2>';
+    for (var cp = 0; cp < paras.length; cp++) {
+      var para = String(paras[cp] || '').trim();
+      if (!para) continue;
+      commentaryHtml +=
+        '<p style="font-size:14px;line-height:1.55;margin:0 0 12px;">' + escapeHtmlGas(para) + '</p>';
+    }
+  }
 
   var costsRows = '';
   for (var i = 0; i < payload.costsByCategory.length; i++) {
@@ -2207,9 +2296,10 @@ function buildMonthlyReportHtml(payload) {
     escapeHtmlGas(payload.periodLabel) +
     '</h1>' +
     '<p style="color:#64748b;font-size:13px;margin:0 0 16px;">GDC Transporte de Carga</p>' +
-    '<p style="font-size:14px;line-height:1.5;margin-bottom:20px;">' +
+    '<p style="font-size:14px;line-height:1.5;margin-bottom:12px;">' +
     escapeHtmlGas(payload.aiSummary) +
     '</p>' +
+    commentaryHtml +
     '<h2 style="font-size:15px;margin:16px 0 8px;">Indicadores</h2>' +
     kpis +
     '<h2 style="font-size:15px;margin:20px 0 8px;">Costos por categoría</h2>' +
@@ -2246,14 +2336,25 @@ function buildMonthlyReportText(payload) {
     '',
     payload.aiSummary,
     '',
+  ];
+  if (payload.aiCommentary) {
+    lines.push('Comentario:', payload.aiCommentary, '');
+  }
+  lines.push(
     'Ingresos: ' + fmtUsdGas(payload.totalGenerado),
     'Cobrados: ' + fmtUsdGas(payload.totalCobrado),
     'Costos: ' + fmtUsdGas(payload.totalCostos),
     'Margen: ' + fmtUsdGas(payload.netMargin) + ' (' + payload.marginPct.toFixed(1) + '%)',
+    'Costo/km: ' + fmtPerKmGas(payload.costPerKm),
+    'Ingreso/km: ' + fmtPerKmGas(payload.revenuePerKm),
+    'Margen/km: ' +
+      fmtPerKmGas(
+        payload.marginPerKm != null ? payload.marginPerKm : payload.revenuePerKm - payload.costPerKm
+      ),
     'Viajes: ' + payload.totalTrips,
     '',
-    'Alertas:',
-  ];
+    'Alertas:'
+  );
   for (var i = 0; i < payload.aiAlerts.length; i++) lines.push('- ' + payload.aiAlerts[i]);
   if (!payload.aiAlerts.length) lines.push('- (ninguna)');
   lines.push('', 'Recomendaciones:');

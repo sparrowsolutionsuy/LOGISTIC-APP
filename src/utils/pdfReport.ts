@@ -2,6 +2,8 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { GeneralReportData } from '../types';
 import { tripRevenueUSD } from './analytics';
+import { NOTO_SANS_BOLD_B64, NOTO_SANS_REGULAR_B64 } from './pdfFontData';
+import { fmtPerKm } from './reportData';
 
 export interface ChartImage {
   title: string;
@@ -20,8 +22,11 @@ const BLUE: RGB = [37, 99, 235];
 const BORDER: RGB = [226, 232, 240];
 
 const PAGE = { w: 595.28, h: 841.89 };
-const M = 40;
+/** Slightly wider margins for readability. */
+const M = 44;
 const CONTENT_W = PAGE.w - M * 2;
+const LINE_HEIGHT_FACTOR = 1.3;
+const FONT = 'NotoSans';
 
 const METHODOLOGY_LINE =
   'Costos = no-combustible del período + combustible imputado por km flota';
@@ -80,12 +85,25 @@ interface Ctx {
   periodShort: string;
 }
 
+function registerFonts(doc: jsPDF): void {
+  doc.addFileToVFS('NotoSans-Regular.ttf', NOTO_SANS_REGULAR_B64);
+  doc.addFileToVFS('NotoSans-Bold.ttf', NOTO_SANS_BOLD_B64);
+  doc.addFont('NotoSans-Regular.ttf', FONT, 'normal');
+  doc.addFont('NotoSans-Bold.ttf', FONT, 'bold');
+  doc.setFont(FONT, 'normal');
+}
+
+function setFont(doc: jsPDF, style: 'normal' | 'bold' = 'normal', size?: number): void {
+  doc.setFont(FONT, style);
+  if (size != null) doc.setFontSize(size);
+}
+
 function footer(doc: jsPDF, page: number, periodShort: string): void {
-  doc.setFontSize(8);
+  setFont(doc, 'normal', 8);
   doc.setTextColor(...MUTED);
   const left = periodShort ? `GDC · ${periodShort}` : 'GDC';
-  doc.text(left, M, PAGE.h - 22);
-  doc.text(`Página ${page}`, PAGE.w - M, PAGE.h - 22, { align: 'right' });
+  doc.text(left, M, PAGE.h - 24);
+  doc.text(`Página ${page}`, PAGE.w - M, PAGE.h - 24, { align: 'right' });
 }
 
 function newPage(ctx: Ctx): void {
@@ -96,38 +114,85 @@ function newPage(ctx: Ctx): void {
 }
 
 function ensure(ctx: Ctx, needed: number): void {
-  if (ctx.y + needed > PAGE.h - 50) newPage(ctx);
+  if (ctx.y + needed > PAGE.h - 54) newPage(ctx);
 }
 
 function sectionTitle(ctx: Ctx, text: string): void {
-  ensure(ctx, 34);
+  ensure(ctx, 36);
   ctx.doc.setFillColor(...NAVY);
   ctx.doc.rect(M, ctx.y, 4, 14, 'F');
-  ctx.doc.setFont('helvetica', 'bold');
-  ctx.doc.setFontSize(12);
+  setFont(ctx.doc, 'bold', 12);
   ctx.doc.setTextColor(...NAVY);
   ctx.doc.text(text.toUpperCase(), M + 12, ctx.y + 11);
-  ctx.y += 26;
+  ctx.y += 28;
 }
 
 function wrap(doc: jsPDF, text: string, width: number): string[] {
   return doc.splitTextToSize(text, width) as string[];
 }
 
+function lineHeight(fontSize: number): number {
+  return fontSize * LINE_HEIGHT_FACTOR;
+}
+
+function boxHeight(lineCount: number, fontSize: number, padY: number): number {
+  return Math.max(1, lineCount) * lineHeight(fontSize) + padY * 2;
+}
+
+/** Draws a rounded text box sized from wrapped line count so text never clips. */
+function drawTextBox(ctx: Ctx, text: string, fontSize = 10, pad = 12): void {
+  const { doc } = ctx;
+  setFont(doc, 'normal', fontSize);
+  const lines = wrap(doc, text, CONTENT_W - pad * 2);
+  const h = boxHeight(lines.length, fontSize, pad);
+  ensure(ctx, h + 10);
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(...BORDER);
+  doc.roundedRect(M, ctx.y, CONTENT_W, h, 6, 6, 'FD');
+  doc.setTextColor(...SLATE);
+  const baseline = ctx.y + pad + fontSize * 0.8;
+  doc.text(lines, M + pad, baseline, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+  ctx.y += h + 16;
+}
+
+function drawParagraphs(ctx: Ctx, text: string, fontSize = 10): void {
+  const paragraphs = text
+    .split(/\n\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (paragraphs.length === 0) return;
+  const pad = 12;
+  const gap = 8;
+  setFont(ctx.doc, 'normal', fontSize);
+  const blocks = paragraphs.map((p) => wrap(ctx.doc, p, CONTENT_W - pad * 2));
+  const innerH =
+    blocks.reduce((s, lines) => s + boxHeight(lines.length, fontSize, 0), 0) +
+    gap * Math.max(0, blocks.length - 1);
+  const h = innerH + pad * 2;
+  ensure(ctx, h + 10);
+  ctx.doc.setFillColor(248, 250, 252);
+  ctx.doc.setDrawColor(...BORDER);
+  ctx.doc.roundedRect(M, ctx.y, CONTENT_W, h, 6, 6, 'FD');
+  ctx.doc.setTextColor(...SLATE);
+  let y = ctx.y + pad + fontSize * 0.8;
+  blocks.forEach((lines, i) => {
+    ctx.doc.text(lines, M + pad, y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+    y += boxHeight(lines.length, fontSize, 0);
+    if (i < blocks.length - 1) y += gap;
+  });
+  ctx.y += h + 16;
+}
+
 function drawCover(ctx: Ctx, data: GeneralReportData): void {
   const { doc } = ctx;
-  doc.setFillColor(...NAVY);
-  doc.rect(0, 0, PAGE.w, 158, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text('GDC · TRANSPORTE DE CARGA', M, 42);
-  doc.setFontSize(24);
-  doc.text(data.title, M, 78);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(13);
-  doc.setTextColor(200, 214, 234);
-  doc.text(data.periodLabel, M, 104);
+  setFont(doc, 'bold', 11);
+  const brand = 'GDC · TRANSPORTE DE CARGA';
+  setFont(doc, 'bold', 22);
+  const titleLines = wrap(doc, data.title, CONTENT_W);
+  setFont(doc, 'normal', 12);
+  const periodLines = wrap(doc, data.periodLabel, CONTENT_W);
+  setFont(doc, 'normal', 8);
+  const methodLines = wrap(doc, METHODOLOGY_LINE, CONTENT_W);
   const gen = new Date(data.generatedAt).toLocaleString('es-UY', {
     day: '2-digit',
     month: 'short',
@@ -135,35 +200,93 @@ function drawCover(ctx: Ctx, data: GeneralReportData): void {
     hour: '2-digit',
     minute: '2-digit',
   });
-  doc.setFontSize(9);
-  doc.text(`Generado: ${gen}`, M, 124);
-  doc.setFontSize(8);
+
+  const padTop = 36;
+  const bandH =
+    padTop +
+    lineHeight(11) +
+    10 +
+    titleLines.length * lineHeight(22) +
+    8 +
+    periodLines.length * lineHeight(12) +
+    8 +
+    lineHeight(9) +
+    8 +
+    methodLines.length * lineHeight(8) +
+    20;
+
+  doc.setFillColor(...NAVY);
+  doc.rect(0, 0, PAGE.w, bandH, 'F');
+
+  let y = padTop;
+  setFont(doc, 'bold', 11);
+  doc.setTextColor(255, 255, 255);
+  doc.text(brand, M, y);
+  y += lineHeight(11) + 10;
+
+  setFont(doc, 'bold', 22);
+  doc.text(titleLines, M, y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+  y += titleLines.length * lineHeight(22) + 8;
+
+  setFont(doc, 'normal', 12);
+  doc.setTextColor(200, 214, 234);
+  doc.text(periodLines, M, y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+  y += periodLines.length * lineHeight(12) + 8;
+
+  setFont(doc, 'normal', 9);
+  doc.text(`Generado: ${gen}`, M, y);
+  y += lineHeight(9) + 8;
+
+  setFont(doc, 'normal', 8);
   doc.setTextColor(180, 198, 220);
-  doc.text(METHODOLOGY_LINE, M, 144);
-  ctx.y = 178;
+  doc.text(methodLines, M, y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+
+  ctx.y = bandH + 22;
 }
 
 function bulletBox(ctx: Ctx, title: string, items: string[], tone: RGB): void {
   if (items.length === 0) return;
   sectionTitle(ctx, title);
+  const fontSize = 9.5;
   items.forEach((it) => {
-    const lines = wrap(ctx.doc, it, CONTENT_W - 30);
-    const boxH = lines.length * 12 + 12;
+    setFont(ctx.doc, 'normal', fontSize);
+    const lines = wrap(ctx.doc, it, CONTENT_W - 32);
+    const boxH = boxHeight(lines.length, fontSize, 6);
     ensure(ctx, boxH + 6);
     const top = ctx.y;
     ctx.doc.setFillColor(tone[0], tone[1], tone[2]);
-    ctx.doc.circle(M + 7, top + 7, 2.5, 'F');
-    ctx.doc.setFont('helvetica', 'normal');
-    ctx.doc.setFontSize(9.5);
+    ctx.doc.circle(M + 7, top + 8, 2.5, 'F');
     ctx.doc.setTextColor(...SLATE);
-    ctx.doc.text(lines, M + 18, top + 8);
-    ctx.y += boxH;
+    ctx.doc.text(lines, M + 18, top + fontSize * 0.85, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+    ctx.y += boxH + 4;
   });
-  ctx.y += 6;
+  ctx.y += 8;
 }
 
 function afterTable(ctx: Ctx): void {
-  ctx.y = (ctx.doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 16;
+  ctx.y = (ctx.doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 18;
+}
+
+function tableDefaults() {
+  return {
+    margin: { left: M, right: M },
+    styles: {
+      font: FONT,
+      fontStyle: 'normal' as const,
+      fontSize: 9,
+      cellPadding: 5,
+      overflow: 'ellipsize' as const,
+      textColor: SLATE,
+    },
+    headStyles: {
+      fillColor: NAVY,
+      textColor: [255, 255, 255] as RGB,
+      font: FONT,
+      fontStyle: 'bold' as const,
+      fontSize: 9,
+      overflow: 'ellipsize' as const,
+    },
+  };
 }
 
 /** Construye el documento PDF completo del reporte. */
@@ -173,33 +296,29 @@ export function buildReportPdf(
   charts: ChartImage[] = []
 ): jsPDF {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const periodShort = data.periodLabel.length > 42 ? data.periodLabel.slice(0, 40) + '…' : data.periodLabel;
+  registerFonts(doc);
+  const periodShort =
+    data.periodLabel.length > 42 ? data.periodLabel.slice(0, 40) + '…' : data.periodLabel;
   const ctx: Ctx = { doc, y: M, page: 1, periodShort };
+  const td = tableDefaults();
 
   // 1. Portada + metodología
   drawCover(ctx, data);
 
-  // 2. Resumen ejecutivo
+  // 2. Resumen ejecutivo + comentario
   sectionTitle(ctx, 'Resumen ejecutivo');
-  const summaryLines = wrap(doc, data.aiSummary, CONTENT_W - 24);
-  const sumH = summaryLines.length * 13 + 20;
-  ensure(ctx, sumH);
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(...BORDER);
-  doc.roundedRect(M, ctx.y, CONTENT_W, sumH, 6, 6, 'FD');
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(...SLATE);
-  doc.text(summaryLines, M + 12, ctx.y + 16);
-  ctx.y += sumH + 14;
+  drawTextBox(ctx, data.aiSummary, 10, 12);
+
+  if (data.aiCommentary?.trim()) {
+    sectionTitle(ctx, 'Comentario');
+    drawParagraphs(ctx, data.aiCommentary, 10);
+  }
 
   // 3. P&L corto
   sectionTitle(ctx, 'P&L del período');
   autoTable(doc, {
     startY: ctx.y,
-    margin: { left: M, right: M },
-    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
-    styles: { fontSize: 9, cellPadding: 5 },
+    ...td,
     head: [['Concepto', 'Monto']],
     body: [
       ['Generado', fmt(data.totalGenerado)],
@@ -213,16 +332,17 @@ export function buildReportPdf(
   });
   afterTable(ctx);
 
-  // 4. Indicadores compactos (tabla — evita 9 cards ilegibles)
+  // 4. Indicadores — per-km con 2 decimales
   sectionTitle(ctx, 'Indicadores');
   const cmp = data.comparison;
   const deltaStr = (v: number, pp = false) =>
     cmp.available ? `${v >= 0 ? '+' : ''}${v.toFixed(1)}${pp ? ' pp' : '%'} ${cmp.label}` : '—';
+  const marginPerKm = data.marginPerKm ?? data.revenuePerKm - data.costPerKm;
   autoTable(doc, {
     startY: ctx.y,
-    margin: { left: M, right: M },
-    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 8.5 },
-    styles: { fontSize: 8.5, cellPadding: 4.5 },
+    ...td,
+    styles: { ...td.styles, fontSize: 8.5, cellPadding: 4.5 },
+    headStyles: { ...td.headStyles, fontSize: 8.5 },
     head: [['Indicador', 'Valor', 'Δ / nota']],
     body: [
       ['Viajes', String(data.totalTrips), `${data.completedTrips} completados`],
@@ -232,8 +352,9 @@ export function buildReportPdf(
         cmp.available ? deltaStr(cmp.tripsDelta) : '—',
       ],
       ['Ticket promedio', fmt(data.avgTicket), 'Ingreso / viaje'],
-      ['Costo / km', fmt(data.costPerKm), deltaStr(cmp.costsDelta)],
-      ['Ingreso / km', fmt(data.revenuePerKm), deltaStr(cmp.revenueDelta)],
+      ['Costo / km', fmtPerKm(data.costPerKm), deltaStr(cmp.costsDelta)],
+      ['Ingreso / km', fmtPerKm(data.revenuePerKm), deltaStr(cmp.revenueDelta)],
+      ['Margen / km', fmtPerKm(marginPerKm), 'Ingreso/km − Costo/km'],
       ['Cobranza', `${data.collectionRate.toFixed(1)}%`, fmt(data.totalPendiente) + ' pendiente'],
     ],
     columnStyles: {
@@ -255,29 +376,26 @@ export function buildReportPdf(
       const imgH = Math.min(230, imgW * ch.ratio);
       ensure(ctx, imgH + 24);
       if (ch.title) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9.5);
+        setFont(doc, 'bold', 9.5);
         doc.setTextColor(...NAVY);
         doc.text(ch.title, M, ctx.y + 4);
-        ctx.y += 12;
+        ctx.y += 14;
       }
       try {
         doc.addImage(ch.dataUrl, 'PNG', M, ctx.y, imgW, imgH, undefined, 'FAST');
       } catch (e) {
         console.warn('[pdfReport] addImage error:', e);
       }
-      ctx.y += imgH + 14;
+      ctx.y += imgH + 16;
     });
   }
 
-  // 7. Top clientes (max 8 — ya limitado en payload)
+  // 7. Top clientes
   if (data.clientBreakdown.length > 0) {
     sectionTitle(ctx, 'Clientes (top)');
     autoTable(doc, {
       startY: ctx.y,
-      margin: { left: M, right: M },
-      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
-      styles: { fontSize: 9, cellPadding: 5 },
+      ...td,
       head: [['Cliente', 'Viajes', 'Ingresos', '% del total']],
       body: data.clientBreakdown.slice(0, 8).map((c) => [
         c.name,
@@ -285,7 +403,12 @@ export function buildReportPdf(
         fmt(c.revenue),
         `${data.totalGenerado > 0 ? ((c.revenue / data.totalGenerado) * 100).toFixed(1) : '0.0'}%`,
       ]),
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      columnStyles: {
+        0: { cellWidth: 220, overflow: 'ellipsize' },
+        1: { halign: 'right' },
+        2: { halign: 'right' },
+        3: { halign: 'right' },
+      },
     });
     afterTable(ctx);
   }
@@ -295,30 +418,35 @@ export function buildReportPdf(
     sectionTitle(ctx, 'Desglose de costos');
     autoTable(doc, {
       startY: ctx.y,
-      margin: { left: M, right: M },
-      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
-      styles: { fontSize: 9, cellPadding: 5 },
+      ...td,
       head: [['Categoría', 'Total (USD eq.)', '% del total']],
       body: data.costsByCategory.map((r) => [r.category, fmt(r.total), `${r.pct.toFixed(1)}%`]),
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+      columnStyles: {
+        0: { cellWidth: 260, overflow: 'ellipsize' },
+        1: { halign: 'right' },
+        2: { halign: 'right' },
+      },
     });
     afterTable(ctx);
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(7.5);
+    setFont(doc, 'normal', 7.5);
     doc.setTextColor(...MUTED);
-    ensure(ctx, 14);
-    doc.text(METHODOLOGY_LINE, M, ctx.y);
-    ctx.y += 14;
+    const methodNote = wrap(doc, METHODOLOGY_LINE, CONTENT_W);
+    ensure(ctx, methodNote.length * lineHeight(7.5) + 8);
+    doc.text(methodNote, M, ctx.y, { lineHeightFactor: LINE_HEIGHT_FACTOR });
+    ctx.y += methodNote.length * lineHeight(7.5) + 12;
   }
 
   // 9. Destacados
   sectionTitle(ctx, 'Destacados');
   autoTable(doc, {
     startY: ctx.y,
-    margin: { left: M, right: M },
+    ...td,
     theme: 'plain',
-    styles: { fontSize: 9.5, cellPadding: 5, textColor: SLATE },
-    columnStyles: { 0: { fontStyle: 'bold', textColor: NAVY, cellWidth: 150 } },
+    styles: { ...td.styles, fontSize: 9.5, cellPadding: 5, overflow: 'ellipsize' },
+    columnStyles: {
+      0: { fontStyle: 'bold', textColor: NAVY, cellWidth: 130 },
+      1: { overflow: 'ellipsize' },
+    },
     body: [
       ['Mejor cliente', `${data.topClient.name} — ${fmt(data.topClient.revenue)} (${data.topClient.trips} viajes)`],
       ['Ruta destacada', `${data.topRoute.route} — ${fmt(data.topRoute.revenue)} (${data.topRoute.count} viajes)`],
@@ -341,9 +469,9 @@ export function buildReportPdf(
     const rows = data.trips.slice(0, 25);
     autoTable(doc, {
       startY: ctx.y,
-      margin: { left: M, right: M },
-      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 8 },
-      styles: { fontSize: 7.5, cellPadding: 3.5, overflow: 'ellipsize' },
+      ...td,
+      styles: { ...td.styles, fontSize: 7.5, cellPadding: 3.5, overflow: 'ellipsize' },
+      headStyles: { ...td.headStyles, fontSize: 8 },
       head: [['ID', 'Fecha', 'Cliente', 'Ingreso', 'Margen %']],
       body: rows.map((t) => {
         const ing = tripRevenueUSD(t);
@@ -357,13 +485,13 @@ export function buildReportPdf(
         ];
       }),
       columnStyles: {
+        2: { cellWidth: 160, overflow: 'ellipsize' },
         3: { halign: 'right' },
         4: { halign: 'right' },
       },
     });
     afterTable(ctx);
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(8);
+    setFont(doc, 'normal', 8);
     doc.setTextColor(...MUTED);
     ensure(ctx, 16);
     doc.text(`Mostrando ${rows.length} de ${data.trips.length} viajes.`, M, ctx.y);

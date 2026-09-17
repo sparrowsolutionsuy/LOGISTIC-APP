@@ -34,7 +34,7 @@ import {
 import type { Client, Cost, GeneralReportData, ReportEmailEntry, ReportScope, Trip } from '../../types';
 import type { CostCategory } from '../../types';
 import { Modal } from '../ui/Modal';
-import { generateReport, type ReportParams } from '../../utils/reportData';
+import { generateReport, fmtPerKm, type ReportParams } from '../../utils/reportData';
 import {
   type ChartImage,
   downloadReportPdf,
@@ -262,7 +262,9 @@ export const ReportCenter: React.FC<ReportCenterProps> = ({
       const charts = await captureCharts();
       const pdfBase64 = reportPdfBase64(data, fmt, charts);
       const subject = `${data.title} · ${data.periodLabel} — GDC`;
-      const message = `Hola,\n\nAdjuntamos el ${data.title.toLowerCase()} correspondiente a ${data.periodLabel}.\n\nResumen ejecutivo:\n${data.aiSummary}\n\nSaludos,\nGDC Transporte de Carga`;
+      const message = `Hola,\n\nAdjuntamos el ${data.title.toLowerCase()} correspondiente a ${data.periodLabel}.\n\nResumen ejecutivo:\n${data.aiSummary}${
+        data.aiCommentary ? `\n\nComentario:\n${data.aiCommentary}` : ''
+      }\n\nSaludos,\nGDC Transporte de Carga`;
       const res = await sendReportByEmail({
         to: targets.join(','),
         subject,
@@ -562,7 +564,17 @@ const ReportBody: React.FC<ReportBodyProps> = ({ data, fmt, trendRef, pieRef, cl
     { label: 'Margen %', value: `${data.marginPct.toFixed(1)}%`, delta: cmp.available ? cmp.marginPctDeltaPp : undefined, isPp: true },
     { label: 'Viajes', value: String(data.totalTrips), sub: `${data.completedTrips} completados` },
     { label: 'Ticket promedio', value: fmt(data.avgTicket), sub: 'Ingreso por viaje' },
-    { label: 'Costo por km', value: fmt(data.costPerKm), sub: `${Math.round(data.totalKm).toLocaleString('es-UY')} km` },
+    {
+      label: 'Costo por km',
+      value: fmtPerKm(data.costPerKm),
+      sub: `${Math.round(data.totalKm).toLocaleString('es-UY')} km`,
+    },
+    { label: 'Ingreso por km', value: fmtPerKm(data.revenuePerKm), sub: 'Generado / km' },
+    {
+      label: 'Margen por km',
+      value: fmtPerKm(data.marginPerKm ?? data.revenuePerKm - data.costPerKm),
+      sub: 'Ingreso/km − Costo/km',
+    },
   ];
 
   return (
@@ -574,6 +586,22 @@ const ReportBody: React.FC<ReportBodyProps> = ({ data, fmt, trendRef, pieRef, cl
           <h3 className="text-sm font-bold uppercase tracking-wide">Análisis ejecutivo · {data.periodLabel}</h3>
         </div>
         <p className="text-sm leading-relaxed text-[var(--text-primary)]">{data.aiSummary}</p>
+        {data.aiCommentary?.trim() && (
+          <div className="space-y-3 border-t border-[var(--border)] pt-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+              Comentario
+            </p>
+            {data.aiCommentary
+              .split(/\n\n+/)
+              .map((p) => p.trim())
+              .filter(Boolean)
+              .map((p) => (
+                <p key={p.slice(0, 48)} className="text-sm leading-relaxed text-[var(--text-primary)]">
+                  {p}
+                </p>
+              ))}
+          </div>
+        )}
       </section>
 
       {/* KPIs */}
@@ -714,7 +742,7 @@ const ReportBody: React.FC<ReportBodyProps> = ({ data, fmt, trendRef, pieRef, cl
             l2: `${data.worstMarginTrip.client} · ${data.worstMarginTrip.marginPct.toFixed(1)}%`,
             warn: data.worstMarginTrip.marginPct < 0,
           },
-          { t: 'Revenue por km', l1: fmt(data.revenuePerKm), l2: `Costo/km: ${fmt(data.costPerKm)}` },
+          { t: 'Revenue por km', l1: fmtPerKm(data.revenuePerKm), l2: `Costo/km: ${fmtPerKm(data.costPerKm)} · Margen/km: ${fmtPerKm(data.marginPerKm ?? data.revenuePerKm - data.costPerKm)}` },
         ].map((c) => (
           <div
             key={c.t}
