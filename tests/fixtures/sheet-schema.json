@@ -1,5 +1,11 @@
 {
-  "expectedGetKeys": ["clients", "trips", "costs", "scheduledCostDefinitions"],
+  "expectedGetKeys": [
+    "clients",
+    "trips",
+    "costs",
+    "scheduledCostDefinitions",
+    "documents"
+  ],
   "sheets": {
     "DB_Viajes": {
       "headers": [
@@ -173,7 +179,12 @@
       ]
     },
     "DB_Usuarios": {
-      "headers": ["usuario", "password", "nombre", "rol"],
+      "headers": [
+        "usuario",
+        "password",
+        "nombre",
+        "rol"
+      ],
       "sampleRows": [
         {
           "usuario": "fixture-user",
@@ -182,6 +193,53 @@
           "rol": "operativo"
         }
       ]
+    },
+    "DB_Documentos": {
+      "headers": [
+        "id",
+        "titulo",
+        "categoria",
+        "entidadRef",
+        "emitidoEn",
+        "venceEn",
+        "archivoUrl",
+        "notas",
+        "activo",
+        "creadoPor",
+        "creadoEn",
+        "actualizadoEn"
+      ],
+      "sampleRows": [
+        {
+          "id": "doc-fake-001",
+          "titulo": "Libreta demo camion",
+          "categoria": "camion",
+          "entidadRef": "ABC1234",
+          "emitidoEn": "2025-01-15",
+          "venceEn": "2026-12-31",
+          "archivoUrl": "https://drive.google.com/file/d/fake-doc-001/view",
+          "notas": "Fixture sin PII",
+          "activo": true,
+          "creadoPor": "admin",
+          "creadoEn": "2026-01-10",
+          "actualizadoEn": "2026-01-10"
+        },
+        {
+          "id": "doc-fake-002",
+          "titulo": "Seguro demo",
+          "categoria": "seguro",
+          "entidadRef": "POL-FAKE-1",
+          "emitidoEn": "2026-01-01",
+          "venceEn": "",
+          "archivoUrl": "",
+          "notas": "",
+          "activo": "FALSE",
+          "creadoPor": "admin",
+          "creadoEn": "2026-02-01",
+          "actualizadoEn": ""
+        }
+      ]
     }
-  }
+  },
+  "description": "Sanitized Sheet schema fixtures (headers + fake rows). No real passwords or customer PII."
 }

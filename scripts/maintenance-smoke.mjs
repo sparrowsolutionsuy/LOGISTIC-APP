@@ -43,6 +43,7 @@ loadEnvFile('.env');
 const SHEET_URL = String(process.env.VITE_SHEET_URL || '').trim();
 const REMITOS = String(process.env.VITE_DRIVE_FOLDER_REMITOS || '').trim();
 const FACTURAS = String(process.env.VITE_DRIVE_FOLDER_FACTURAS || '').trim();
+const DOCUMENTOS = String(process.env.VITE_DRIVE_FOLDER_DOCUMENTOS || '').trim();
 
 const schema = JSON.parse(
   readFileSync(resolve(ROOT, 'tests/fixtures/sheet-schema.json'), 'utf8')
@@ -93,7 +94,9 @@ async function main() {
     return;
   }
   console.log(`VITE_SHEET_URL length: ${SHEET_URL.length} chars (value redacted)`);
-  console.log(`Drive remitos id set: ${Boolean(REMITOS)}; facturas id set: ${Boolean(FACTURAS)}`);
+  console.log(
+    `Drive remitos id set: ${Boolean(REMITOS)}; facturas id set: ${Boolean(FACTURAS)}; documentos id set: ${Boolean(DOCUMENTOS)}`
+  );
   console.log(
     `Latency budget: warn >${LATENCY_WARN_MS}ms, fail >${LATENCY_BUDGET_MS}ms ` +
       `(override with SMOKE_LATENCY_WARN_MS / SMOKE_LATENCY_MS)`
@@ -185,6 +188,7 @@ async function main() {
     ['trips', 'DB_Viajes'],
     ['costs', 'DB_Costos'],
     ['scheduledCostDefinitions', 'DB_CostosProgramados'],
+    ['documents', 'DB_Documentos'],
   ];
   for (const [key, tab] of map) {
     const rows = Array.isArray(data[key]) ? data[key] : [];
@@ -196,12 +200,13 @@ async function main() {
   }
 
   // Optional health POST (Drive ACL probe) when folder IDs present
-  if (REMITOS || FACTURAS) {
+  if (REMITOS || FACTURAS || DOCUMENTOS) {
     const healthBody = {
       type: 'health',
       data: {
         ...(REMITOS ? { remitosFolderId: REMITOS } : {}),
         ...(FACTURAS ? { facturasFolderId: FACTURAS } : {}),
+        ...(DOCUMENTOS ? { documentosFolderId: DOCUMENTOS } : {}),
       },
     };
     const ht0 = Date.now();

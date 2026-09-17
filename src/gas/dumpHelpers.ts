@@ -8,6 +8,7 @@ export const DUMP_KEYS = [
   'trips',
   'costs',
   'scheduledCostDefinitions',
+  'documents',
 ] as const;
 
 export type DumpKey = (typeof DUMP_KEYS)[number];
@@ -17,6 +18,7 @@ export const DUMP_SHEET_BY_KEY: Record<DumpKey, string> = {
   trips: 'DB_Viajes',
   costs: 'DB_Costos',
   scheduledCostDefinitions: 'DB_CostosProgramados',
+  documents: 'DB_Documentos',
 };
 
 export const DUMP_CACHE_TTL_SEC = 45;

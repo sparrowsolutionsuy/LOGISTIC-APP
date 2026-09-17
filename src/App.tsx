@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ActiveTab, AIInsight, Client, Cost, ScheduledCostDefinition, Trip, User } from './types';
+import type {
+  ActiveTab,
+  AIInsight,
+  Client,
+  Cost,
+  FleetDocument,
+  ScheduledCostDefinition,
+  Trip,
+  User,
+} from './types';
 import { Dashboard } from './components/modules/Dashboard';
 import { StrategicMap } from './components/modules/StrategicMap';
 import { TripManager } from './components/modules/TripManager';
@@ -10,23 +19,28 @@ import { Login } from './components/modules/Login';
 import { FinancialDashboard } from './components/modules/FinancialDashboard';
 import { PerformanceReport } from './components/modules/PerformanceReport';
 import { CostManager } from './components/modules/CostManager';
+import { DocumentsView } from './components/modules/DocumentsView';
 import { AppShell } from './components/layout/AppShell';
 import { AdminGuard } from './components/layout/AdminGuard';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
 import { CurrencySwitch } from './components/ui/CurrencySwitch';
 import {
   deleteCostFromSheet,
+  deleteDocumentFromSheet,
   deleteScheduledCostDefinition,
   deleteTripFromSheet,
   fetchLogisticsData,
   lastLogisticsFetchWasMock,
   saveClientToSheet,
   saveCostToSheet,
+  saveDocumentToSheet,
   saveScheduledCostDefinition,
   saveTripToSheet,
   updateCostInSheet,
+  updateDocumentInSheet,
   updateScheduledCostDefinition,
   updateTripInSheet,
+  uploadDocumentFile,
   uploadRemitoImage,
 } from './services/api';
 import { generateLogisticsInsights } from './services/geminiService';
@@ -36,6 +50,7 @@ import { useExchangeRate } from './hooks/useExchangeRate';
 import { EXCHANGE_RATE_STORAGE_KEY } from './constants';
 import { sanitizeFileName } from './utils/formatters';
 import { collectAvailableMonthKeys } from './utils/analytics';
+import { countDocumentAlerts } from './utils/documents';
 import { ReportCenter } from './components/modules/ReportCenter';
 
 const STORAGE_USER_KEY = 'gdc_user';
@@ -84,6 +99,7 @@ const App: React.FC = () => {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [costs, setCosts] = useState<Cost[]>([]);
+  const [documents, setDocuments] = useState<FleetDocument[]>([]);
   const [scheduledCostDefinitions, setScheduledCostDefinitions] = useState<ScheduledCostDefinition[]>(
     []
   );
@@ -124,6 +140,7 @@ const App: React.FC = () => {
       setClients(data.clients);
       setTrips(data.trips);
       setCosts(data.costs);
+      setDocuments(data.documents);
       setOffline(lastLogisticsFetchWasMock());
       if (currentUser?.role === 'admin') {
         setScheduledCostDefinitions(data.scheduledCostDefinitions);
@@ -213,6 +230,7 @@ const App: React.FC = () => {
     setTrips([]);
     setClients([]);
     setCosts([]);
+    setDocuments([]);
     setScheduledCostDefinitions([]);
     setInsights([]);
     setOffline(false);
@@ -393,10 +411,73 @@ const App: React.FC = () => {
     [scheduledCostDefinitions, onUpdateScheduledDefinition]
   );
 
+  const onSaveDocument = useCallback(
+    async (doc: FleetDocument) => {
+      const ok = await saveDocumentToSheet(doc);
+      if (!ok) {
+        showToast('No se pudo guardar el documento en Google Sheets.', 'error');
+        return false;
+      }
+      setDocuments((prev) => [...prev, doc]);
+      return true;
+    },
+    [showToast]
+  );
+
+  const onUpdateDocument = useCallback(
+    async (doc: FleetDocument) => {
+      const ok = await updateDocumentInSheet(doc);
+      if (!ok) {
+        showToast('No se pudo actualizar el documento en Google Sheets.', 'error');
+        return false;
+      }
+      setDocuments((prev) => prev.map((d) => (d.id === doc.id ? doc : d)));
+      return true;
+    },
+    [showToast]
+  );
+
+  const onSoftDeleteDocument = useCallback(
+    async (id: string) => {
+      const ok = await deleteDocumentFromSheet(id);
+      if (!ok) {
+        showToast('No se pudo desactivar el documento en Google Sheets.', 'error');
+        return false;
+      }
+      const today = new Date().toISOString().split('T')[0];
+      setDocuments((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, activo: false, actualizadoEn: today } : d))
+      );
+      return true;
+    },
+    [showToast]
+  );
+
+  const onUploadDocument = useCallback(
+    async (documentId: string, fileData: string, fileName: string, mimeType: string) => {
+      const result = await uploadDocumentFile(documentId, fileData, fileName, mimeType);
+      if (result.ok && result.url) {
+        const today = new Date().toISOString().split('T')[0];
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === documentId ? { ...d, archivoUrl: result.url, actualizadoEn: today } : d
+          )
+        );
+        showToast('Archivo subido a Drive.', 'info');
+      } else {
+        showToast(result.message || 'No se pudo subir el archivo del documento.', 'error');
+      }
+      return result;
+    },
+    [showToast]
+  );
+
   const pendingTripsCount = useMemo(
     () => trips.filter((t) => t.estado === 'Pendiente').length,
     [trips]
   );
+
+  const documentAlertStats = useMemo(() => countDocumentAlerts(documents), [documents]);
 
   const headerBadge = useMemo(() => {
     if (insights.length === 0) {
@@ -441,6 +522,8 @@ const App: React.FC = () => {
       onNavigate={setActiveTab}
       offline={offline}
       pendingTripsCount={pendingTripsCount}
+      documentsAlertCount={documentAlertStats.alertTotal}
+      documentsAlertHasOverdue={documentAlertStats.overdue > 0}
       onLogout={onLogout}
       headerBadge={headerBadge}
       currencySwitch={
@@ -497,6 +580,16 @@ const App: React.FC = () => {
         />
       )}
       {activeTab === 'map' && <StrategicMap clients={clients} trips={trips} />}
+      {activeTab === 'documents' && (
+        <DocumentsView
+          user={user}
+          documents={documents}
+          onSave={onSaveDocument}
+          onUpdate={onUpdateDocument}
+          onSoftDelete={onSoftDeleteDocument}
+          onUpload={onUploadDocument}
+        />
+      )}
       {activeTab === 'clients' && (
         <AdminGuard user={user} onRedirect={adminRedirect}>
           <ClientDirectory clients={clients} trips={trips} />

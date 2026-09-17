@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import schema from './fixtures/sheet-schema.json';
 
 describe('GET payload contract', () => {
-  it('expects scheduledCostDefinitions among top-level keys', () => {
+  it('expects documents among top-level keys', () => {
     expect(schema.expectedGetKeys).toContain('clients');
     expect(schema.expectedGetKeys).toContain('trips');
     expect(schema.expectedGetKeys).toContain('costs');
     expect(schema.expectedGetKeys).toContain('scheduledCostDefinitions');
+    expect(schema.expectedGetKeys).toContain('documents');
   });
 });
 
@@ -29,6 +30,24 @@ describe('Sheet header fixtures', () => {
         'currency',
       ])
     );
+  });
+
+  it('DB_Documentos has document headers', () => {
+    const headers = schema.sheets.DB_Documentos.headers;
+    expect(headers).toEqual([
+      'id',
+      'titulo',
+      'categoria',
+      'entidadRef',
+      'emitidoEn',
+      'venceEn',
+      'archivoUrl',
+      'notas',
+      'activo',
+      'creadoPor',
+      'creadoEn',
+      'actualizadoEn',
+    ]);
   });
 
   it('sample rows only use declared headers (no password leaks in non-user sheets)', () => {

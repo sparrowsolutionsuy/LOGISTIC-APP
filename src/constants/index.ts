@@ -1,4 +1,12 @@
-import type { ActiveTab, Client, Cost, ScheduledCostDefinition, Trip, TripStatus } from '../types';
+import type {
+  ActiveTab,
+  Client,
+  Cost,
+  FleetDocument,
+  ScheduledCostDefinition,
+  Trip,
+  TripStatus,
+} from '../types';
 
 // Uruguay departments (operational reference)
 export const DEPARTAMENTOS = [
@@ -36,6 +44,7 @@ export const ROUTE_NAMES: Record<ActiveTab, string> = {
   dashboard: 'Dashboard',
   trips: 'Gestión Viajes',
   map: 'Mapa Estratégico',
+  documents: 'Documentos',
   costs: 'Costos',
   financial: 'Finanzas',
   clients: 'Directorio Clientes',
@@ -341,6 +350,34 @@ const MOCK_COSTS: Cost[] = [
   },
 ];
 
+const MOCK_DOCUMENTS: FleetDocument[] = [
+  {
+    id: 'DOC-MOCK-001',
+    titulo: 'Libreta de circulación — demo',
+    categoria: 'camion',
+    entidadRef: 'ABC1234',
+    emitidoEn: '2025-06-01',
+    venceEn: '2026-12-31',
+    archivoUrl: 'https://drive.google.com/file/d/mock-doc-001/view',
+    notas: 'Documento de prueba (sin PII real)',
+    activo: true,
+    creadoPor: 'admin',
+    creadoEn: '2026-01-10',
+  },
+  {
+    id: 'DOC-MOCK-002',
+    titulo: 'Seguro flota — demo',
+    categoria: 'seguro',
+    entidadRef: 'POL-DEMO-99',
+    emitidoEn: '2026-01-01',
+    venceEn: '2026-09-25',
+    notas: 'Vence pronto (fixture)',
+    activo: true,
+    creadoPor: 'admin',
+    creadoEn: '2026-01-05',
+  },
+];
+
 /** Dataset local usado como fallback y seeds */
 export const MOCK_DATA = {
   clients: MOCK_CLIENTS,
@@ -348,4 +385,5 @@ export const MOCK_DATA = {
   costs: MOCK_COSTS,
   /** Definiciones de costos programados (misma fuente que producción: Sheets). */
   scheduledCostDefinitions: [] as ScheduledCostDefinition[],
+  documents: MOCK_DOCUMENTS,
 };

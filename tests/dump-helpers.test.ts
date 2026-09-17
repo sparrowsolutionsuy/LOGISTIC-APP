@@ -10,7 +10,7 @@ import {
 } from '../src/gas/dumpHelpers';
 
 describe('parseIncludeParam', () => {
-  it('defaults to all four keys when missing or blank', () => {
+  it('defaults to all dump keys when missing or blank', () => {
     expect(parseIncludeParam(undefined)).toEqual([...DUMP_KEYS]);
     expect(parseIncludeParam(null)).toEqual([...DUMP_KEYS]);
     expect(parseIncludeParam('')).toEqual([...DUMP_KEYS]);
@@ -20,6 +20,7 @@ describe('parseIncludeParam', () => {
   it('parses comma-separated subset and ignores unknown tokens', () => {
     expect(parseIncludeParam('clients,trips')).toEqual(['clients', 'trips']);
     expect(parseIncludeParam('clients, bogus, costs')).toEqual(['clients', 'costs']);
+    expect(parseIncludeParam('documents')).toEqual(['documents']);
   });
 
   it('falls back to all keys when only unknown tokens', () => {
@@ -36,7 +37,7 @@ describe('buildDumpCacheKey', () => {
 
   it('uses 0 for empty epoch', () => {
     expect(buildDumpCacheKey('', [...DUMP_KEYS])).toBe(
-      `${DUMP_CACHE_PREFIX}:0:clients,costs,scheduledCostDefinitions,trips`
+      `${DUMP_CACHE_PREFIX}:0:clients,costs,documents,scheduledCostDefinitions,trips`
     );
   });
 
