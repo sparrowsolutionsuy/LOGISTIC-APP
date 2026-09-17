@@ -54,12 +54,14 @@ jobs:
           VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
           VITE_DRIVE_FOLDER_REMITOS: ${{ secrets.VITE_DRIVE_FOLDER_REMITOS }}
           VITE_DRIVE_FOLDER_FACTURAS: ${{ secrets.VITE_DRIVE_FOLDER_FACTURAS }}
+          VITE_DRIVE_FOLDER_DOCUMENTOS: ${{ secrets.VITE_DRIVE_FOLDER_DOCUMENTOS }}
         run: |
           : > .env.production.local
           printf '%s\n' "VITE_SHEET_URL=${VITE_SHEET_URL}" >> .env.production.local
           printf '%s\n' "VITE_GEMINI_API_KEY=${VITE_GEMINI_API_KEY}" >> .env.production.local
           printf '%s\n' "VITE_DRIVE_FOLDER_REMITOS=${VITE_DRIVE_FOLDER_REMITOS}" >> .env.production.local
           printf '%s\n' "VITE_DRIVE_FOLDER_FACTURAS=${VITE_DRIVE_FOLDER_FACTURAS}" >> .env.production.local
+          printf '%s\n' "VITE_DRIVE_FOLDER_DOCUMENTOS=${VITE_DRIVE_FOLDER_DOCUMENTOS}" >> .env.production.local
 
       - name: Build
         run: npm run build
@@ -68,6 +70,7 @@ jobs:
           VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
           VITE_DRIVE_FOLDER_REMITOS: ${{ secrets.VITE_DRIVE_FOLDER_REMITOS }}
           VITE_DRIVE_FOLDER_FACTURAS: ${{ secrets.VITE_DRIVE_FOLDER_FACTURAS }}
+          VITE_DRIVE_FOLDER_DOCUMENTOS: ${{ secrets.VITE_DRIVE_FOLDER_DOCUMENTOS }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
