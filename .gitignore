@@ -18,6 +18,7 @@ dist-ssr
 .clasp.json
 .clasprc.json
 gas/Code.js
+gas/Código.js
 
 # Editor directories and files
 .cursor/
