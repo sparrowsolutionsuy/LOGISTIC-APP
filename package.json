@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "maintenance:smoke": "node scripts/maintenance-smoke.mjs",
     "gas:sync": "node scripts/gas-sync.mjs",
-    "gas:push": "npm run gas:sync && npx clasp push --force",
+    "gas:push": "node scripts/gas-push.mjs",
     "gas:deploy": "node scripts/gas-deploy.mjs"
   },
   "dependencies": {

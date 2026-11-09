@@ -82,28 +82,29 @@ El build escribe `.env.production.local` y exporta las mismas variables en el pa
 
 ### clasp 3.x (push / update-deployment)
 
-Setup one-time (humano):
+Setup one-time (humano) — **orden obligatorio antes del primer `gas:push`**:
 
 1. Enable Apps Script API: [script.google.com/home/usersettings](https://script.google.com/home/usersettings).
 2. Copiá **Script ID** (Project Settings) → creá `.clasp.json` desde `.clasp.json.example` (no commitear).
-3. Copiá el **Deployment ID** del Web App existente (Manage deployments — el que coincide con `VITE_SHEET_URL`) → `GAS_DEPLOYMENT_ID` en `.env.local` / shell. **No** crear un deployment nuevo.
+3. Copiá el **Deployment ID** del Web App existente (Manage deployments — el que coincide con `VITE_SHEET_URL`) → `GAS_DEPLOYMENT_ID` en `.env.local`. **No** crear un deployment nuevo.
 4. `npx clasp login` (cuenta dueña del script). Credenciales en `~/.clasprc.json` — nunca en el repo.
-5. `gas/appsscript.json` es un stub mínimo (V8 + `America/Montevideo`). Tras el primer login, preferí `clasp pull` una vez para reconciliar oauthScopes / live manifest, luego re-sync de `Code.js` desde el repo.
+5. **Reconciliar manifest live:** `clasp pull` (o copiá el `appsscript.json` live a `gas/appsscript.json`). El archivo committed es solo un **placeholder stub** (V8 + `America/Montevideo`) — **no** lo subas como verdad de prod (clobber de oauthScopes/libraries). `gas:push` rechaza el stub (sin `oauthScopes`) salvo `ALLOW_STUB_GAS_PUSH=1`.
+6. **Alinear basename remoto ANTES del primer push:** prod histórico suele tener `Código`. `clasp push --force` **no** borra archivos remotos ausentes en local → si subís `Code.js` sin quitar `Código`, quedan **dos `doGet`**. En el editor Apps Script, borrá o renombrá `Código` → `Code` **antes** del primer `gas:push`. Opcional: `clasp pull` para inspeccionar; borrá cualquier `Código.js` local pulled; `gas:sync` escribe solo `gas/Code.js` desde SoT.
+7. Recién entonces: `gas:sync` → `gas:push` / `gas:deploy` (HITL).
 
 Comandos:
 
 ```bash
 npm run gas:sync              # GOOGLE_APPS_SCRIPT.js → gas/Code.js
-npm run gas:push              # sync + clasp push --force
-GAS_DEPLOYMENT_ID=... npm run gas:deploy   # push + update-deployment ONLY (falla si falta el env)
+npm run gas:push              # sync + clasp push --force (exige manifest live)
+# After human HITL yes:
+CONFIRM_GAS_DEPLOY=1 npm run gas:deploy   # lee GAS_DEPLOYMENT_ID de .env.local; update-deployment ONLY
 npm run maintenance:smoke     # dump debe ser JSON, no HTML
 ```
 
-**HITL:** `gas:deploy` / prod `update-deployment` requiere OK humano explícito. Procedure: `sparrow-harness/procedures/logistic-app-gas-deploy.md`.
+**HITL:** `gas:deploy` exige `CONFIRM_GAS_DEPLOY=1` + OK humano explícito. Procedure: `sparrow-harness/procedures/logistic-app-gas-deploy.md`.
 
-**Basename remoto:** prod histórico puede tener archivo `Código`. El scaffold sube `Code.js`. Tras el primer push controlado, borrá el remoto `Código` huérfano en el editor (o alineá con un `clasp pull` inicial) para no dejar dos `doGet`.
-
-Fallback manual: pegá `GOOGLE_APPS_SCRIPT.js` en el editor y desplegá **nueva versión** del Web App existente (misma URL en `VITE_SHEET_URL`).
+Fallback manual: pegá `GOOGLE_APPS_SCRIPT.js` en el editor y desplegá **nueva versión** del Web App **existente** (Manage deployments → Edit → New version — misma URL en `VITE_SHEET_URL`). No uses “New deployment”.
 
 El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, data }`) para evitar preflight innecesario; el script debe seguir usando `JSON.parse(e.postData.contents)`.
 
