@@ -24,7 +24,14 @@ export const DUMP_SHEET_BY_KEY: Record<DumpKey, string> = {
 };
 
 export const DUMP_CACHE_TTL_SEC = 45;
+/** ScriptCache value limit is 100KB; stay under to avoid throw → HTML error page. */
+export const DUMP_CACHE_MAX_VALUE_CHARS = 90000;
 export const DUMP_CACHE_PREFIX = 'gdc_dump_v1';
+
+/** True when dump JSON is small enough to store in ScriptCache (mirrored in GAS). */
+export function shouldPutDumpCache(json: string | null | undefined): boolean {
+  return json != null && String(json).length <= DUMP_CACHE_MAX_VALUE_CHARS;
+}
 
 /** Parse `?include=` (comma-separated). Empty / missing → all keys. Unknown tokens ignored. */
 export function parseIncludeParam(raw: string | undefined | null): DumpKey[] {

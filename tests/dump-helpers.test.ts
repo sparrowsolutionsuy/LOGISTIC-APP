@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DUMP_CACHE_MAX_VALUE_CHARS,
   DUMP_CACHE_PREFIX,
   DUMP_CACHE_TTL_SEC,
   DUMP_KEYS,
@@ -7,6 +8,7 @@ import {
   isEmptySheetBounds,
   parseIncludeParam,
   sheetValuesToObjects,
+  shouldPutDumpCache,
 } from '../src/gas/dumpHelpers';
 
 describe('parseIncludeParam', () => {
@@ -44,6 +46,24 @@ describe('buildDumpCacheKey', () => {
 
   it('documents 45s TTL constant', () => {
     expect(DUMP_CACHE_TTL_SEC).toBe(45);
+  });
+});
+
+describe('shouldPutDumpCache', () => {
+  it('allows values at or under ScriptCache soft max', () => {
+    expect(shouldPutDumpCache('x'.repeat(DUMP_CACHE_MAX_VALUE_CHARS))).toBe(true);
+    expect(shouldPutDumpCache('ok')).toBe(true);
+  });
+
+  it('skips oversized JSON so cache.put never throws HTML', () => {
+    expect(shouldPutDumpCache('x'.repeat(DUMP_CACHE_MAX_VALUE_CHARS + 1))).toBe(false);
+    expect(shouldPutDumpCache(null)).toBe(false);
+    expect(shouldPutDumpCache(undefined)).toBe(false);
+  });
+
+  it('documents soft max under 100KB hard limit', () => {
+    expect(DUMP_CACHE_MAX_VALUE_CHARS).toBe(90000);
+    expect(DUMP_CACHE_MAX_VALUE_CHARS).toBeLessThan(100_000);
   });
 });
 

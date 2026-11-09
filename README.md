@@ -4,7 +4,7 @@ Aplicación web para **Gorrión del Cielo SAS**: gestión de viajes, clientes, c
 
 - **Interfaz:** React 18 + TypeScript + Vite  
 - **Hosting:** [GitHub Pages](https://pages.github.com/) (`base: /LOGISTIC-APP/`)  
-- **Backend ligero:** Apps Script (`GOOGLE_APPS_SCRIPT.js` en este repo como referencia para pegar en el editor de la hoja)
+- **Backend ligero:** Apps Script (`GOOGLE_APPS_SCRIPT.js` es la fuente de verdad; `npm run gas:sync` → `gas/Code.js` para clasp)
 
 ---
 
@@ -78,7 +78,32 @@ El build escribe `.env.production.local` y exporta las mismas variables en el pa
 
 ## Apps Script
 
-Copiá el contenido de **`GOOGLE_APPS_SCRIPT.js`** en el proyecto de Apps Script vinculado a tu hoja, desplegá como **aplicación web** (nueva versión) y usá esa URL en `VITE_SHEET_URL`.
+**Fuente de verdad:** `GOOGLE_APPS_SCRIPT.js` (raíz). Antes de push, `npm run gas:sync` copia a `gas/Code.js` (gitignoreado). No editar `gas/Code.js` a mano.
+
+### clasp 3.x (push / update-deployment)
+
+Setup one-time (humano):
+
+1. Enable Apps Script API: [script.google.com/home/usersettings](https://script.google.com/home/usersettings).
+2. Copiá **Script ID** (Project Settings) → creá `.clasp.json` desde `.clasp.json.example` (no commitear).
+3. Copiá el **Deployment ID** del Web App existente (Manage deployments — el que coincide con `VITE_SHEET_URL`) → `GAS_DEPLOYMENT_ID` en `.env.local` / shell. **No** crear un deployment nuevo.
+4. `npx clasp login` (cuenta dueña del script). Credenciales en `~/.clasprc.json` — nunca en el repo.
+5. `gas/appsscript.json` es un stub mínimo (V8 + `America/Montevideo`). Tras el primer login, preferí `clasp pull` una vez para reconciliar oauthScopes / live manifest, luego re-sync de `Code.js` desde el repo.
+
+Comandos:
+
+```bash
+npm run gas:sync              # GOOGLE_APPS_SCRIPT.js → gas/Code.js
+npm run gas:push              # sync + clasp push --force
+GAS_DEPLOYMENT_ID=... npm run gas:deploy   # push + update-deployment ONLY (falla si falta el env)
+npm run maintenance:smoke     # dump debe ser JSON, no HTML
+```
+
+**HITL:** `gas:deploy` / prod `update-deployment` requiere OK humano explícito. Procedure: `sparrow-harness/procedures/logistic-app-gas-deploy.md`.
+
+**Basename remoto:** prod histórico puede tener archivo `Código`. El scaffold sube `Code.js`. Tras el primer push controlado, borrá el remoto `Código` huérfano en el editor (o alineá con un `clasp pull` inicial) para no dejar dos `doGet`.
+
+Fallback manual: pegá `GOOGLE_APPS_SCRIPT.js` en el editor y desplegá **nueva versión** del Web App existente (misma URL en `VITE_SHEET_URL`).
 
 El cliente envía POST con `Content-Type: text/plain` y cuerpo JSON (`{ type, data }`) para evitar preflight innecesario; el script debe seguir usando `JSON.parse(e.postData.contents)`.
 
@@ -149,7 +174,10 @@ tests/
   fixtures/sheet-schema.json  # headers + filas fake (sin PII real)
   *.test.ts
 scripts/maintenance-smoke.mjs
-GOOGLE_APPS_SCRIPT.js     # referencia para pegar en Apps Script
+scripts/gas-sync.mjs / gas-deploy.mjs
+GOOGLE_APPS_SCRIPT.js     # fuente de verdad GAS
+gas/appsscript.json       # manifest stub (clasp); gas/Code.js vía gas:sync
+.clasp.json.example
 ```
 
 ### Costos: período vs viaje

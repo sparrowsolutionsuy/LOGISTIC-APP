@@ -14,6 +14,11 @@ dist-ssr
 .env.local
 .env.production.local
 
+# clasp (local IDs / OAuth — never commit)
+.clasp.json
+.clasprc.json
+gas/Code.js
+
 # Editor directories and files
 .cursor/
 .vscode/*
