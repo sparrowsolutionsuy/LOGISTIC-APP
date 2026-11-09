@@ -11,6 +11,8 @@
 
 /** Phase B: dump cache TTL (seconds). Writes bump epoch to invalidate. */
 var DUMP_CACHE_TTL_SEC = 45;
+/** ScriptCache value limit is 100KB; stay under to avoid throw → HTML error page. */
+var DUMP_CACHE_MAX_VALUE_CHARS = 90000;
 var DUMP_CACHE_PREFIX = 'gdc_dump_v1';
 var DUMP_CACHE_EPOCH_KEY = 'gdc_dump_epoch';
 var DUMP_KEYS = ['clients', 'trips', 'costs', 'scheduledCostDefinitions', 'documents', 'reportEmails'];
@@ -53,6 +55,11 @@ function getDumpCacheEpoch() {
 function buildDumpCacheKey(epoch, includeKeys) {
   var sorted = includeKeys.slice().sort();
   return DUMP_CACHE_PREFIX + ':' + (epoch || '0') + ':' + sorted.join(',');
+}
+
+/** True when dump JSON is small enough to store in ScriptCache. */
+function shouldPutDumpCache(json) {
+  return json != null && String(json).length <= DUMP_CACHE_MAX_VALUE_CHARS;
 }
 
 /** Invalidate all dump cache entries by bumping epoch (old keys expire naturally). */
@@ -660,8 +667,14 @@ function doGet(e) {
 
   var payload = buildDumpPayload(includeKeys);
   var json = JSON.stringify(payload);
-  // Never cache errors (this path only builds successful dumps).
-  cache.put(cacheKey, json, DUMP_CACHE_TTL_SEC);
+  // Never cache errors; never throw on oversized/failed cache.put (must return JSON).
+  if (shouldPutDumpCache(json)) {
+    try {
+      cache.put(cacheKey, json, DUMP_CACHE_TTL_SEC);
+    } catch (cacheErr) {
+      // ScriptCache quota / transient failure — dump response still succeeds.
+    }
+  }
   return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
 
